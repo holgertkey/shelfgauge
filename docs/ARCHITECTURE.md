@@ -1,0 +1,72 @@
+# shelfgauge — Architecture
+
+> Status: design, not yet implemented. This document describes the target architecture
+> for v1; details may change as implementation proceeds.
+
+`shelfgauge` is a single-binary Rust app that indexes a directory tree of ebook files (FB2 in
+v1, plain files and `.zip` archives with any number of books inside) into a local SQLite DB
+and serves a browsable, server-rendered web library on a fixed `localhost` port. License: MIT.
+Key design points to keep in mind when implementing:
+
+- **Everything lives under `.shelfgauge/`** inside the scanned directory (config, SQLite DB,
+  cover cache, parsed-content cache) — the library must stay self-contained and portable
+  with the books it indexes.
+- **Config** is TOML (proposed location: `.shelfgauge/config.toml`, created with defaults).
+  CLI flags override it. The port is fixed: if it is busy, exit with a clear error — never
+  silently fall back to another port.
+- **Scanner is incremental and crash-resistant**: check `(size, mtime)` before hashing;
+  for `.zip` archives compare per-entry `(size, CRC32)` from the central directory so only
+  changed entries are re-parsed; catch per-book parse failures so one broken book never
+  aborts a scan (it's recorded with an error status). Zip entries are identified by raw
+  name bytes (old archives use CP866 names without the UTF-8 flag). Nested archives are
+  skipped.
+- **FB2 encoding detection** before XML parsing: BOM → XML declaration (`encoding_rs`) →
+  fallback (valid UTF-8, else detector / windows-1251).
+- **Format abstraction is two layers, and must stay that way as formats are added**:
+  - *Container layer*: resolves raw bytes to parse (bare file vs. one entry of a `.zip`),
+    independent of ebook format.
+  - *Format layer*: a `BookParser` trait (one impl per format — only FB2 in v1) producing a
+    common `BookMetadata` / `BookContent` representation. The viewer must only depend on
+    `BookContent`/`BookMetadata`, never on format-specific details.
+  - Fixed-page-layout formats (PDF/DjVu) are explicitly out of scope.
+- **UI is server-rendered** (askama templates, hand-written CSS/JS, assets embedded in the
+  binary; no SPA, no Node). Layout is inspired by mdBook: collapsible left sidebar + main
+  area + top bar + color themes. **Nothing is copied from mdBook** (MPL-2.0) — only the
+  idea; no bundled third-party fonts/icon fonts.
+  - *Library mode*: sidebar groups books by author or by folder (switchable; a `.zip` is a
+    virtual folder). Sidebar is paginated/lazy, never rendered in full. Main area shows
+    the book card.
+  - *Reading mode*: sidebar shows the book's TOC; main area shows one part of the book as
+    HTML, rendered from `BookContent` (never directly from FB2). Splitting into parts is
+    configured in `[reader]` (`none` / `section` / `size`, cut at block boundaries).
+  - **Block IDs must not depend on the split setting**; deep links address a block
+    (`?at=<block-id>`) and the server resolves the part.
+- Server binds to `127.0.0.1` by default.
+
+## V2 (deferred — do not build in v1)
+
+Offline-first reader: `/reader/<token>` reading links (with revocation), Service Worker +
+Cache Storage so a tab keeps working without the server, reading position / bookmarks /
+quotes in IndexedDB, and one-directional additive backup sync client → server (server
+shows them read-only). Depends on the fixed port, since browser storage is per origin.
+
+## Planned tech stack
+
+| Concern | Choice |
+|---|---|
+| Language / runtime | Rust (edition 2024), Tokio |
+| Web framework | axum |
+| Templates | askama |
+| Static assets | embedded in the binary (`rust-embed` or similar) |
+| Database | rusqlite (SQLite) + FTS5 |
+| Config | serde + toml |
+| FB2 XML parsing | roxmltree (read-only DOM) |
+| Encoding detection | encoding_rs (+ chardetng fallback) |
+| Directory walking | walkdir + ignore |
+| Archives | `zip` crate (`.zip` only) |
+| Parallel parsing | rayon |
+
+## Out of scope for v1
+
+The V2 reader (above), deduplication across the library, RAR/other archive formats, nested
+archives, multi-root libraries.
