@@ -11,15 +11,27 @@ Key design points to keep in mind when implementing:
 - **Everything lives under `.shelfgauge/`** inside the scanned directory (config, SQLite DB,
   cover cache, parsed-content cache) — the library must stay self-contained and portable
   with the books it indexes.
-- **Config** is TOML (proposed location: `.shelfgauge/config.toml`, created with defaults).
-  CLI flags override it. The port is fixed: if it is busy, exit with a clear error — never
-  silently fall back to another port.
+- **Config** is TOML at `.shelfgauge/config.toml`, created with defaults on first run.
+  CLI flags override it. The port is fixed (default `8742`): if it is busy, exit with a
+  clear error — never silently fall back to another port (a changing port changes the
+  browser origin).
+- **Scanning runs on every start, in the background**: the server starts immediately and
+  serves the existing index while the UI shows progress. Also: a "Rescan" button,
+  `--no-scan`, and a `shelfgauge scan` subcommand (index and exit).
 - **Scanner is incremental and crash-resistant**: check `(size, mtime)` before hashing;
   for `.zip` archives compare per-entry `(size, CRC32)` from the central directory so only
   changed entries are re-parsed; catch per-book parse failures so one broken book never
   aborts a scan (it's recorded with an error status). Zip entries are identified by raw
   name bytes (old archives use CP866 names without the UTF-8 flag). Nested archives are
-  skipped.
+  skipped. Removed books get status `removed` instead of being deleted.
+- **Moved/renamed files** are re-matched during a scan: plain files by `content_hash`, zip
+  entries by `(size, CRC32)`; a unique match keeps the book id and updates its location,
+  ambiguous matches create new rows. Opening a book whose file is gone shows a "rescan"
+  message, not a server error.
+- **SQLite access**: WAL mode; the scanner parses in parallel (`rayon`) and sends results
+  to a single writer thread that writes in batched transactions (plain threads, not
+  async); web handlers use a small read-connection pool and `spawn_blocking`. Search uses
+  FTS5 (`unicode61`, prefix queries; no stemming in v1).
 - **FB2 encoding detection** before XML parsing: BOM → XML declaration (`encoding_rs`) →
   fallback (valid UTF-8, else detector / windows-1251).
 - **Format abstraction is two layers, and must stay that way as formats are added**:
@@ -39,16 +51,36 @@ Key design points to keep in mind when implementing:
   - *Reading mode*: sidebar shows the book's TOC; main area shows one part of the book as
     HTML, rendered from `BookContent` (never directly from FB2). Splitting into parts is
     configured in `[reader]` (`none` / `section` / `size`, cut at block boundaries).
-  - **Block IDs must not depend on the split setting**; deep links address a block
-    (`?at=<block-id>`) and the server resolves the part.
-- Server binds to `127.0.0.1` by default.
+  - **Block IDs** are the block's ordinal in document order (`b1234`), counting every
+    block. They must be deterministic and **must not depend on the split setting**; deep
+    links address a block (`?at=<block-id>`) and the server resolves the part. Cached
+    `BookContent` carries a `parser_version`; bumping it invalidates the cache.
+
+## Security
+
+v1 binds to `127.0.0.1` only, but is built to allow remote access later:
+
+- **Host header check** against `127.0.0.1:<port>`, `localhost:<port>` and
+  `allowed_hosts` (protection against DNS rebinding); state-changing requests also require
+  a matching `Origin` (CSRF).
+- If `bind` is not a loopback address and no authentication is configured, the program
+  refuses to start.
+- Routes are split into a *read* group and an *admin* group (scan, settings), with an
+  auth middleware slot; the admin group may stay localhost-only.
+- All URLs are built with a configurable `base_path` (reverse proxy on a subpath).
+- Files are only ever served by id, never by a client-supplied path.
+- No built-in TLS: remote access goes through a reverse proxy with HTTPS or a private
+  network (Tailscale / WireGuard / SSH tunnel).
 
 ## V2 (deferred — do not build in v1)
 
 Offline-first reader: `/reader/<token>` reading links (with revocation), Service Worker +
 Cache Storage so a tab keeps working without the server, reading position / bookmarks /
 quotes in IndexedDB, and one-directional additive backup sync client → server (server
-shows them read-only). Depends on the fixed port, since browser storage is per origin.
+shows them read-only). Depends on the fixed port, since browser storage is per origin, and
+on a secure context (localhost or HTTPS). Anchors combine the block ID with a short text
+fingerprint so they can be re-resolved when a book file is replaced. Sync details are
+decided in V2.
 
 ## Planned tech stack
 
@@ -58,7 +90,8 @@ shows them read-only). Depends on the fixed port, since browser storage is per o
 | Web framework | axum |
 | Templates | askama |
 | Static assets | embedded in the binary (`rust-embed` or similar) |
-| Database | rusqlite (SQLite) + FTS5 |
+| Database | rusqlite (SQLite, WAL) + FTS5 |
+| DB access from async | read pool (`deadpool-sqlite` or `r2d2_sqlite`) + `spawn_blocking` |
 | Config | serde + toml |
 | FB2 XML parsing | roxmltree (read-only DOM) |
 | Encoding detection | encoding_rs (+ chardetng fallback) |
