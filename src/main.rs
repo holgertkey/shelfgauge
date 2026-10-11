@@ -1,35 +1,47 @@
 //! shelfgauge command-line entry point.
 
-use clap::Parser;
+mod cli;
 
-/// Index a folder of ebooks and browse it in a local web library.
-#[derive(Debug, Parser)]
-#[command(name = "shelfgauge", version = shelfgauge::VERSION, about)]
-struct Cli {}
+use clap::Parser;
+use shelfgauge::config::Config;
+use shelfgauge::library::Library;
+
+use cli::{Cli, Mode};
 
 fn main() -> anyhow::Result<()> {
-    let _cli = Cli::parse();
-    println!("shelfgauge v{}: not implemented yet", shelfgauge::VERSION);
-    Ok(())
-}
+    let cli = Cli::parse();
+    cli::init_logging(cli.verbose);
+    let invocation = cli.invocation();
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use clap::CommandFactory;
-
-    #[test]
-    fn cli_definition_is_valid() {
-        Cli::command().debug_assert();
+    let library = Library::open(&invocation.path)?;
+    let config_path = library.config_path();
+    let loaded = Config::load_or_create(&config_path)?;
+    if loaded.created {
+        tracing::info!("created default config {}", config_path.display());
     }
-
-    #[test]
-    fn version_flag_prints_display_version() {
-        let err = Cli::try_parse_from(["shelfgauge", "--version"]).unwrap_err();
-        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
-        assert_eq!(
-            err.to_string(),
-            format!("shelfgauge {}\n", shelfgauge::VERSION)
+    for key in &loaded.unknown_keys {
+        tracing::warn!(
+            "unknown key `{key}` in {} is ignored",
+            config_path.display()
         );
     }
+    let mut config = loaded.config;
+    config.apply_overrides(&invocation.overrides)?;
+
+    // Temporary stub until the scanner (Phase 7) and the web server (Phase 8) exist.
+    println!("Library: {}", library.root().display());
+    println!("Config:  {}", config_path.display());
+    println!();
+    println!("Effective configuration:");
+    println!();
+    print!("{}", config.to_toml());
+    println!();
+    match invocation.mode {
+        Mode::Serve { scan } => println!(
+            "Serving is not implemented yet (background scan: {}).",
+            if scan { "on" } else { "off" }
+        ),
+        Mode::Scan => println!("Scanning is not implemented yet."),
+    }
+    Ok(())
 }

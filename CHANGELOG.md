@@ -21,3 +21,13 @@ Build numbers (`+NNN`) do not get their own sections.
   displayed.
 - `README.md` and `CHANGELOG.md`.
 - GitHub Actions CI (fmt, clippy, test, doc) on Linux, Windows and macOS.
+- Library root: positional `PATH` argument (default: the current directory); working
+  data lives in `.shelfgauge/` inside it.
+- Config file `.shelfgauge/config.toml` with `[server]`, `[scan]`, `[library]` and
+  `[reader]` sections, created with commented defaults on first run. Missing keys use
+  defaults, unknown keys are logged as warnings, invalid values fail with an error
+  naming the key; `server.base_path` is normalized.
+- CLI: `shelfgauge [PATH]` (serve), `shelfgauge scan [PATH]`, `--port`, `--bind`,
+  `--no-scan` and `-v`/`-vv`; CLI values override the config file. Serve and scan are
+  stubs that print the effective configuration.
+- Logging to stderr via `tracing`; level from `-v` flags, else `RUST_LOG`.

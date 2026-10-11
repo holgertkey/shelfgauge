@@ -5,7 +5,9 @@
 
 #![warn(missing_docs)]
 
+pub mod config;
 pub mod error;
+pub mod library;
 
 pub use error::{Error, Result};
 
