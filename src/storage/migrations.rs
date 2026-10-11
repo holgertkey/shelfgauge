@@ -3,9 +3,9 @@
 //! Each migration upgrades the schema by one version and is applied in a
 //! transaction together with the `user_version` bump.
 //!
-//! Policy: until 0.2.0 (the first release with a database) is published, schema v1 may
-//! still be edited in place. After that, existing migrations are frozen and changes are
-//! only ever appended as new migrations.
+//! Policy: until the first public release, schema v1 may still be edited in place
+//! (existing local databases are then simply rebuilt). After a release, existing
+//! migrations are frozen and changes are only ever appended as new migrations.
 
 use rusqlite::Connection;
 
