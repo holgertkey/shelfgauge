@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic test book written for shelfgauge; uses every supported FB2 element. -->
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
+  <stylesheet type="text/css">p { text-indent: 1em; }</stylesheet>
+  <description>
+    <title-info>
+      <genre>sf_fantasy</genre>
+      <genre>adventure</genre>
+      <author>
+        <first-name>Иван</first-name>
+        <middle-name>Петрович</middle-name>
+        <last-name>Сидоров</last-name>
+      </author>
+      <author><nickname>The Lighthouse Keeper</nickname></author>
+      <book-title>Старый маяк</book-title>
+      <annotation>
+        <p>A short <emphasis>synthetic</emphasis> book about an old lighthouse.</p>
+        <empty-line/>
+        <p>Second annotation paragraph.</p>
+      </annotation>
+      <keywords>lighthouse, sea</keywords>
+      <date value="2026-01-01">2026</date>
+      <coverpage><image l:href="#cover.png"/></coverpage>
+      <lang>ru</lang>
+      <src-lang>en</src-lang>
+      <translator><first-name>Anna</first-name><last-name>Translator</last-name></translator>
+      <sequence name="Sea Stories" number="2"/>
+      <sequence name="Lighthouses" number="1.5"/>
+    </title-info>
+    <document-info>
+      <author><nickname>shelfgauge</nickname></author>
+      <date>2026-10-11</date>
+      <id>shelfgauge-test-full</id>
+      <version>1.0</version>
+    </document-info>
+  </description>
+  <body>
+    <title><p>Старый маяк</p></title>
+    <epigraph>
+      <p>The sea remembers everything.</p>
+      <text-author>Unknown sailor</text-author>
+    </epigraph>
+    <section id="ch1">
+      <title><p>Глава 1</p><p>Смотритель</p></title>
+      <epigraph><poem><stanza><v>Wind and water,</v><v>stone and light.</v></stanza></poem></epigraph>
+      <image l:href="#map.png" alt="Map of the coast"/>
+      <annotation><p>In which the keeper climbs the stairs.</p></annotation>
+      <p>Каждый вечер смотритель поднимался по <strong>винтовой</strong> лестнице.<a l:href="#n1" type="note">[1]</a></p>
+      <p>Text with <strikethrough>struck</strikethrough>, H<sub>2</sub>O, x<sup>2</sup> and <code>code</code>.</p>
+      <p>A <a l:href="https://example.org/lighthouse">link</a> and an inline image <image l:href="#map.png"/>.</p>
+      <subtitle>* * *</subtitle>
+      <empty-line/>
+      <poem>
+        <title><p>Песня маяка</p></title>
+        <epigraph><p>For the ships.</p></epigraph>
+        <stanza>
+          <title><p>I</p></title>
+          <subtitle>Night</subtitle>
+          <v>Гори, гори, огонь,</v>
+          <v>над тёмною водой.</v>
+        </stanza>
+        <stanza>
+          <v>Second stanza line.</v>
+        </stanza>
+        <text-author>The keeper</text-author>
+        <date>1901</date>
+      </poem>
+      <cite id="quote1">
+        <p>A cited paragraph.</p>
+        <text-author>A captain</text-author>
+      </cite>
+      <table>
+        <tr><th>Year</th><th align="right">Ships</th></tr>
+        <tr><td>1900</td><td align="right">12</td></tr>
+        <tr><td colspan="2">Total unknown</td></tr>
+      </table>
+    </section>
+    <section id="ch2">
+      <title><p>Глава 2</p></title>
+      <section id="ch2-1">
+        <title><p>2.1</p></title>
+        <p>Nested section text.</p>
+      </section>
+      <section id="ch2-2">
+        <p>Untitled nested section.</p>
+      </section>
+    </section>
+  </body>
+  <body name="notes">
+    <title><p>Примечания</p></title>
+    <section id="n1">
+      <title><p>1</p></title>
+      <p>A footnote about the stairs.</p>
+    </section>
+  </body>
+  <binary id="cover.png" content-type="image/png">iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAf
+FcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==</binary>
+  <binary id="map.png" content-type="image/jpg">iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==</binary>
+</FictionBook>

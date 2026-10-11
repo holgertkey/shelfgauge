@@ -19,7 +19,18 @@ Build numbers (`+NNN`) do not get their own sections.
 - FB2 encoding detection (`format::fb2::encoding`): BOM → UTF-16 pattern → XML
   declaration → valid UTF-8 → `chardetng` guess. Lying declarations are handled
   (declared UTF-8 but invalid → guessed; declared legacy but valid non-ASCII UTF-8 →
-  UTF-8); malformed input is reported instead of failing.
+  UTF-8); mostly-valid UTF-8 with a few stray bytes stays UTF-8 (with replacement
+  characters) instead of being misread as a legacy encoding; malformed input is reported
+  instead of failing.
+- FB2 parser (`format::fb2::Fb2Parser`, registered by `Registry::with_builtin_formats`):
+  `<title-info>` metadata (title, authors, nested sequences, genres, annotation, language,
+  cover) and full content (all bodies and FB2 block/inline elements, binaries with
+  lenient base64 and MIME sniffing). Elements are matched by local name; unknown
+  elements keep their text; trailing content after subsections is wrapped into an
+  untitled section; a `<body>` image before the title is allowed. Never panics: non-XML/non-FB2 input, DTDs and nesting deeper than
+  256 levels are errors; nesting beyond 64 levels is flattened to text.
+- `format::PARSER_STACK_SIZE` (16 MB) and `run_with_parser_stack`: threads running
+  parsers need this much stack.
 
 ## [0.1.0] - 2026-10-11
 

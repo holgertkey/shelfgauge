@@ -105,7 +105,8 @@ impl FromStr for BlockId {
 /// Bibliographic metadata of a book.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BookMetadata {
-    /// The book title (parsers fall back to the file name if the source has none).
+    /// The book title; empty if the source has none (the scanner then uses the file
+    /// name).
     pub title: String,
     /// Authors in source order.
     pub authors: Vec<Person>,

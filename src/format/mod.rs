@@ -10,10 +10,48 @@ pub mod model;
 
 use model::{BookContent, BookMetadata};
 
+/// Minimum stack size for threads that run a [`BookParser`].
+///
+/// XML parsing recurses per nesting level; parsers bound the depth they accept so that
+/// parsing fits in this much stack even in debug builds. The default 2 MB of spawned
+/// threads is not enough, so scanner and web worker threads must be configured with at
+/// least this size (or use [`run_with_parser_stack`]).
+pub const PARSER_STACK_SIZE: usize = 16 * 1024 * 1024;
+
+/// Runs `f` on a new thread with [`PARSER_STACK_SIZE`] of stack and returns its result.
+///
+/// A panic in `f` is propagated to the caller.
+///
+/// # Examples
+///
+/// ```
+/// use shelfgauge::format::{BookParser, run_with_parser_stack};
+/// use shelfgauge::format::fb2::Fb2Parser;
+///
+/// let metadata = run_with_parser_stack(|| {
+///     Fb2Parser.parse_metadata(b"<FictionBook/>")
+/// });
+/// assert!(metadata.is_ok());
+/// ```
+pub fn run_with_parser_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    std::thread::scope(|scope| {
+        let handle = std::thread::Builder::new()
+            .name("parser".to_owned())
+            .stack_size(PARSER_STACK_SIZE)
+            .spawn_scoped(scope, f)
+            .expect("failed to spawn a parser thread");
+        match handle.join() {
+            Ok(value) => value,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    })
+}
+
 /// A parser for one ebook format.
 ///
 /// Implementations must never panic on malformed input; they return [`ParseError`]
-/// instead. Parsers are shared between scanner threads, hence `Send + Sync`.
+/// instead. Parsers are shared between scanner threads, hence `Send + Sync`. They must
+/// run on threads with at least [`PARSER_STACK_SIZE`] of stack.
 pub trait BookParser: Send + Sync {
     /// A short lowercase format name stored in the index, e.g. `fb2`.
     fn format(&self) -> &'static str;
@@ -56,6 +94,22 @@ impl Registry {
     /// Creates an empty registry.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Creates a registry with all built-in formats (FB2).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use shelfgauge::format::Registry;
+    ///
+    /// let registry = Registry::with_builtin_formats();
+    /// assert_eq!(registry.for_extension("FB2").unwrap().format(), "fb2");
+    /// ```
+    pub fn with_builtin_formats() -> Self {
+        let mut registry = Self::new();
+        registry.register(Box::new(fb2::Fb2Parser));
+        registry
     }
 
     /// Adds a parser; for an extension claimed twice, the first registered parser wins.
