@@ -17,8 +17,8 @@ Build numbers (`+NNN`) do not get their own sections.
 - Base dependencies: `anyhow`, `thiserror`, `tracing`, `tracing-subscriber`, `clap`.
 - Minimal CLI with `--version` and `--help`.
 - `build.rs` version sync: the version from `Cargo.toml` is written into `README.md`
-  and a missing `CHANGELOG.md` section header is added; a `+000` build suffix is not
-  displayed.
+  and a missing `CHANGELOG.md` section header is added. The `+BUILD` counter is a local
+  development aid: only debug builds show it in `--version`.
 - `README.md` and `CHANGELOG.md`.
 - GitHub Actions CI (fmt, clippy, test, doc) on Linux, Windows and macOS.
 - Library root: positional `PATH` argument (default: the current directory); working

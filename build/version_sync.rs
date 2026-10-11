@@ -6,25 +6,33 @@
 //! included both by `build.rs` and by `tests/version_sync.rs`.
 //!
 //! Rules:
-//! - The displayed version omits a `+000` build suffix (`0.1.0+000` → `0.1.0`).
+//! - The `+BUILD` counter is a local development aid only. It is shown only by debug
+//!   builds of the program ([`program_version`]), never in release builds, `README.md`
+//!   or `CHANGELOG.md`. A `+000` suffix is never shown.
 //! - `README.md`: lines starting with one of [`README_PREFIXES`] get the version token
-//!   after the prefix replaced with the displayed version.
-//! - `CHANGELOG.md` has one section per `MAJOR.MINOR.PATCH`; the build counter never
-//!   appears there. Existing headers are never modified (renaming the topmost one would
+//!   after the prefix replaced with the base version ([`base_version`]).
+//! - `CHANGELOG.md` has one section per `MAJOR.MINOR.PATCH`. Existing headers are never modified (renaming the topmost one would
 //!   relabel the previous version's entries). If no section exists for the current base
 //!   version, an empty `## [VERSION] - DATE` header is inserted below `## [Unreleased]`,
 //!   above the previous version's section.
 //! - Nothing is returned (and nothing written) when a file is already in sync.
 
-/// Line prefixes in `README.md` that are followed by the displayed version.
+/// Line prefixes in `README.md` that are followed by the version.
 pub const README_PREFIXES: &[&str] = &["# shelfgauge v", "**Current version:** ", "_shelfgauge v"];
 
 /// Name of the changelog section for changes not yet assigned to a version.
 const UNRELEASED: &str = "Unreleased";
 
-/// The version as shown to users: a `+000` build suffix is omitted.
-pub fn display_version(version: &str) -> &str {
-    version.strip_suffix("+000").unwrap_or(version)
+/// The version reported by the program (`--version`).
+///
+/// Release builds report the base version; debug builds keep a non-zero `+BUILD`
+/// suffix (`0.1.0+003`) and omit `+000`.
+pub fn program_version(version: &str, release: bool) -> &str {
+    if release {
+        base_version(version)
+    } else {
+        version.strip_suffix("+000").unwrap_or(version)
+    }
 }
 
 /// The version without its `+BUILD` suffix (`0.1.0+013` → `0.1.0`).
@@ -33,7 +41,7 @@ pub fn base_version(version: &str) -> &str {
 }
 
 /// Returns the updated `README.md` content, or `None` if it is already in sync.
-pub fn sync_readme(content: &str, display_version: &str) -> Option<String> {
+pub fn sync_readme(content: &str, version: &str) -> Option<String> {
     let mut changed = false;
     let mut out = String::with_capacity(content.len());
     for line in content.split_inclusive('\n') {
@@ -44,11 +52,11 @@ pub fn sync_readme(content: &str, display_version: &str) -> Option<String> {
                 let token_len = rest
                     .find(|c: char| !is_version_char(c))
                     .unwrap_or(rest.len());
-                if &rest[..token_len] != display_version {
+                if &rest[..token_len] != version {
                     changed = true;
                 }
                 out.push_str(prefix);
-                out.push_str(display_version);
+                out.push_str(version);
                 out.push_str(&rest[token_len..]);
                 out.push_str(eol);
             }
@@ -162,11 +170,18 @@ mod tests {
                           _shelfgauge v0.1.0 — MIT License_\n";
 
     #[test]
-    fn display_version_omits_only_the_zero_build() {
-        assert_eq!(display_version("0.1.0"), "0.1.0");
-        assert_eq!(display_version("0.1.0+000"), "0.1.0");
-        assert_eq!(display_version("0.1.0+001"), "0.1.0+001");
-        assert_eq!(display_version("1.2.3+100"), "1.2.3+100");
+    fn debug_program_version_keeps_only_a_nonzero_build() {
+        assert_eq!(program_version("0.1.0", false), "0.1.0");
+        assert_eq!(program_version("0.1.0+000", false), "0.1.0");
+        assert_eq!(program_version("0.1.0+001", false), "0.1.0+001");
+        assert_eq!(program_version("1.2.3+100", false), "1.2.3+100");
+    }
+
+    #[test]
+    fn release_program_version_never_has_a_build() {
+        assert_eq!(program_version("0.1.0", true), "0.1.0");
+        assert_eq!(program_version("0.1.0+000", true), "0.1.0");
+        assert_eq!(program_version("0.1.0+001", true), "0.1.0");
     }
 
     #[test]

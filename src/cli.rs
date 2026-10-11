@@ -156,7 +156,7 @@ mod tests {
     }
 
     #[test]
-    fn version_flag_prints_display_version() {
+    fn version_flag_prints_program_version() {
         let err = Cli::try_parse_from(["shelfgauge", "--version"]).unwrap_err();
         assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
         assert_eq!(

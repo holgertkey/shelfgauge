@@ -11,5 +11,5 @@ pub mod library;
 
 pub use error::{Error, Result};
 
-/// The program version as shown to users (a `+000` build suffix is omitted).
+/// The program version: `MAJOR.MINOR.PATCH`, plus a non-zero `+BUILD` in debug builds.
 pub const VERSION: &str = env!("SHELFGAUGE_VERSION");
