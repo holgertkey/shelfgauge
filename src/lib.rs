@@ -10,6 +10,7 @@ pub mod container;
 pub mod error;
 pub mod format;
 pub mod library;
+pub mod storage;
 
 pub use error::{Error, Result};
 

@@ -31,8 +31,11 @@ Key design points to keep in mind when implementing:
   message, not a server error.
 - **SQLite access**: WAL mode; the scanner parses in parallel (`rayon`) and sends results
   to a single writer thread that writes in batched transactions (plain threads, not
-  async); web handlers use a small read-connection pool and `spawn_blocking`. Search uses
-  FTS5 (`unicode61`, prefix queries; no stemming in v1).
+  async); web handlers use a small read-connection pool (`r2d2_sqlite`) and
+  `spawn_blocking`. Search uses FTS5 (`unicode61`, prefix queries; `unicode61` does not
+  fold `ё`, so indexed text and queries map `ё` → `е`; no stemming in v1). Paths are
+  stored relative to the library root as `/`-separated TEXT; schema changes after the
+  first release are append-only migrations (`PRAGMA user_version`).
 - **Parser threads need a large stack**: `roxmltree` recurses once per XML nesting level
   and a stack overflow aborts the whole process, so the FB2 parser rejects nesting deeper
   than 256 levels, and every thread that runs a parser (rayon pool, blocking workers) is
@@ -99,7 +102,7 @@ decided in V2.
 | Templates | askama |
 | Static assets | embedded in the binary (`rust-embed` or similar) |
 | Database | rusqlite (SQLite, WAL) + FTS5 |
-| DB access from async | read pool (`deadpool-sqlite` or `r2d2_sqlite`) + `spawn_blocking` |
+| DB access from async | read pool (`r2d2_sqlite`) + `spawn_blocking` |
 | Config | serde + toml |
 | FB2 XML parsing | roxmltree (read-only DOM) |
 | Encoding detection | encoding_rs (+ chardetng fallback) |

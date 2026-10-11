@@ -39,6 +39,17 @@ Build numbers (`+NNN`) do not get their own sections.
   CRC32 (changed/missing entries report `needs_rescan`), stop at the declared size and
   refuse books over `ReadLimits::max_book_size` (256 MiB by default). Supported
   compression: stored, deflate, deflate64, bzip2, LZMA (all pure Rust).
+- SQLite storage (`storage`, bundled SQLite via `rusqlite`): WAL mode (falls back to
+  the rollback journal with a warning where WAL is unavailable), foreign keys, busy
+  timeout; schema migrations via `PRAGMA user_version` (newer schemas are refused);
+  read-only connection pool (`r2d2_sqlite`) for the web layer. Schema v1: containers
+  (path, kind, size, mtime, content hash), books (location, metadata, cover MIME,
+  status `ok`/`error`/`removed`), authors (de-duplicated by a normalized name key),
+  series, genres and an FTS5 index (`unicode61`, prefix indexes, `ё` folded to `е`).
+  Queries: idempotent book upsert, removal and relocation, matcher lookups by content
+  hash and by entry size + CRC32, paged author list with prefix filter, books by
+  author grouped by series, folder tree with zip archives as virtual folders, book
+  details and full-text search with safe query building.
 
 ## [0.1.0] - 2026-10-11
 
