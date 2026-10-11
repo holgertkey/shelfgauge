@@ -5,6 +5,7 @@
 
 use std::path::Path;
 
+pub mod fb2;
 pub mod model;
 
 use model::{BookContent, BookMetadata};

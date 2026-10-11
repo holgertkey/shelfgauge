@@ -32,8 +32,10 @@ Key design points to keep in mind when implementing:
   to a single writer thread that writes in batched transactions (plain threads, not
   async); web handlers use a small read-connection pool and `spawn_blocking`. Search uses
   FTS5 (`unicode61`, prefix queries; no stemming in v1).
-- **FB2 encoding detection** before XML parsing: BOM → XML declaration (`encoding_rs`) →
-  fallback (valid UTF-8, else detector / windows-1251).
+- **FB2 encoding detection** before XML parsing: BOM → UTF-16 pattern → XML declaration
+  (`encoding_rs`) → fallback (valid UTF-8, else `chardetng`). The declaration is not
+  trusted blindly: it is overridden when the bytes contradict it. `roxmltree` ignores the
+  declared encoding, so the decoded text is parsed as is.
 - **Format abstraction is two layers, and must stay that way as formats are added**:
   - *Container layer*: resolves raw bytes to parse (bare file vs. one entry of a `.zip`),
     independent of ebook format.
