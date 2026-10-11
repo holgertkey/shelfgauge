@@ -8,6 +8,15 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+### Added
+
+- Format-independent book model (`format::model`): `BookMetadata` (title, authors,
+  series list with a verbatim index, genres, annotation, language, cover) and
+  `BookContent` (bodies → section tree → blocks, images by id), with inline markup and
+  links. Every block gets a deterministic `BlockId` (`b<n>`) in document order; the
+  numbering rule is documented and pinned by a golden test. `PARSER_VERSION` = 1.
+- `BookParser` trait and an extension → parser `Registry` (case-insensitive).
+
 ## [0.1.0] - 2026-10-11
 
 ### Added

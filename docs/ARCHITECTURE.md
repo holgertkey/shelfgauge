@@ -52,7 +52,8 @@ Key design points to keep in mind when implementing:
     HTML, rendered from `BookContent` (never directly from FB2). Splitting into parts is
     configured in `[reader]` (`none` / `section` / `size`, cut at block boundaries).
   - **Block IDs** are the block's ordinal in document order (`b1234`), counting every
-    block. They must be deterministic and **must not depend on the split setting**; deep
+    block (the exact rule is documented in `src/format/model.rs` and pinned by a golden
+    test). Each FB2 `<body>` is a root section (main body first, then notes bodies). They must be deterministic and **must not depend on the split setting**; deep
     links address a block (`?at=<block-id>`) and the server resolves the part. Cached
     `BookContent` carries a `parser_version`; bumping it invalidates the cache.
 
