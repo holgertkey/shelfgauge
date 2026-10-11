@@ -22,7 +22,8 @@ Key design points to keep in mind when implementing:
   for `.zip` archives compare per-entry `(size, CRC32)` from the central directory so only
   changed entries are re-parsed; catch per-book parse failures so one broken book never
   aborts a scan (it's recorded with an error status). Zip entries are identified by raw
-  name bytes (old archives use CP866 names without the UTF-8 flag). Nested archives are
+  name bytes (old archives use CP866 names without the UTF-8 flag; display names are
+  decoded UTF-8 → CP866 → windows-1251 → CP437). Nested archives are
   skipped. Removed books get status `removed` instead of being deleted.
 - **Moved/renamed files** are re-matched during a scan: plain files by `content_hash`, zip
   entries by `(size, CRC32)`; a unique match keeps the book id and updates its location,

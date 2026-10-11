@@ -31,6 +31,14 @@ Build numbers (`+NNN`) do not get their own sections.
   256 levels are errors; nesting beyond 64 levels is flattened to text.
 - `format::PARSER_STACK_SIZE` (16 MB) and `run_with_parser_stack`: threads running
   parsers need this much stack.
+- Container layer (`container`): `BookLocation` (path relative to the library root +
+  optional zip entry identified by raw name bytes, index, size, CRC32) and `read_book`.
+  Zip archives are listed from the central directory without decompression; entry
+  display names are decoded as UTF-8, CP866, windows-1251 or CP437; directories,
+  encrypted entries and nested archives are skipped. Reads check the recorded size and
+  CRC32 (changed/missing entries report `needs_rescan`), stop at the declared size and
+  refuse books over `ReadLimits::max_book_size` (256 MiB by default). Supported
+  compression: stored, deflate, deflate64, bzip2, LZMA (all pure Rust).
 
 ## [0.1.0] - 2026-10-11
 
