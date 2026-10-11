@@ -33,19 +33,44 @@ impl Library {
     /// assert_eq!(library.config_path(), library.data_dir().join("config.toml"));
     /// ```
     pub fn open(root: &Path) -> Result<Self> {
-        let root = std::path::absolute(root).map_err(|e| Error::io(root, e))?;
-        match std::fs::metadata(&root) {
-            Ok(meta) if meta.is_dir() => {}
-            Ok(_) => return Err(Error::NotADirectory(root)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Err(Error::LibraryNotFound(root));
-            }
-            Err(e) => return Err(Error::io(root, e)),
-        }
-        let library = Self { root };
+        let library = Self::at(root)?;
         let data_dir = library.data_dir();
         std::fs::create_dir_all(&data_dir).map_err(|e| Error::io(&data_dir, e))?;
         Ok(library)
+    }
+
+    /// Opens an existing library at `root` without creating anything.
+    ///
+    /// Fails with [`Error::NotALibrary`] if `root` has no `.shelfgauge/` directory, so
+    /// running shelfgauge in an arbitrary directory never turns it into a library.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use shelfgauge::library::Library;
+    ///
+    /// let dir = tempfile::tempdir().unwrap();
+    /// assert!(Library::open_existing(dir.path()).is_err());
+    /// Library::open(dir.path()).unwrap();
+    /// assert!(Library::open_existing(dir.path()).is_ok());
+    /// ```
+    pub fn open_existing(root: &Path) -> Result<Self> {
+        let library = Self::at(root)?;
+        if !library.data_dir().is_dir() {
+            return Err(Error::NotALibrary(library.root));
+        }
+        Ok(library)
+    }
+
+    /// The library at `root` (made absolute), checking that it is a directory.
+    fn at(root: &Path) -> Result<Self> {
+        let root = std::path::absolute(root).map_err(|e| Error::io(root, e))?;
+        match std::fs::metadata(&root) {
+            Ok(meta) if meta.is_dir() => Ok(Self { root }),
+            Ok(_) => Err(Error::NotADirectory(root)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(Error::LibraryNotFound(root)),
+            Err(e) => Err(Error::io(root, e)),
+        }
     }
 
     /// The absolute path of the library root.
@@ -101,6 +126,20 @@ mod tests {
         assert_eq!(library.db_path(), data.join("library.db"));
         assert_eq!(library.covers_dir(), data.join("covers"));
         assert_eq!(library.content_dir(), data.join("content"));
+    }
+
+    #[test]
+    fn open_existing_never_creates_anything() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = Library::open_existing(dir.path()).unwrap_err();
+        assert!(matches!(err, Error::NotALibrary(_)), "{err}");
+        assert!(err.to_string().contains(".shelfgauge"), "{err}");
+        assert!(!dir.path().join(DATA_DIR_NAME).exists());
+        let missing = dir.path().join("missing");
+        assert!(matches!(
+            Library::open_existing(&missing).unwrap_err(),
+            Error::LibraryNotFound(_)
+        ));
     }
 
     #[test]

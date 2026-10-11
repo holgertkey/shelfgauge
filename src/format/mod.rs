@@ -139,6 +139,14 @@ impl Registry {
             .map(Box::as_ref)
     }
 
+    /// All file extensions handled by the registered parsers.
+    pub fn extensions(&self) -> Vec<&'static str> {
+        self.parsers
+            .iter()
+            .flat_map(|parser| parser.extensions().iter().copied())
+            .collect()
+    }
+
     /// The parser for a file name or path, by its extension (case-insensitive).
     pub fn for_path(&self, path: &Path) -> Option<&dyn BookParser> {
         self.for_extension(path.extension()?.to_str()?)

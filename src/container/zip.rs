@@ -84,61 +84,91 @@ pub fn list_books(path: &Path, extensions: &[&str]) -> Result<Vec<ZipEntry>, Con
 
 /// Reads one entry, checking that it still matches `entry` and respecting the limits.
 ///
-/// The entry is looked up at `entry.index` first and by raw name otherwise. Its size and
-/// CRC32 must equal the recorded ones ([`ContainerError::EntryChanged`] otherwise); the
-/// data is verified against the CRC32 while reading, and decompression stops at the
-/// declared size, so lying headers cannot inflate memory use.
+/// Opens the archive for this one read; use [`ArchiveReader`] to read many entries.
 pub fn read_entry(
     path: &Path,
     entry: &EntryRef,
     limits: &ReadLimits,
 ) -> Result<Vec<u8>, ContainerError> {
-    let mut archive = open(path)?;
-    let name = || display_name(&entry.name, false);
-    let index = find(&archive, entry).ok_or_else(|| ContainerError::EntryNotFound {
-        path: path.to_owned(),
-        name: name(),
-    })?;
-    {
-        let file = archive
-            .by_index_data(index)
-            .map_err(|e| zip_error(path, e))?;
-        if file.size() != entry.size || file.crc32() != entry.crc32 {
-            return Err(ContainerError::EntryChanged {
-                path: path.to_owned(),
-                name: name(),
-            });
-        }
-        if file.encrypted() {
-            return Err(ContainerError::Encrypted {
-                path: path.to_owned(),
-                name: name(),
-            });
-        }
-        if file.size() > limits.max_book_size {
-            return Err(ContainerError::TooLarge {
-                path: path.to_owned(),
-                size: file.size(),
-                limit: limits.max_book_size,
-            });
-        }
-    }
-    let file = archive.by_index(index).map_err(|e| zip_error(path, e))?;
-    let capacity = usize::try_from(entry.size).unwrap_or(0);
-    let mut data = Vec::with_capacity(capacity);
-    file.take(limits.max_book_size + 1)
-        .read_to_end(&mut data)
-        .map_err(|e| ContainerError::Zip {
+    ArchiveReader::open(path)?.read_entry(entry, limits)
+}
+
+/// An open archive for reading many entries without re-parsing the central directory.
+pub struct ArchiveReader {
+    path: std::path::PathBuf,
+    archive: ZipArchive<BufReader<File>>,
+}
+
+impl ArchiveReader {
+    /// Opens the archive at `path`.
+    pub fn open(path: &Path) -> Result<Self, ContainerError> {
+        Ok(Self {
             path: path.to_owned(),
-            message: format!("cannot read entry {:?}: {e}", name()),
+            archive: open(path)?,
+        })
+    }
+
+    /// Reads one entry, checking that it still matches `entry` and respecting the
+    /// limits.
+    ///
+    /// The entry is looked up at `entry.index` first and by raw name otherwise. Its
+    /// size and CRC32 must equal the recorded ones ([`ContainerError::EntryChanged`]
+    /// otherwise); the data is verified against the CRC32 while reading, and
+    /// decompression stops at the declared size, so lying headers cannot inflate
+    /// memory use.
+    pub fn read_entry(
+        &mut self,
+        entry: &EntryRef,
+        limits: &ReadLimits,
+    ) -> Result<Vec<u8>, ContainerError> {
+        let path = self.path.as_path();
+        let archive = &mut self.archive;
+        let name = || display_name(&entry.name, false);
+        let index = find(archive, entry).ok_or_else(|| ContainerError::EntryNotFound {
+            path: path.to_owned(),
+            name: name(),
         })?;
-    if data.len() as u64 != entry.size {
-        return Err(ContainerError::Zip {
-            path: path.to_owned(),
-            message: format!("entry {:?} has an unexpected size", name()),
-        });
+        {
+            let file = archive
+                .by_index_data(index)
+                .map_err(|e| zip_error(path, e))?;
+            if file.size() != entry.size || file.crc32() != entry.crc32 {
+                return Err(ContainerError::EntryChanged {
+                    path: path.to_owned(),
+                    name: name(),
+                });
+            }
+            if file.encrypted() {
+                return Err(ContainerError::Encrypted {
+                    path: path.to_owned(),
+                    name: name(),
+                });
+            }
+            if file.size() > limits.max_book_size {
+                return Err(ContainerError::TooLarge {
+                    path: path.to_owned(),
+                    size: file.size(),
+                    limit: limits.max_book_size,
+                });
+            }
+        }
+        let file = archive.by_index(index).map_err(|e| zip_error(path, e))?;
+        let capacity = usize::try_from(entry.size).unwrap_or(0);
+        let mut data = Vec::with_capacity(capacity);
+        file.take(limits.max_book_size + 1)
+            .read_to_end(&mut data)
+            .map_err(|e| ContainerError::Zip {
+                path: path.to_owned(),
+                message: format!("cannot read entry {:?}: {e}", name()),
+            })?;
+        if data.len() as u64 != entry.size {
+            return Err(ContainerError::Zip {
+                path: path.to_owned(),
+                message: format!("entry {:?} has an unexpected size", name()),
+            });
+        }
+        Ok(data)
     }
-    Ok(data)
 }
 
 /// Decodes an entry name for display (see the [module docs](self)).
@@ -350,6 +380,29 @@ pub(crate) mod tests {
         assert_eq!(entry.crc32, crc32(b"<FictionBook/>"));
         let data = read_entry(&path, entry, &ReadLimits::default()).unwrap();
         assert_eq!(data, b"<FictionBook/>");
+    }
+
+    #[test]
+    fn archive_reader_reads_many_entries_from_one_handle() {
+        let dir = tempfile::tempdir().unwrap();
+        let bodies: Vec<Vec<u8>> = (0..20).map(|i| vec![b'a' + i as u8; 10]).collect();
+        let names: Vec<String> = (0..20).map(|i| format!("{i}.fb2")).collect();
+        let entries: Vec<Entry<'_>> = names
+            .iter()
+            .zip(&bodies)
+            .map(|(n, d)| Entry::new(n.as_bytes(), d))
+            .collect();
+        let path = write_zip(dir.path(), "r.zip", &build_zip(&entries));
+        let books = list_books(&path, &["fb2"]).unwrap();
+        let mut reader = ArchiveReader::open(&path).unwrap();
+        for (book, body) in books.iter().zip(&bodies).rev() {
+            assert_eq!(
+                &reader
+                    .read_entry(&book.entry, &ReadLimits::default())
+                    .unwrap(),
+                body
+            );
+        }
     }
 
     #[test]

@@ -5,11 +5,13 @@
 
 #![warn(missing_docs)]
 
+pub mod cache;
 pub mod config;
 pub mod container;
 pub mod error;
 pub mod format;
 pub mod library;
+pub mod scanner;
 pub mod storage;
 
 pub use error::{Error, Result};

@@ -25,10 +25,18 @@ Key design points to keep in mind when implementing:
   name bytes (old archives use CP866 names without the UTF-8 flag; display names are
   decoded UTF-8 → CP866 → windows-1251 → CP437). Nested archives are
   skipped. Removed books get status `removed` instead of being deleted.
+- **Scan safety**: an archive's real `(size, mtime)` is committed only after all of its
+  books (a sentinel mtime marks it unfinished), a plain file's container and book are
+  committed together, so an interrupted scan is completed by the next one. Books are
+  marked `removed` only after a complete, uncancelled walk, never below an unreadable
+  directory, for an archive that cannot be listed, or after a transient read error.
+  Symlinks are not followed; non-UTF-8 paths are skipped with a warning.
 - **Moved/renamed files** are re-matched during a scan: plain files by `content_hash`, zip
-  entries by `(size, CRC32)`; a unique match keeps the book id and updates its location,
-  ambiguous matches create new rows. Opening a book whose file is gone shows a "rescan"
-  message, not a server error.
+  entries by `(size, CRC32)` (before any decompression); a unique match keeps the book id
+  and updates its location, ambiguous matches create new rows. The content hash is
+  xxh3-128 and is stored on the book row, so it stays valid when a path is reused. Moves
+  between a plain file and an archive are not matched (new id). Opening a book whose file
+  is gone shows a "rescan" message, not a server error.
 - **SQLite access**: WAL mode; the scanner parses in parallel (`rayon`) and sends results
   to a single writer thread that writes in batched transactions (plain threads, not
   async); web handlers use a small read-connection pool (`r2d2_sqlite`) and

@@ -22,6 +22,8 @@ pub const SCHEMA_VERSION: u32 = MIGRATIONS.len() as u32;
 /// - Paths are relative to the library root, `/`-separated TEXT.
 /// - `mtime_ns` is the modification time in nanoseconds since the Unix epoch, compared
 ///   for exact equality.
+/// - A book's content identity is `content_hash` (plain files) or `entry_size` +
+///   `entry_crc32` (zip entries); it stays with the book when the path is reused.
 /// - Plain-file books have an empty `entry_name` (not NULL: NULLs are distinct in
 ///   unique indexes). Locations are unique among books that are not `removed`.
 /// - `books_fts` is a contentful FTS5 table whose rowid is the book id; its text is
@@ -48,6 +50,7 @@ CREATE TABLE books (
     entry_index   INTEGER,
     entry_size    INTEGER,
     entry_crc32   INTEGER,
+    content_hash  BLOB,
     format        TEXT    NOT NULL,
     title         TEXT    NOT NULL,
     sort_title    TEXT    NOT NULL,
@@ -65,6 +68,8 @@ CREATE UNIQUE INDEX books_location ON books (container_id, entry_name)
 CREATE INDEX books_container ON books (container_id);
 CREATE INDEX books_entry_identity ON books (entry_size, entry_crc32)
     WHERE entry_crc32 IS NOT NULL;
+CREATE INDEX books_content_hash ON books (content_hash)
+    WHERE content_hash IS NOT NULL;
 
 CREATE TABLE authors (
     id           INTEGER PRIMARY KEY,

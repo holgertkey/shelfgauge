@@ -24,7 +24,7 @@ fn stderr(output: &Output) -> String {
 #[test]
 fn first_run_creates_config_and_prints_effective_config() {
     let dir = tempfile::tempdir().unwrap();
-    let output = run(dir.path(), &[]);
+    let output = run(dir.path(), &["."]);
     assert!(output.status.success(), "{}", stderr(&output));
 
     let config = dir.path().join(".shelfgauge").join("config.toml");
@@ -53,7 +53,9 @@ fn library_path_argument_and_scan_subcommand() {
     assert!(output.status.success(), "{}", stderr(&output));
     assert!(books.join(".shelfgauge").join("config.toml").is_file());
     assert!(!dir.path().join(".shelfgauge").exists());
-    assert!(stdout(&output).contains("Scanning is not implemented yet."));
+    let out = stdout(&output);
+    assert!(out.contains("0 added"), "{out}");
+    assert!(books.join(".shelfgauge").join("library.db").is_file());
 }
 
 #[test]
@@ -126,4 +128,52 @@ fn missing_library_directory_fails() {
         "{}",
         stderr(&output)
     );
+}
+
+#[test]
+fn scan_indexes_books_and_reports_a_summary() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("book.fb2"),
+        include_bytes!("fixtures/fb2/minimal.fb2"),
+    )
+    .unwrap();
+    let output = run(dir.path(), &["scan", "."]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let out = stdout(&output);
+    assert!(out.contains("1 added"), "{out}");
+    assert!(out.contains("(1 parsed)"), "{out}");
+
+    let output = run(dir.path(), &["scan"]);
+    let out = stdout(&output);
+    assert!(
+        out.contains("0 added") && out.contains("1 unchanged"),
+        "{out}"
+    );
+    assert!(out.contains("(0 parsed)"), "{out}");
+}
+
+/// Regression: `shelfgauge -v` in an arbitrary directory used to create
+/// `.shelfgauge/config.toml` there. Without an explicit PATH, nothing is created.
+#[test]
+fn no_library_is_created_without_an_explicit_path() {
+    let dir = tempfile::tempdir().unwrap();
+    for args in [&[][..], &["-v"], &["scan"], &["--no-scan"]] {
+        let output = run(dir.path(), args);
+        assert!(!output.status.success(), "{args:?}");
+        let err = stderr(&output);
+        assert!(
+            err.contains("is not a shelfgauge library"),
+            "{args:?}: {err}"
+        );
+        assert!(
+            err.contains("shelfgauge ."),
+            "{args:?}: hint expected: {err}"
+        );
+        assert!(!dir.path().join(".shelfgauge").exists(), "{args:?}");
+    }
+    // Explicit `.` creates the library; afterwards the bare command works.
+    assert!(run(dir.path(), &["scan", "."]).status.success());
+    assert!(run(dir.path(), &["scan"]).status.success());
+    assert!(run(dir.path(), &["-v"]).status.success());
 }

@@ -65,6 +65,9 @@ fn book(
 ) -> BookRecord {
     BookRecord {
         container_id,
+        content_hash: entry
+            .is_none()
+            .then(|| format!("hash-{title}").into_bytes()),
         entry,
         format: "fb2".to_owned(),
         title: title.to_owned(),
@@ -311,7 +314,7 @@ fn matcher_queries() {
     let f = upsert_book(&db.conn, &book(file, None, "F", vec![])).unwrap();
     let z = upsert_book(&db.conn, &book(zip, Some(entry("x.fb2", 42)), "Z", vec![])).unwrap();
 
-    let by_hash = find_by_content_hash(&db.conn, b"a.fb2").unwrap();
+    let by_hash = find_by_content_hash(&db.conn, b"hash-F").unwrap();
     assert_eq!(by_hash.iter().map(|b| b.id).collect::<Vec<_>>(), [f]);
     assert!(find_by_content_hash(&db.conn, b"nope").unwrap().is_empty());
 
@@ -330,7 +333,7 @@ fn matcher_queries() {
 fn error_books_keep_their_location() {
     let db = db();
     let c = container(&db.conn, "broken.fb2");
-    let record = BookRecord::failed(c, None, "fb2", "broken", "invalid XML: oops");
+    let record = BookRecord::failed(c, None, None, "fb2", "broken", "invalid XML: oops");
     let id = upsert_book(&db.conn, &record).unwrap();
     assert_eq!(find_live_at(&db.conn, c, b"").unwrap(), Some(id));
     let details = book_by_id(&db.conn, id).unwrap().unwrap();
@@ -557,7 +560,7 @@ fn record_from_parsed_metadata() {
         }),
         ..BookMetadata::default()
     };
-    let record = BookRecord::parsed(1, None, "fb2", &metadata, "file-name");
+    let record = BookRecord::parsed(1, None, None, "fb2", &metadata, "file-name");
     assert_eq!(record.title, "file-name");
     assert_eq!(record.annotation, "One.\nTwo.");
     assert_eq!(record.cover_mime.as_deref(), Some("image/png"));

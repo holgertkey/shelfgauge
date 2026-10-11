@@ -60,6 +60,8 @@ pub struct BookRecord {
     pub container_id: i64,
     /// The archive entry; `None` for a plain file.
     pub entry: Option<EntryRecord>,
+    /// Content hash of a plain file (its identity for moved-file matching).
+    pub content_hash: Option<Vec<u8>>,
     /// The format name, e.g. `fb2`.
     pub format: String,
     /// The title (the file name if the book has none).
@@ -87,6 +89,7 @@ impl BookRecord {
     pub fn parsed(
         container_id: i64,
         entry: Option<EntryRecord>,
+        content_hash: Option<Vec<u8>>,
         format: &str,
         metadata: &BookMetadata,
         fallback_title: &str,
@@ -99,6 +102,7 @@ impl BookRecord {
         Self {
             container_id,
             entry,
+            content_hash,
             format: format.to_owned(),
             title,
             authors: metadata.authors.clone(),
@@ -116,6 +120,7 @@ impl BookRecord {
     pub fn failed(
         container_id: i64,
         entry: Option<EntryRecord>,
+        content_hash: Option<Vec<u8>>,
         format: &str,
         title: &str,
         message: &str,
@@ -123,6 +128,7 @@ impl BookRecord {
         Self {
             container_id,
             entry,
+            content_hash,
             format: format.to_owned(),
             title: title.to_owned(),
             authors: Vec::new(),
@@ -151,6 +157,8 @@ pub struct LocatedBook {
     pub entry_size: Option<u64>,
     /// Entry CRC32 (zip entries only).
     pub entry_crc32: Option<u32>,
+    /// Content hash (plain files only).
+    pub content_hash: Option<Vec<u8>>,
     /// Status.
     pub status: BookStatus,
 }
@@ -255,7 +263,7 @@ pub fn update_book(conn: &Connection, id: i64, record: &BookRecord) -> Result<()
              container_id = ?2, entry_name = ?3, entry_path = ?4, entry_index = ?5,
              entry_size = ?6, entry_crc32 = ?7, format = ?8, title = ?9, sort_title = ?10,
              language = ?11, annotation = ?12, cover_mime = ?13, status = ?14,
-             error_message = ?15, updated_at = unixepoch()
+             error_message = ?15, content_hash = ?16, updated_at = unixepoch()
          WHERE id = ?1",
         params![
             id,
@@ -273,6 +281,7 @@ pub fn update_book(conn: &Connection, id: i64, record: &BookRecord) -> Result<()
             record.cover_mime,
             record.status.as_str(),
             record.error_message,
+            record.content_hash,
         ],
     )?;
 
@@ -389,6 +398,12 @@ pub fn find_live_at(
         .optional()?)
 }
 
+/// All books (any status), ordered by id; used by the scanner to compare the index
+/// with the files found.
+pub fn all_books(conn: &Connection) -> Result<Vec<LocatedBook>, StorageError> {
+    located(conn, "ORDER BY b.id", [])
+}
+
 /// Books in a container (any status), ordered by entry index.
 pub fn books_in_container(
     conn: &Connection,
@@ -401,15 +416,14 @@ pub fn books_in_container(
     )
 }
 
-/// Plain-file books whose container has `content_hash` (candidates for moved files).
+/// Plain-file books with `content_hash` (candidates for moved files).
 pub fn find_by_content_hash(
     conn: &Connection,
     content_hash: &[u8],
 ) -> Result<Vec<LocatedBook>, StorageError> {
     located(
         conn,
-        "JOIN containers c ON c.id = b.container_id
-         WHERE c.content_hash = ?1 AND b.entry_name = x'' ORDER BY b.id",
+        "WHERE b.content_hash = ?1 AND b.entry_name = x'' ORDER BY b.id",
         params![content_hash],
     )
 }
@@ -433,7 +447,8 @@ fn located(
     params: impl rusqlite::Params,
 ) -> Result<Vec<LocatedBook>, StorageError> {
     let sql = format!(
-        "SELECT b.id, b.container_id, b.entry_name, b.entry_size, b.entry_crc32, b.status
+        "SELECT b.id, b.container_id, b.entry_name, b.entry_size, b.entry_crc32,
+                b.content_hash, b.status
          FROM books b {tail}"
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -444,7 +459,8 @@ fn located(
             entry_name: row.get(2)?,
             entry_size: row.get::<_, Option<i64>>(3)?.map(|v| v as u64),
             entry_crc32: row.get::<_, Option<i64>>(4)?.map(|v| v as u32),
-            status: BookStatus::parse(&row.get::<_, String>(5)?),
+            content_hash: row.get(5)?,
+            status: BookStatus::parse(&row.get::<_, String>(6)?),
         })
     })?;
     Ok(rows.collect::<Result<_, _>>()?)

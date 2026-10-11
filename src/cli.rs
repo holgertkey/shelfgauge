@@ -79,6 +79,8 @@ pub struct Invocation {
     pub mode: Mode,
     /// The library root as given (default: the current directory).
     pub path: PathBuf,
+    /// Whether PATH was given explicitly; only then may a new library be created.
+    pub explicit_path: bool,
     /// Command-line config overrides.
     pub overrides: ConfigOverrides,
 }
@@ -90,6 +92,7 @@ impl Cli {
         match self.command {
             Some(Command::Scan { path }) => Invocation {
                 mode: Mode::Scan,
+                explicit_path: path.is_some(),
                 path: path.unwrap_or_else(current_dir),
                 overrides: ConfigOverrides::default(),
             },
@@ -97,6 +100,7 @@ impl Cli {
                 mode: Mode::Serve {
                     scan: !self.serve.no_scan,
                 },
+                explicit_path: self.serve.path.is_some(),
                 path: self.serve.path.unwrap_or_else(current_dir),
                 overrides: ConfigOverrides {
                     port: self.serve.port,
@@ -172,6 +176,7 @@ mod tests {
             Invocation {
                 mode: Mode::Serve { scan: true },
                 path: PathBuf::from("."),
+                explicit_path: false,
                 overrides: ConfigOverrides::default(),
             }
         );
@@ -190,6 +195,10 @@ mod tests {
     fn scan_subcommand_takes_optional_path() {
         assert_eq!(parse(&["scan"]).unwrap().mode, Mode::Scan);
         assert_eq!(parse(&["scan"]).unwrap().path, PathBuf::from("."));
+        assert!(!parse(&["scan"]).unwrap().explicit_path);
+        assert!(parse(&["scan", "."]).unwrap().explicit_path);
+        assert!(parse(&["."]).unwrap().explicit_path);
+        assert!(!parse(&["-v"]).unwrap().explicit_path);
         assert_eq!(
             parse(&["scan", "books"]).unwrap().path,
             PathBuf::from("books")

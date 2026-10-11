@@ -308,7 +308,6 @@ pub enum BodyKind {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Section {
     /// The source ID, used as the target of internal links (e.g. a note's `id`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anchor: Option<String>,
     /// Title lines ([`BlockKind::Paragraph`] or [`BlockKind::EmptyLine`]); empty if
     /// untitled.
@@ -349,7 +348,6 @@ pub struct Block {
     /// [`Annotation::new`].
     pub id: BlockId,
     /// The source ID of this block, used as the target of internal links.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anchor: Option<String>,
     /// What the block is.
     pub kind: BlockKind,
@@ -476,10 +474,8 @@ pub struct ImageRef {
     /// The image ID (without a leading `#`).
     pub id: String,
     /// Alternative text.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alt: Option<String>,
     /// Image title (caption).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
 }
 
@@ -507,7 +503,6 @@ pub struct TableCell {
     /// Number of rows the cell spans (at least 1).
     pub rowspan: u32,
     /// Horizontal alignment, if specified.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub align: Option<Align>,
     /// Cell content.
     pub content: Vec<Inline>,
@@ -966,6 +961,18 @@ mod tests {
         let content = sample();
         let json = serde_json::to_string(&content).unwrap();
         let back: BookContent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, content);
+    }
+
+    /// Regression: the content cache uses postcard, which is not self-describing, so
+    /// the model must not use `skip_serializing_if` (an omitted field shifts every
+    /// following one).
+    #[test]
+    fn content_postcard_round_trip() {
+        let mut content = sample();
+        content.bodies[0].section.anchor = Some("top".to_owned());
+        let bytes = postcard::to_stdvec(&content).unwrap();
+        let back: BookContent = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(back, content);
     }
 

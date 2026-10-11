@@ -8,6 +8,15 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-11
+
+### Changed
+
+- A new library (`.shelfgauge/`) is created only when PATH is given explicitly
+  (`shelfgauge .`, `shelfgauge scan .`); without PATH, the current directory must
+  already be a library, so `shelfgauge -v` in an arbitrary directory no longer creates
+  `.shelfgauge/config.toml` there.
+
 ### Added
 
 - Format-independent book model (`format::model`): `BookMetadata` (title, authors,
@@ -50,6 +59,21 @@ Build numbers (`+NNN`) do not get their own sections.
   hash and by entry size + CRC32, paged author list with prefix filter, books by
   author grouped by series, folder tree with zip archives as virtual folders, book
   details and full-text search with safe query building.
+- Scanner (`scanner`) and `shelfgauge scan`: walks the library (symlinks not followed,
+  `.shelfgauge/` and `[scan].exclude` gitignore patterns skipped, non-UTF-8 paths skipped
+  with a warning), skips unchanged files and archives by `(size, mtime)`, lists changed
+  archives from their central directory and re-parses only changed entries, parses in
+  parallel (rayon, `PARSER_STACK_SIZE` stacks, panics caught per book) and writes
+  through a single writer thread in batched transactions. Moved/renamed books keep
+  their id: zip entries are matched by `(size, CRC32)` before decompression, plain
+  files by an xxh3-128 content hash; ambiguous matches create new books. Crash- and
+  error-resistant: archives are finalized only after all their books are written,
+  unreadable directories/archives and transient read errors never remove books, a
+  cancelled scan removes nothing. Progress counters and a summary (added, updated,
+  moved, removed, unchanged, parsed, errors).
+- Cover cache (`.shelfgauge/covers/<id>.<ext>`, atomic writes) and a parsed-content
+  cache API (`.shelfgauge/content/`, postcard, keyed by content identity and
+  `PARSER_VERSION`).
 
 ## [0.1.0] - 2026-10-11
 

@@ -9,6 +9,10 @@ pub enum Error {
     #[error("library directory {} does not exist", .0.display())]
     LibraryNotFound(PathBuf),
 
+    /// The directory has no `.shelfgauge/` folder, and creating one was not requested.
+    #[error("{} is not a shelfgauge library (it has no {} folder)", .0.display(), crate::library::DATA_DIR_NAME)]
+    NotALibrary(PathBuf),
+
     /// The library root path exists but is not a directory.
     #[error("library path {} is not a directory", .0.display())]
     NotADirectory(PathBuf),
