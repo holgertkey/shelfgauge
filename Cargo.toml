@@ -1,6 +1,6 @@
 [package]
 name = "shelfgauge"
-version = "0.2.0+004"
+version = "0.3.0+000"
 edition = "2024"
 license = "MIT"
 description = "Index a folder of ebooks (FB2, plain and zipped) and browse it in a local web library"
@@ -15,6 +15,7 @@ chardetng = "1.0.0"
 clap = { version = "4.6.7", features = ["derive"] }
 encoding_rs = "0.8.42"
 ignore = "0.4.33"
+percent-encoding = "2.3.2"
 postcard = { version = "1.1.3", default-features = false, features = ["use-std"] }
 r2d2 = "0.8.10"
 r2d2_sqlite = "0.35.0"

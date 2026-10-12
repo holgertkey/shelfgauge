@@ -1279,7 +1279,7 @@ dependencies = [
 
 [[package]]
 name = "shelfgauge"
-version = "0.2.0+004"
+version = "0.3.0+000"
 dependencies = [
  "anyhow",
  "askama",
@@ -1290,6 +1290,7 @@ dependencies = [
  "encoding_rs",
  "http-body-util",
  "ignore",
+ "percent-encoding",
  "postcard",
  "r2d2",
  "r2d2_sqlite",

@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block main %}
+<h1>Search</h1>
+{%- if layout.query.trim().is_empty() %}
+<p class="empty">Type words from a title, author, series or annotation into the search field.
+Words match by their beginning: <kbd>толст</kbd> finds “Толстой”.</p>
+{%- else %}
+{% include "partials/books.html" %}
+{% include "partials/pager.html" %}
+{%- endif %}
+{% endblock %}

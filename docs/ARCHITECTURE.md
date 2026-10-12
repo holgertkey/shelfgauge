@@ -1,6 +1,6 @@
 # shelfgauge — Architecture
 
-> Status: partly implemented (scanner, storage, web server skeleton). This document
+> Status: partly implemented (scanner, storage, web server, library mode UI). This document
 > describes the target architecture for v1; details may change as implementation
 > proceeds.
 
@@ -68,8 +68,18 @@ Key design points to keep in mind when implementing:
   area + top bar + color themes. **Nothing is copied from mdBook** (MPL-2.0) — only the
   idea; no bundled third-party fonts/icon fonts.
   - *Library mode*: sidebar groups books by author or by folder (switchable; a `.zip` is a
-    virtual folder). Sidebar is paginated/lazy, never rendered in full. Main area shows
-    the book card.
+    virtual folder). Sidebar is paginated/lazy, never rendered in full: each level is a
+    server-rendered HTML fragment (`/sidebar/...`) fetched when a node is expanded, and
+    every page renders the path to its author/folder/book already expanded (askama has
+    no recursion, so levels are rendered bottom-up into strings). Main area shows the
+    book card; every page also works without JavaScript.
+  - The sidebar mode is a cookie (the server must know it to render the sidebar;
+    cookies ignore the port, so libraries on one host share it); the theme is in
+    `localStorage`, applied by a small blocking script in `<head>` (the CSP allows no
+    inline scripts or styles, and all URLs reach the scripts through `data-` attributes
+    so `base_path` keeps working).
+  - Scan progress is polled (`/scan/status`, JSON), not streamed: an open SSE
+    connection would hold up the graceful shutdown.
   - *Reading mode*: sidebar shows the book's TOC; main area shows one part of the book as
     HTML, rendered from `BookContent` (never directly from FB2). Splitting into parts is
     configured in `[reader]` (`none` / `section` / `size`, cut at block boundaries).
@@ -101,7 +111,9 @@ v1 binds to `127.0.0.1` only, but is built to allow remote access later:
   characters so it is safe in router paths and links.
 - Every response carries a strict `Content-Security-Policy` (own scripts/styles only,
   no inline code), `nosniff`, `X-Frame-Options: DENY` and `Referrer-Policy`.
-- Files are only ever served by id, never by a client-supplied path.
+- Files are only ever served by id, never by a client-supplied path. Covers are served
+  only for known image types with a canonical `Content-Type` (the type stored from the
+  book file is never echoed, so an SVG "cover" with a script is not served).
 - No built-in TLS: remote access goes through a reverse proxy with HTTPS or a private
   network (Tailscale / WireGuard / SSH tunnel).
 

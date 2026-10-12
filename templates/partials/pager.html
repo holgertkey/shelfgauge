@@ -1,0 +1,7 @@
+{%- if let Some(pager) = pager %}
+<nav class="pager" aria-label="Pages">
+{%- if let Some(prev) = pager.prev %}<a href="{{ prev.href }}" rel="prev">‹ Previous</a>{% endif %}
+<span>{{ pager.label }}</span>
+{%- if let Some(next) = pager.next %}<a href="{{ next.href }}" rel="next">Next ›</a>{% endif %}
+</nav>
+{%- endif %}

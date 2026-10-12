@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% block main %}
-<h1>{{ title }}</h1>
-<p class="error-status">Error {{ status }}</p>
+<h1>{{ layout.title }}</h1>
+<p class="muted">Error {{ status }}</p>
 <p>{{ message }}</p>
 {% if rescan -%}
-<form method="post" action="{{ urls.path("/scan") }}">
+<form method="post" action="{{ layout.urls.scan() }}">
   <button type="submit">Rescan the library</button>
 </form>
 {% endif -%}
-<p><a href="{{ urls.home() }}">Back to the library</a></p>
+<p><a href="{{ layout.urls.home() }}">Back to the library</a></p>
 {% endblock %}

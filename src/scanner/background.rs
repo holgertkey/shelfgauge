@@ -23,6 +23,7 @@ pub struct BackgroundScan {
     progress: Arc<ScanProgress>,
     cancel: Arc<AtomicBool>,
     thread: Mutex<Option<JoinHandle<()>>>,
+    last: Arc<Mutex<Option<Result<ScanSummary, String>>>>,
 }
 
 impl BackgroundScan {
@@ -35,6 +36,7 @@ impl BackgroundScan {
             progress: Arc::new(ScanProgress::default()),
             cancel: Arc::new(AtomicBool::new(false)),
             thread: Mutex::new(None),
+            last: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -51,11 +53,13 @@ impl BackgroundScan {
         let exclude = self.exclude.clone();
         let progress = Arc::clone(&self.progress);
         let cancel = Arc::clone(&self.cancel);
+        let last = Arc::clone(&self.last);
         let spawned = std::thread::Builder::new()
             .name("scan".to_owned())
             .spawn(move || {
                 tracing::info!("scanning {}", library.root().display());
-                match run(&library, &exclude, &progress, &cancel) {
+                let result = run(&library, &exclude, &progress, &cancel);
+                match &result {
                     Ok(summary) if summary.cancelled => {
                         tracing::info!("scan cancelled; changes found so far are saved");
                     }
@@ -71,6 +75,8 @@ impl BackgroundScan {
                     ),
                     Err(e) => tracing::error!("scan failed: {e}"),
                 }
+                *last.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some(result.map_err(|e| e.to_string()));
             });
         match spawned {
             Ok(handle) => {
@@ -92,6 +98,12 @@ impl BackgroundScan {
     /// The progress of the running or last scan.
     pub fn progress(&self) -> ProgressSnapshot {
         self.progress.snapshot()
+    }
+
+    /// The result of the last finished scan (the error message if it failed), or `None`
+    /// before the first scan has finished.
+    pub fn last_result(&self) -> Option<Result<ScanSummary, String>> {
+        self.last.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Cancels a running scan, waits until it has stopped, and refuses later starts.

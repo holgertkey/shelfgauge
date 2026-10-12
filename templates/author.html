@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block main %}
+<h1>{{ name }}</h1>
+<p class="muted">{{ count }} {% if count == 1 %}book{% else %}books{% endif %}</p>
+{% include "partials/books.html" %}
+{% endblock %}

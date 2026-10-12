@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block main %}
+<nav class="breadcrumbs" aria-label="Folder">
+{%- for crumb in crumbs %}
+{%- if loop.last %}<span aria-current="page">{{ crumb.0 }}</span>{% else %}<a href="{{ crumb.1 }}">{{ crumb.0 }}</a><span class="sep">/</span>{% endif %}
+{%- endfor %}
+</nav>
+<h1>{{ name }}</h1>
+{%- if !folders.is_empty() %}
+<ul class="folders">
+{%- for folder in folders %}
+<li><svg class="icon" aria-hidden="true"><use href="#i-{{ folder.kind }}"></use></svg><a href="{{ folder.href }}">{{ folder.name }}</a> <span class="count">{{ folder.count }}</span></li>
+{%- endfor %}
+</ul>
+{%- endif %}
+{%- if !rows.is_empty() || folders.is_empty() %}
+{% include "partials/books.html" %}
+{%- endif %}
+{% include "partials/pager.html" %}
+{% endblock %}

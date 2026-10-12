@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block main %}
+<h1>Library</h1>
+<p class="muted path">{{ root }}</p>
+<p class="stats">{{ books }} {% if books == 1 %}book{% else %}books{% endif %} indexed, {{ authors }} {% if authors == 1 %}author{% else %}authors{% endif %}.</p>
+<p>Browse the library by <a href="{{ layout.urls.authors("", 1) }}">author</a> or by
+<a href="{{ layout.urls.folders() }}">folder</a> in the sidebar, or search by title,
+author, series or annotation in the top bar.</p>
+{%- if books == 0 %}
+<p class="note">No books yet. shelfgauge indexes FB2 books (also inside .zip archives)
+below this folder; use <strong>Rescan</strong> after adding books.</p>
+{%- endif %}
+<p class="keys">Keys: <kbd>/</kbd> or <kbd>s</kbd> search, <kbd>t</kbd> next theme,
+<kbd>m</kbd> switch sidebar mode, <kbd>Esc</kbd> leave the search field.</p>
+{% endblock %}

@@ -1,17 +1,18 @@
-# shelfgauge v0.2.0
+# shelfgauge v0.3.0
 
 A single-binary tool that indexes a folder tree of ebooks — FB2 files, plain or inside
 `.zip` archives — into a local SQLite database and serves a browsable, searchable web
 library on `localhost`, with an in-browser reader.
 
-**Current version:** 0.2.0
+**Current version:** 0.3.0
 
 ## Status
 
-Early development. `shelfgauge scan` indexes a library of FB2 books (plain files and
-`.zip` archives) into `.shelfgauge/library.db`; `shelfgauge [PATH]` starts the web
-server (layout skeleton only) and scans in the background. The library browser and the
-reader are not implemented yet. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for
+Early development. `shelfgauge [PATH]` indexes a library of FB2 books (plain files and
+`.zip` archives) in the background and serves it as a web library: browse by author or
+by folder, open a book card (cover, series, genres, annotation) and search by title,
+author, series or annotation. The in-browser reader is not implemented yet.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for
 the target design.
 
 ## Building
@@ -45,4 +46,4 @@ MIT — see [LICENSE](LICENSE).
 
 ---
 
-_shelfgauge v0.2.0 — MIT License_
+_shelfgauge v0.3.0 — MIT License_

@@ -24,9 +24,14 @@ use crate::scanner::BackgroundScan;
 use crate::storage::ReadPool;
 
 mod assets;
-mod pages;
+mod error;
+mod layout;
+mod routes;
 pub mod security;
+mod sidebar;
 mod urls;
+
+use error::AppError;
 
 pub use security::{Auth, HostAllowlist};
 pub use urls::Urls;
@@ -75,6 +80,7 @@ struct Inner {
     auth: Auth,
     pool: ReadPool,
     scan: Arc<BackgroundScan>,
+    page_size: u32,
 }
 
 impl AppState {
@@ -92,6 +98,7 @@ impl AppState {
             auth: Auth::None,
             pool,
             scan,
+            page_size: config.library.page_size,
         }))
     }
 
@@ -124,6 +131,20 @@ impl AppState {
     pub fn scan(&self) -> &BackgroundScan {
         &self.0.scan
     }
+
+    /// Entries per list page (`library.page_size`).
+    pub fn page_size(&self) -> u32 {
+        self.0.page_size
+    }
+
+    /// Runs `f` with a pooled read connection on a blocking thread.
+    pub(crate) async fn db<T: Send + 'static>(
+        &self,
+        f: impl FnOnce(&rusqlite::Connection) -> Result<T, AppError> + Send + 'static,
+    ) -> Result<T, AppError> {
+        let pool = self.0.pool.clone();
+        tokio::task::spawn_blocking(move || f(&*pool.get()?)).await?
+    }
 }
 
 /// Checks the bind safety rule and listens on the configured address and fixed port.
@@ -152,19 +173,35 @@ pub fn router(state: AppState) -> Router {
 
     let public = Router::new().route(&urls.path("/assets/{*path}"), get(assets::serve));
     let read = Router::new()
-        .route(&urls.home(), get(pages::index))
+        .route(&urls.home(), get(routes::library::home))
+        .route(&urls.path("/authors"), get(routes::library::authors))
+        .route(&urls.path("/author/{id}"), get(routes::library::author))
+        .route(&urls.path("/folder"), get(routes::library::folder))
+        .route(&urls.path("/book/{id}"), get(routes::book::card))
+        .route(&urls.path("/cover/{id}"), get(routes::book::cover))
+        .route(&urls.path("/search"), get(routes::search::search))
+        .route(&urls.path("/scan/status"), get(routes::scan::status))
+        .route(
+            &urls.path("/sidebar/authors"),
+            get(routes::sidebar::authors),
+        )
+        .route(
+            &urls.path("/sidebar/author/{id}"),
+            get(routes::sidebar::author),
+        )
+        .route(&urls.path("/sidebar/folder"), get(routes::sidebar::folder))
         .route_layer(auth());
     let admin = Router::new()
-        .route(&urls.path("/scan"), post(pages::rescan))
+        .route(&urls.path("/scan"), post(routes::scan::rescan))
         .route_layer(auth());
 
     let mut app = public.merge(read).merge(admin);
     if let Some(prefix) = urls.prefix() {
-        app = app.route(prefix, get(pages::to_home));
+        app = app.route(prefix, get(routes::library::to_home));
     }
     // The last layer added runs first: headers, then Host, then Origin.
-    app.fallback(pages::not_found)
-        .layer(from_fn_with_state(state.clone(), pages::render_errors))
+    app.fallback(error::not_found)
+        .layer(from_fn_with_state(state.clone(), error::render_errors))
         .layer(from_fn_with_state(state.clone(), security::check_origin))
         .layer(from_fn_with_state(state.clone(), security::check_host))
         .layer(from_fn(security::security_headers))
@@ -204,7 +241,6 @@ mod tests {
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 
-    use super::pages::AppError;
     use super::*;
 
     /// Error pages that no route produces yet render with the layout and the right status.
@@ -228,7 +264,7 @@ mod tests {
                 "/broken",
                 get(|| async { Err::<(), _>(AppError::Internal("secret detail".into())) }),
             )
-            .layer(from_fn_with_state(state.clone(), pages::render_errors))
+            .layer(from_fn_with_state(state.clone(), error::render_errors))
             .with_state(state);
 
         for (uri, status, text, rescan) in [
@@ -251,7 +287,11 @@ mod tests {
             let body = String::from_utf8(body.to_vec()).unwrap();
             assert!(body.contains(text), "{body}");
             assert!(body.contains("href=\"/books/assets/style.css?v="), "{body}");
-            assert_eq!(body.contains("action=\"/books/scan\""), rescan, "{body}");
+            assert_eq!(
+                body.contains("Rescan the library</button>"),
+                rescan,
+                "{body}"
+            );
             assert!(!body.contains("secret detail"), "{body}");
         }
     }

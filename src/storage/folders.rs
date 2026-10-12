@@ -52,15 +52,101 @@ pub struct FolderEntry {
 pub struct FolderListing {
     /// Sub-folders, by name.
     pub folders: Vec<FolderEntry>,
-    /// Books directly in the folder, by title.
+    /// One page of the books directly in the folder, by title.
     pub books: Vec<BookSummary>,
+    /// The number of books directly in the folder, across all pages.
+    pub book_total: u64,
 }
 
-/// Lists one level of the folder tree; folders without books (all removed) are hidden.
+/// Lists one level of the folder tree with one page of its books (`limit` books from
+/// `offset`); folders without books (all removed) are hidden.
 pub fn folder_children(
     conn: &Connection,
     folder: &FolderPath,
+    limit: u32,
+    offset: u64,
 ) -> Result<FolderListing, StorageError> {
+    let (folders, direct) = read_folder(conn, folder)?;
+    let (books, book_total) = match direct {
+        Direct::Files(files) => {
+            let ids = id_list(&files);
+            let total: i64 = conn.query_row(
+                "SELECT count(*) FROM books
+                 WHERE status != 'removed' AND container_id IN (SELECT value FROM json_each(?1))",
+                [&ids],
+                |row| row.get(0),
+            )?;
+            let books = if total == 0 {
+                Vec::new()
+            } else {
+                let sql = format!(
+                    "SELECT {SUMMARY_COLUMNS} {SUMMARY_FROM}
+                     WHERE b.status != 'removed'
+                       AND b.container_id IN (SELECT value FROM json_each(?1))
+                     ORDER BY b.sort_title, b.id
+                     LIMIT ?2 OFFSET ?3"
+                );
+                let mut stmt = conn.prepare(&sql)?;
+                let rows = stmt.query_map(
+                    params![ids, limit, i64::try_from(offset).unwrap_or(i64::MAX)],
+                    summary_row,
+                )?;
+                rows.collect::<Result<_, _>>()?
+            };
+            (books, total as u64)
+        }
+        Direct::Archive(books) => {
+            let total = books.len() as u64;
+            let page = books
+                .into_iter()
+                .skip(usize::try_from(offset).unwrap_or(usize::MAX))
+                .take(limit as usize)
+                .collect();
+            (page, total)
+        }
+    };
+    Ok(FolderListing {
+        folders,
+        books,
+        book_total,
+    })
+}
+
+/// The position of book `book_id` among the books directly in `folder` (in the order
+/// of [`folder_children`]), or `None` if it is not there.
+pub fn folder_book_index(
+    conn: &Connection,
+    folder: &FolderPath,
+    book_id: i64,
+) -> Result<Option<u64>, StorageError> {
+    let (_, direct) = read_folder(conn, folder)?;
+    let ids: Vec<i64> = match direct {
+        Direct::Files(files) => {
+            let mut stmt = conn.prepare(
+                "SELECT id FROM books
+                 WHERE status != 'removed' AND container_id IN (SELECT value FROM json_each(?1))
+                 ORDER BY sort_title, id",
+            )?;
+            let rows = stmt.query_map([id_list(&files)], |row| row.get(0))?;
+            rows.collect::<Result<_, _>>()?
+        }
+        Direct::Archive(books) => books.iter().map(|b| b.id).collect(),
+    };
+    Ok(ids.iter().position(|&id| id == book_id).map(|i| i as u64))
+}
+
+/// The books directly in a folder: plain-file containers, or an archive's books.
+enum Direct {
+    /// Ids of the plain-file containers directly in a directory.
+    Files(Vec<i64>),
+    /// The books of an archive directory, in listing order.
+    Archive(Vec<BookSummary>),
+}
+
+fn read_folder(
+    conn: &Connection,
+    folder: &FolderPath,
+) -> Result<(Vec<FolderEntry>, Direct), StorageError> {
     match folder {
         FolderPath::Dir(dir) => directory(conn, dir.trim_matches('/')),
         FolderPath::Archive { archive, inner } => {
@@ -69,7 +155,14 @@ pub fn folder_children(
     }
 }
 
-fn directory(conn: &Connection, dir: &str) -> Result<FolderListing, StorageError> {
+fn id_list(ids: &[i64]) -> String {
+    format!(
+        "[{}]",
+        ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",")
+    )
+}
+
+fn directory(conn: &Connection, dir: &str) -> Result<(Vec<FolderEntry>, Direct), StorageError> {
     // `path >= 'a/' AND path < 'a0'` selects everything below `a` ('0' follows '/').
     let (lower, upper) = if dir.is_empty() {
         (String::new(), "\u{10ffff}".to_owned())
@@ -121,39 +214,14 @@ fn directory(conn: &Connection, dir: &str) -> Result<FolderListing, StorageError
         let key = format!("{}\u{0}{}", normalize_key(&entry.name), entry.name);
         folders.entry(key).or_insert(entry).book_count += count;
     }
-
-    let books = if files.is_empty() {
-        Vec::new()
-    } else {
-        let sql = format!(
-            "SELECT {SUMMARY_COLUMNS} {SUMMARY_FROM}
-             WHERE b.status != 'removed'
-               AND b.container_id IN (SELECT value FROM json_each(?1))
-             ORDER BY b.sort_title, b.id"
-        );
-        let ids = format!(
-            "[{}]",
-            files
-                .iter()
-                .map(i64::to_string)
-                .collect::<Vec<_>>()
-                .join(",")
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map([ids], summary_row)?;
-        rows.collect::<Result<_, _>>()?
-    };
-    Ok(FolderListing {
-        folders: folders.into_values().collect(),
-        books,
-    })
+    Ok((folders.into_values().collect(), Direct::Files(files)))
 }
 
 fn archive_dir(
     conn: &Connection,
     archive: &str,
     inner: &str,
-) -> Result<FolderListing, StorageError> {
+) -> Result<(Vec<FolderEntry>, Direct), StorageError> {
     let prefix = if inner.is_empty() {
         String::new()
     } else {
@@ -197,10 +265,7 @@ fn archive_dir(
             _ => books.push(summary),
         }
     }
-    Ok(FolderListing {
-        folders: folders.into_values().collect(),
-        books,
-    })
+    Ok((folders.into_values().collect(), Direct::Archive(books)))
 }
 
 fn join(parent: &str, name: &str) -> String {

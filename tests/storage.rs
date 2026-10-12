@@ -3,14 +3,16 @@
 use rusqlite::Connection;
 use shelfgauge::container::ContainerKind;
 use shelfgauge::format::model::{Person, Series};
-use shelfgauge::storage::authors::{books_by_author, count_authors, list_authors};
+use shelfgauge::storage::authors::{
+    author_by_id, author_index, books_by_author, count_authors, list_authors,
+};
 use shelfgauge::storage::books::{
     BookRecord, BookStatus, EntryRecord, book_by_id, books_in_container, count_books,
     find_by_content_hash, find_by_entry_identity, find_live_at, mark_removed, relocate,
     upsert_book,
 };
 use shelfgauge::storage::containers::{ContainerRecord, upsert_container};
-use shelfgauge::storage::folders::{FolderKind, FolderPath, folder_children};
+use shelfgauge::storage::folders::{FolderKind, FolderPath, folder_book_index, folder_children};
 use shelfgauge::storage::search::search;
 use shelfgauge::storage::{open_read_pool, open_writer};
 
@@ -214,9 +216,82 @@ fn author_list_prefix_paging_and_order() {
     assert_eq!(page("ё", 10, 0), ["Есенин Сергей", "Ёсида Ко"]);
     assert_eq!(page("", 2, 2), ["Ёсида Ко", "Толстой Лев"]);
     assert!(page("", 10, 100).is_empty());
+    // Regression: offsets above i64::MAX used to wrap to -1 (the first page).
+    assert!(page("", 10, u64::MAX).is_empty());
     assert!(page("%", 10, 0).is_empty(), "no LIKE wildcards");
     assert_eq!(count_authors(&db.conn, "").unwrap(), 6);
     assert_eq!(count_authors(&db.conn, "т").unwrap(), 2);
+
+    // Every listed author's index is its position in the list.
+    for (i, author) in list_authors(&db.conn, "", 100, 0)
+        .unwrap()
+        .iter()
+        .enumerate()
+    {
+        assert_eq!(author_index(&db.conn, author.id).unwrap(), Some(i as u64));
+        let found = author_by_id(&db.conn, author.id).unwrap().unwrap();
+        assert_eq!(&found, author);
+    }
+    assert_eq!(author_index(&db.conn, 9999).unwrap(), None);
+    assert_eq!(author_by_id(&db.conn, 9999).unwrap(), None);
+}
+
+#[test]
+fn author_without_live_books_is_not_indexed() {
+    let db = db();
+    let c = container(&db.conn, "a.fb2");
+    let id = upsert_book(
+        &db.conn,
+        &book(c, None, "A", vec![person("Гоголь", "Николай")]),
+    )
+    .unwrap();
+    let author = list_authors(&db.conn, "", 10, 0).unwrap()[0].id;
+    mark_removed(&db.conn, id).unwrap();
+    assert_eq!(author_index(&db.conn, author).unwrap(), None);
+    assert_eq!(
+        author_by_id(&db.conn, author).unwrap().unwrap().book_count,
+        0
+    );
+}
+
+#[test]
+fn folder_books_are_paged() {
+    let db = db();
+    let mut ids = Vec::new();
+    for i in 0..5 {
+        let c = container(&db.conn, &format!("dir/{i}.fb2"));
+        ids.push(upsert_book(&db.conn, &book(c, None, &format!("T{i}"), vec![])).unwrap());
+    }
+    let zip = container(&db.conn, "dir/z.zip");
+    for i in 0..3 {
+        let e = entry(&format!("in/{i}.fb2"), 100 + i);
+        upsert_book(&db.conn, &book(zip, Some(e), &format!("Z{i}"), vec![])).unwrap();
+    }
+    let dir = FolderPath::Dir("dir".to_owned());
+    let page = |folder: &FolderPath, limit, offset| {
+        folder_children(&db.conn, folder, limit, offset).unwrap()
+    };
+    let first = page(&dir, 2, 0);
+    assert_eq!(titles(&first.books), ["T0", "T1"]);
+    assert_eq!(first.book_total, 5);
+    assert_eq!(first.folders.len(), 1, "folders are not paged");
+    assert_eq!(titles(&page(&dir, 2, 4).books), ["T4"]);
+    assert!(page(&dir, 2, 6).books.is_empty());
+    assert!(page(&dir, 2, u64::MAX).books.is_empty());
+    assert_eq!(page(&dir, 2, 6).book_total, 5);
+
+    let inner = FolderPath::Archive {
+        archive: "dir/z.zip".to_owned(),
+        inner: "in".to_owned(),
+    };
+    assert_eq!(titles(&page(&inner, 2, 1).books), ["Z1", "Z2"]);
+    assert_eq!(page(&inner, 2, 1).book_total, 3);
+    assert!(page(&inner, 2, u64::MAX).books.is_empty());
+
+    assert_eq!(folder_book_index(&db.conn, &dir, ids[3]).unwrap(), Some(3));
+    assert_eq!(folder_book_index(&db.conn, &inner, ids[3]).unwrap(), None);
+    let z1 = page(&inner, 10, 0).books[1].id;
+    assert_eq!(folder_book_index(&db.conn, &inner, z1).unwrap(), Some(1));
 }
 
 #[test]
@@ -273,7 +348,7 @@ fn removed_books_free_their_location_and_disappear_from_lists() {
     assert_eq!(count_authors(&db.conn, "").unwrap(), 0);
     assert!(search(&db.conn, "маяк", 10, 0).unwrap().is_empty());
     assert_eq!(
-        folder_children(&db.conn, &FolderPath::Dir(String::new())).unwrap(),
+        folder_children(&db.conn, &FolderPath::Dir(String::new()), 10, 0).unwrap(),
         Default::default()
     );
     let details = book_by_id(&db.conn, id).unwrap().unwrap();
@@ -374,7 +449,7 @@ fn folder_tree() {
     let removed = upsert_book(&db.conn, &book(removed_c, None, "Gone", vec![])).unwrap();
     mark_removed(&db.conn, removed).unwrap();
 
-    let list = |path: FolderPath| folder_children(&db.conn, &path).unwrap();
+    let list = |path: FolderPath| folder_children(&db.conn, &path, 100, 0).unwrap();
     let folder_names =
         |listing: &shelfgauge::storage::folders::FolderListing| -> Vec<(String, FolderKind, u64)> {
             listing
@@ -523,6 +598,10 @@ fn full_text_search() {
         "one-letter prefix"
     );
     assert_eq!(search(&db.conn, "м", 1, 0).unwrap().len(), 1, "limit");
+    assert!(
+        search(&db.conn, "м", 10, u64::MAX).unwrap().is_empty(),
+        "an offset above i64::MAX is past the end"
+    );
     assert_eq!(search(&db.conn, "м", 10, 2).unwrap().len(), 1, "offset");
 }
 

@@ -1,0 +1,35 @@
+<div class="listing">
+{%- if items.is_empty() %}
+<p class="empty">{{ empty }}</p>
+{%- else %}
+<ul class="tree">
+{%- for item in items %}
+{%- match item %}
+{%- when Item::Branch { label, href, count, src, kind, open, active } %}
+<li class="node {{ kind }}{% if open.is_some() %} open{% endif %}" data-src="{{ src }}">
+<button type="button" class="twisty" aria-expanded="{{ open.is_some() }}" aria-label="Expand"></button>
+<svg class="icon" aria-hidden="true"><use href="#i-{{ kind }}"></use></svg>
+<a href="{{ href }}"{% if *active %} class="active" aria-current="page"{% endif %}>{{ label }}</a>
+<span class="count">{{ count }}</span>
+{%- if let Some(children) = open %}
+<div class="children">{{ children|safe }}</div>
+{%- else %}
+<div class="children" hidden></div>
+{%- endif %}
+</li>
+{%- when Item::Book { title, detail, href, active } %}
+<li class="book"><a href="{{ href }}"{% if *active %} class="active" aria-current="page"{% endif %}>{{ title }}{% if !detail.is_empty() %} <span class="detail">{{ detail }}</span>{% endif %}</a></li>
+{%- when Item::Heading(name) %}
+<li class="heading">{{ name }}</li>
+{%- endmatch %}
+{%- endfor %}
+</ul>
+{%- endif %}
+{%- if let Some(pager) = pager %}
+<nav class="pager" aria-label="Pages">
+{%- if let Some(prev) = pager.prev %}<a href="{{ prev.href }}" data-src="{{ prev.src }}" rel="prev">‹ Prev</a>{% endif %}
+<span>{{ pager.label }}</span>
+{%- if let Some(next) = pager.next %}<a href="{{ next.href }}" data-src="{{ next.src }}" rel="next">Next ›</a>{% endif %}
+</nav>
+{%- endif %}
+</div>

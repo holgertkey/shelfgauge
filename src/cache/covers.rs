@@ -22,6 +22,17 @@ pub fn extension(mime: &str) -> &'static str {
         .map_or("bin", |(_, ext)| ext)
 }
 
+/// The canonical MIME type for a cover of type `mime`, if it is a known image type.
+///
+/// The stored type comes from the book file, so it is matched against this allowlist
+/// instead of being sent back as is.
+pub fn known_mime(mime: &str) -> Option<&'static str> {
+    EXTENSIONS
+        .iter()
+        .find(|(m, _)| m.eq_ignore_ascii_case(mime.trim()))
+        .map(|(m, _)| *m)
+}
+
 /// The path of book `id`'s cover of MIME type `mime` in `dir`.
 pub fn path(dir: &Path, id: i64, mime: &str) -> PathBuf {
     dir.join(format!("{id}.{}", extension(mime)))
@@ -62,6 +73,14 @@ mod tests {
             mime: mime.to_owned(),
             data: data.to_vec(),
         }
+    }
+
+    #[test]
+    fn known_mime_is_an_allowlist() {
+        assert_eq!(known_mime("image/jpeg"), Some("image/jpeg"));
+        assert_eq!(known_mime(" IMAGE/PNG "), Some("image/png"));
+        assert_eq!(known_mime("text/html"), None);
+        assert_eq!(known_mime("image/svg+xml"), None);
     }
 
     #[test]

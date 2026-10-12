@@ -10,7 +10,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use rust_embed::Embed;
 
-use super::pages::AppError;
+use super::AppError;
 
 #[derive(Embed)]
 #[folder = "assets/"]
@@ -91,7 +91,7 @@ mod tests {
 
     #[test]
     fn layout_assets_are_embedded() {
-        for name in ["style.css", "app.js", "icon.svg"] {
+        for name in ["style.css", "app.js", "theme.js", "icon.svg"] {
             assert!(Assets::get(name).is_some(), "{name}");
             assert_eq!(version(name).unwrap().len(), 16);
         }

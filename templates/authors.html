@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block main %}
+<h1>Authors</h1>
+<form class="inline-form" action="{{ layout.urls.authors("", 1) }}" method="get" role="search">
+  <input type="search" name="q" value="{{ prefix }}" placeholder="Name starts with…" aria-label="Filter authors">
+  <button type="submit">Filter</button>
+</form>
+{%- if authors.is_empty() %}
+<p class="empty">{% if prefix.is_empty() %}No authors.{% else %}No authors starting with “{{ prefix }}”.{% endif %}</p>
+{%- else %}
+<ul class="authors">
+{%- for author in authors %}
+<li><a href="{{ author.href }}">{{ author.name }}</a> <span class="count">{{ author.count }}</span></li>
+{%- endfor %}
+</ul>
+{%- endif %}
+{% include "partials/pager.html" %}
+{% endblock %}

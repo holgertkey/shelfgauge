@@ -281,7 +281,7 @@ async fn not_found_page_uses_the_layout_and_base_path() {
     assert!(reply.body.contains("Not found"), "{}", reply.body);
     assert!(reply.body.contains("href=\"/books/assets/style.css?v="));
     assert!(reply.body.contains("href=\"/books/\""));
-    assert!(!reply.body.contains("Rescan"));
+    assert!(!reply.body.contains("Rescan the library</button>"));
 }
 
 #[tokio::test]

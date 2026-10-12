@@ -1,6 +1,6 @@
 //! Authors: de-duplicated by a normalized name key, listed alphabetically.
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use super::books::{BookSummary, SUMMARY_COLUMNS, SUMMARY_FROM, summary_row};
 use super::{StorageError, normalize_key, prefix_upper_bound};
@@ -146,9 +146,9 @@ pub(crate) fn book_people(conn: &Connection, book_id: i64) -> Result<Vec<Person>
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
-/// Authors with at least one book that is not removed, alphabetically, whose
-/// normalized name starts with `prefix` (empty for all); one page of `limit` entries
-/// starting at `offset`.
+/// Authors with at least one book that is not removed, alphabetically (namesakes by
+/// id), whose normalized name starts with `prefix` (empty for all); one page of `limit`
+/// entries starting at `offset`.
 pub fn list_authors(
     conn: &Connection,
     prefix: &str,
@@ -163,11 +163,16 @@ pub fn list_authors(
            JOIN books b ON b.id = ba.book_id AND b.status != 'removed'
           WHERE a.sort_key >= ?1 AND a.sort_key < ?2
           GROUP BY a.id
-          ORDER BY a.sort_key
+          ORDER BY a.sort_key, a.id
           LIMIT ?3 OFFSET ?4",
     )?;
     let rows = stmt.query_map(
-        params![prefix, prefix_upper_bound(&prefix), limit, offset as i64],
+        params![
+            prefix,
+            prefix_upper_bound(&prefix),
+            limit,
+            i64::try_from(offset).unwrap_or(i64::MAX)
+        ],
         |row| {
             Ok(AuthorSummary {
                 id: row.get(0)?,
@@ -191,6 +196,46 @@ pub fn count_authors(conn: &Connection, prefix: &str) -> Result<u64, StorageErro
         |row| row.get(0),
     )?;
     Ok(count as u64)
+}
+
+/// The author `id` with the number of their books that are not removed, or `None` if
+/// there is no such author.
+pub fn author_by_id(conn: &Connection, id: i64) -> Result<Option<AuthorSummary>, StorageError> {
+    Ok(conn
+        .query_row(
+            "SELECT a.id, a.display_name,
+                    (SELECT count(*) FROM book_authors ba JOIN books b ON b.id = ba.book_id
+                      WHERE ba.author_id = a.id AND b.status != 'removed')
+               FROM authors a WHERE a.id = ?1",
+            [id],
+            |row| {
+                Ok(AuthorSummary {
+                    id: row.get(0)?,
+                    display_name: row.get(1)?,
+                    book_count: row.get::<_, i64>(2)? as u64,
+                })
+            },
+        )
+        .optional()?)
+}
+
+/// The position of author `id` in the unfiltered [`list_authors`] order, or `None` if
+/// the author is not listed (no such author, or all their books are removed).
+pub fn author_index(conn: &Connection, id: i64) -> Result<Option<u64>, StorageError> {
+    let listed = "EXISTS (SELECT 1 FROM book_authors ba JOIN books b ON b.id = ba.book_id
+                          WHERE ba.author_id = a.id AND b.status != 'removed')";
+    let sql = format!(
+        "SELECT (SELECT count(*) FROM authors a
+                  WHERE (a.sort_key < t.sort_key OR (a.sort_key = t.sort_key AND a.id < t.id))
+                    AND {listed})
+           FROM authors t WHERE t.id = ?1 AND EXISTS (
+                SELECT 1 FROM book_authors ba JOIN books b ON b.id = ba.book_id
+                 WHERE ba.author_id = t.id AND b.status != 'removed')"
+    );
+    Ok(conn
+        .query_row(&sql, [id], |row| row.get::<_, i64>(0))
+        .optional()?
+        .map(|n| n as u64))
 }
 
 /// The author's books that are not removed: by series (books without a series last),

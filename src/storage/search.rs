@@ -53,6 +53,9 @@ pub fn search(
          LIMIT ?2 OFFSET ?3"
     );
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params![query, limit, offset as i64], summary_row)?;
+    let rows = stmt.query_map(
+        params![query, limit, i64::try_from(offset).unwrap_or(i64::MAX)],
+        summary_row,
+    )?;
     Ok(rows.collect::<Result<_, _>>()?)
 }

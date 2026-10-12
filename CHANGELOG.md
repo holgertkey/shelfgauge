@@ -8,8 +8,30 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-12
+
 ### Added
 
+- Library mode UI: an mdBook-like layout with a top bar (search, theme, rescan), a
+  collapsible, responsive sidebar and the main area; hand-written CSS with a system
+  font stack, own inline SVG icons and five themes (auto, light, dark, sepia, navy)
+  remembered per browser.
+- Sidebar by author (alphabetical, paged by `library.page_size`, filtered by name
+  prefix; an author expands to their books grouped by series) or by folder (lazy
+  directory tree, zip archives as folders), switched with a tab or `m` and remembered
+  in a cookie. Levels are loaded as server-rendered fragments; the current author,
+  folder or book is revealed and highlighted on every page.
+- Pages: library overview, author index, author, folder (with breadcrumbs), book card
+  (cover, authors, series, genres, language, location, annotation; error, removed and
+  missing-file notices with a rescan button) and full-text search with paging. Every
+  page works without JavaScript.
+- Covers served by book id from the cache, only for known image types, with immutable
+  caching per book version.
+- Scan progress banner: polled from `GET /scan/status` (JSON) while a scan runs;
+  Rescan starts a scan in place.
+- Keyboard shortcuts: `/` or `s` search, `t` next theme, `m` sidebar mode, `Esc`.
+- Storage: `count_books`, `author_by_id`, `author_index`, `folder_book_index`; folder
+  listings page their books.
 - Web server (`web`): axum on a tokio runtime; `shelfgauge [PATH]` binds the fixed port
   (a busy port is a clear error), serves the index through the read pool and scans in
   the background (`--no-scan` to skip); Ctrl+C shuts down gracefully, letting the scan
@@ -29,6 +51,7 @@ Build numbers (`+NNN`) do not get their own sections.
 ### Changed
 
 - `server.base_path` accepts only ASCII letters, digits, `-`, `.`, `_`, `~` and `/`.
+- Authors with the same sort key are ordered by id, so author pages are stable.
 
 ## [0.2.0] - 2026-10-11
 

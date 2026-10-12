@@ -1,9 +1,0 @@
-{% extends "base.html" %}
-{% block main %}
-<h1>Library</h1>
-<p class="library-root">{{ library }}</p>
-<p>{{ books }} {% if books == 1 %}book{% else %}books{% endif %} indexed.</p>
-<form method="post" action="{{ urls.path("/scan") }}">
-  <button type="submit">Rescan</button>
-</form>
-{% endblock %}
