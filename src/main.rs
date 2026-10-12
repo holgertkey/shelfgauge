@@ -3,6 +3,7 @@
 mod cli;
 
 use std::io::{IsTerminal, Write};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -10,11 +11,15 @@ use anyhow::Context;
 use clap::Parser;
 use shelfgauge::config::Config;
 use shelfgauge::container::ReadLimits;
-use shelfgauge::format::Registry;
+use shelfgauge::format::{PARSER_STACK_SIZE, Registry};
 use shelfgauge::library::Library;
-use shelfgauge::scanner::{ScanPhase, ScanProgress, Scanner};
+use shelfgauge::scanner::{BackgroundScan, ScanPhase, ScanProgress, Scanner};
+use shelfgauge::web;
 
 use cli::{Cli, Mode};
+
+/// Read connections for the web handlers.
+const READ_POOL_SIZE: u32 = 4;
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -46,25 +51,105 @@ fn main() -> anyhow::Result<()> {
     }
     let mut config = loaded.config;
     config.apply_overrides(&invocation.overrides)?;
+    tracing::debug!(
+        "config {}, effective values:\n{}",
+        config_path.display(),
+        config.to_toml().trim_end()
+    );
 
     match invocation.mode {
         Mode::Scan => scan(&library, &config),
-        Mode::Serve { scan } => {
-            // Temporary stub until the web server (Phase 8) exists.
-            println!("Library: {}", library.root().display());
-            println!("Config:  {}", config_path.display());
-            println!();
-            println!("Effective configuration:");
-            println!();
-            print!("{}", config.to_toml());
-            println!();
-            println!(
-                "Serving is not implemented yet (background scan: {}).",
-                if scan { "on" } else { "off" }
-            );
-            Ok(())
-        }
+        Mode::Serve { scan } => serve(library, &config, scan),
     }
+}
+
+/// The default command: serves the library, scanning it in the background.
+fn serve(library: Library, config: &Config, scan: bool) -> anyhow::Result<()> {
+    // Fail fast, before touching the index: unsafe bind address or busy port.
+    let listener = web::bind(&config.server, web::Auth::None)?;
+    let db_path = library.db_path();
+    // The writer creates and migrates the database; readers need it to exist.
+    let writer = shelfgauge::storage::open_writer(&db_path)
+        .with_context(|| format!("cannot open the index {}", db_path.display()))?;
+    let pool = shelfgauge::storage::open_read_pool(&db_path, READ_POOL_SIZE)
+        .with_context(|| format!("cannot open the index {}", db_path.display()))?;
+    drop(writer);
+
+    let background = Arc::new(BackgroundScan::new(
+        library.clone(),
+        config.scan.exclude.clone(),
+    ));
+    let state = web::AppState::new(library, config, pool, Arc::clone(&background));
+    let url = web::display_url(&config.server, state.urls());
+    let router = web::router(state);
+
+    // Handlers may parse books on blocking threads, which need the parser stack.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(PARSER_STACK_SIZE)
+        .build()
+        .context("cannot start the async runtime")?;
+    let result = runtime.block_on(async {
+        let shutdown = shutdown_signal().context("cannot listen for Ctrl+C")?;
+        println!("Serving {url}  (Ctrl+C to stop)");
+        if scan {
+            background.start();
+        }
+        web::serve(listener, router, shutdown)
+            .await
+            .context("the web server failed")
+    });
+    // The writer commits what it has received before the scan thread ends.
+    if background.is_running() {
+        eprintln!("Stopping the scan…");
+    }
+    background.shutdown();
+    runtime.shutdown_timeout(Duration::from_secs(1));
+    result
+}
+
+/// Listens for Ctrl+C (and SIGTERM on Unix); the returned future completes on the first
+/// signal, and a second Ctrl+C then exits at once.
+///
+/// The listeners are registered right away (inside the runtime), so a Ctrl+C that comes
+/// as soon as the URL is printed is not lost.
+#[cfg(unix)]
+fn shutdown_signal() -> std::io::Result<impl Future<Output = ()> + Send + 'static> {
+    use tokio::signal::unix::{SignalKind, signal};
+    let mut interrupt = signal(SignalKind::interrupt())?;
+    let mut terminate = signal(SignalKind::terminate())?;
+    Ok(async move {
+        tokio::select! {
+            _ = interrupt.recv() => {}
+            _ = terminate.recv() => {}
+        }
+        announce_shutdown();
+        tokio::spawn(async move {
+            if interrupt.recv().await.is_some() {
+                std::process::exit(130);
+            }
+        });
+    })
+}
+
+/// Listens for Ctrl+C; the returned future completes on the first one, and a second one
+/// then exits at once.
+#[cfg(windows)]
+fn shutdown_signal() -> std::io::Result<impl Future<Output = ()> + Send + 'static> {
+    let mut ctrl_c = tokio::signal::windows::ctrl_c()?;
+    Ok(async move {
+        ctrl_c.recv().await;
+        announce_shutdown();
+        tokio::spawn(async move {
+            if ctrl_c.recv().await.is_some() {
+                std::process::exit(130);
+            }
+        });
+    })
+}
+
+fn announce_shutdown() {
+    eprintln!("Shutting down… (press Ctrl+C again to quit immediately)");
 }
 
 /// `shelfgauge scan`: updates the index and prints a summary.

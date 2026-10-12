@@ -8,6 +8,28 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+### Added
+
+- Web server (`web`): axum on a tokio runtime; `shelfgauge [PATH]` binds the fixed port
+  (a busy port is a clear error), serves the index through the read pool and scans in
+  the background (`--no-scan` to skip); Ctrl+C shuts down gracefully, letting the scan
+  commit its current batch (a second Ctrl+C exits at once).
+- Security: `Host` allowlist (`localhost`, `127.0.0.1`, `[::1]` with the port, the bind
+  address, `server.allowed_hosts`) against DNS rebinding; an allowed `Origin` is
+  required for every state-changing request; a non-loopback `bind` is refused while
+  there is no authentication; read/admin route groups with an authentication slot;
+  CSP, `nosniff`, `X-Frame-Options` and `Referrer-Policy` headers.
+- `server.base_path` applied to all routes and generated URLs through one URL helper.
+- Embedded assets (`rust-embed`) with content-hash URLs, `ETag`/304 and immutable
+  caching; askama base layout (top bar, sidebar, main area) and error pages (404, 500,
+  "file not found — rescan").
+- `POST /scan` (admin) starts a rescan; `scanner::BackgroundScan` runs one scan at a time
+  on a background thread.
+
+### Changed
+
+- `server.base_path` accepts only ASCII letters, digits, `-`, `.`, `_`, `~` and `/`.
+
 ## [0.2.0] - 2026-10-11
 
 ### Changed

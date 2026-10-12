@@ -404,6 +404,16 @@ pub fn all_books(conn: &Connection) -> Result<Vec<LocatedBook>, StorageError> {
     located(conn, "ORDER BY b.id", [])
 }
 
+/// The number of books in the library (status `ok` or `error`, not `removed`).
+pub fn count_books(conn: &Connection) -> Result<u64, StorageError> {
+    let count: i64 = conn.query_row(
+        "SELECT count(*) FROM books WHERE status != 'removed'",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(count as u64)
+}
+
 /// Books in a container (any status), ordered by entry index.
 pub fn books_in_container(
     conn: &Connection,

@@ -39,6 +39,7 @@ use crate::storage::StorageError;
 use crate::storage::books::{BookStatus, EntryRecord, all_books};
 use crate::storage::containers::{ContainerRecord, list_containers};
 
+pub mod background;
 mod detect;
 pub mod matcher;
 mod walk;
@@ -48,6 +49,7 @@ use detect::FileJob;
 use walk::Found;
 use writer::{ContainerRef, Op, Outcome};
 
+pub use background::BackgroundScan;
 pub use walk::mtime_ns;
 
 /// The modification time recorded for an archive while its books are being written;

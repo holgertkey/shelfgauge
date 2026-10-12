@@ -1,7 +1,8 @@
 # shelfgauge — Architecture
 
-> Status: design, not yet implemented. This document describes the target architecture
-> for v1; details may change as implementation proceeds.
+> Status: partly implemented (scanner, storage, web server skeleton). This document
+> describes the target architecture for v1; details may change as implementation
+> proceeds.
 
 `shelfgauge` is a single-binary Rust app that indexes a directory tree of ebook files (FB2 in
 v1, plain files and `.zip` archives with any number of books inside) into a local SQLite DB
@@ -17,7 +18,10 @@ Key design points to keep in mind when implementing:
   browser origin).
 - **Scanning runs on every start, in the background**: the server starts immediately and
   serves the existing index while the UI shows progress. Also: a "Rescan" button,
-  `--no-scan`, and a `shelfgauge scan` subcommand (index and exit).
+  `--no-scan`, and a `shelfgauge scan` subcommand (index and exit). One scan runs at a
+  time on its own thread (`scanner::BackgroundScan`). Ctrl+C stops accepting requests,
+  cancels the scan and waits until the writer has committed what it received; a second
+  Ctrl+C exits at once.
 - **Scanner is incremental and crash-resistant**: check `(size, mtime)` before hashing;
   for `.zip` archives compare per-entry `(size, CRC32)` from the central directory so only
   changed entries are re-parsed; catch per-book parse failures so one broken book never
@@ -79,14 +83,24 @@ Key design points to keep in mind when implementing:
 
 v1 binds to `127.0.0.1` only, but is built to allow remote access later:
 
-- **Host header check** against `127.0.0.1:<port>`, `localhost:<port>` and
-  `allowed_hosts` (protection against DNS rebinding); state-changing requests also require
-  a matching `Origin` (CSRF).
+- **Host header check** against `127.0.0.1:<port>`, `localhost:<port>`, `[::1]:<port>`,
+  the bind address and `allowed_hosts` (protection against DNS rebinding); it runs as the
+  outermost layer, so it also covers assets and unknown paths. An `allowed_hosts` entry
+  without a port matches any port (reverse proxy on 443), one with a port matches
+  exactly.
+- **Origin check** (CSRF): every request with a method other than `GET`/`HEAD`/
+  `OPTIONS`/`TRACE` needs an `Origin` whose authority is on the same allowlist (not
+  compared with the request's `Host`, which a reverse proxy may rewrite); a missing or
+  `null` Origin is rejected.
 - If `bind` is not a loopback address and no authentication is configured, the program
   refuses to start.
 - Routes are split into a *read* group and an *admin* group (scan, settings), with an
   auth middleware slot; the admin group may stay localhost-only.
-- All URLs are built with a configurable `base_path` (reverse proxy on a subpath).
+- All routes and URLs are built with a configurable `base_path` (reverse proxy on a
+  subpath) through one helper (`web::Urls`); `base_path` is limited to unreserved URL
+  characters so it is safe in router paths and links.
+- Every response carries a strict `Content-Security-Policy` (own scripts/styles only,
+  no inline code), `nosniff`, `X-Frame-Options: DENY` and `Referrer-Policy`.
 - Files are only ever served by id, never by a client-supplied path.
 - No built-in TLS: remote access goes through a reverse proxy with HTTPS or a private
   network (Tailscale / WireGuard / SSH tunnel).
@@ -108,7 +122,7 @@ decided in V2.
 | Language / runtime | Rust (edition 2024), Tokio |
 | Web framework | axum |
 | Templates | askama |
-| Static assets | embedded in the binary (`rust-embed` or similar) |
+| Static assets | embedded in the binary (`rust-embed`, also in debug builds) |
 | Database | rusqlite (SQLite, WAL) + FTS5 |
 | DB access from async | read pool (`r2d2_sqlite`) + `spawn_blocking` |
 | Config | serde + toml |

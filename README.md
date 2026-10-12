@@ -9,8 +9,9 @@ library on `localhost`, with an in-browser reader.
 ## Status
 
 Early development. `shelfgauge scan` indexes a library of FB2 books (plain files and
-`.zip` archives) into `.shelfgauge/library.db`; the web UI and the reader are not
-implemented yet. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for
+`.zip` archives) into `.shelfgauge/library.db`; `shelfgauge [PATH]` starts the web
+server (layout skeleton only) and scans in the background. The library browser and the
+reader are not implemented yet. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for
 the target design.
 
 ## Building

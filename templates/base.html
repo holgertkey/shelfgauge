@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ title }} · shelfgauge</title>
+<link rel="icon" href="{{ urls.asset("icon.svg") }}" type="image/svg+xml">
+<link rel="stylesheet" href="{{ urls.asset("style.css") }}">
+<script src="{{ urls.asset("app.js") }}" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <button type="button" class="sidebar-toggle" aria-controls="sidebar" aria-expanded="true" title="Toggle sidebar">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <a class="brand" href="{{ urls.home() }}">shelfgauge</a>
+</header>
+{% if let Some(scan) = scan -%}
+<div class="banner" role="status">
+  {%- if scan.total > 0 %}Scanning the library: {{ scan.done }} of {{ scan.total }} books indexed.
+  {%- else %}Scanning the library: looking for changes…{% endif -%}
+</div>
+{%- endif %}
+<div class="layout">
+  <nav id="sidebar" class="sidebar" aria-label="Library">{% block sidebar %}{% endblock %}</nav>
+  <main class="main">{% block main %}{% endblock %}</main>
+</div>
+</body>
+</html>

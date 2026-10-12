@@ -5,8 +5,9 @@ use shelfgauge::container::ContainerKind;
 use shelfgauge::format::model::{Person, Series};
 use shelfgauge::storage::authors::{books_by_author, count_authors, list_authors};
 use shelfgauge::storage::books::{
-    BookRecord, BookStatus, EntryRecord, book_by_id, books_in_container, find_by_content_hash,
-    find_by_entry_identity, find_live_at, mark_removed, relocate, upsert_book,
+    BookRecord, BookStatus, EntryRecord, book_by_id, books_in_container, count_books,
+    find_by_content_hash, find_by_entry_identity, find_live_at, mark_removed, relocate,
+    upsert_book,
 };
 use shelfgauge::storage::containers::{ContainerRecord, upsert_container};
 use shelfgauge::storage::folders::{FolderKind, FolderPath, folder_children};
@@ -263,8 +264,10 @@ fn removed_books_free_their_location_and_disappear_from_lists() {
         &book(c, None, "Маяк", vec![person("Сидоров", "Иван")]),
     )
     .unwrap();
+    assert_eq!(count_books(&db.conn).unwrap(), 1);
     mark_removed(&db.conn, id).unwrap();
 
+    assert_eq!(count_books(&db.conn).unwrap(), 0);
     assert_eq!(find_live_at(&db.conn, c, b"").unwrap(), None);
     assert!(list_authors(&db.conn, "", 10, 0).unwrap().is_empty());
     assert_eq!(count_authors(&db.conn, "").unwrap(), 0);
@@ -336,6 +339,7 @@ fn error_books_keep_their_location() {
     let record = BookRecord::failed(c, None, None, "fb2", "broken", "invalid XML: oops");
     let id = upsert_book(&db.conn, &record).unwrap();
     assert_eq!(find_live_at(&db.conn, c, b"").unwrap(), Some(id));
+    assert_eq!(count_books(&db.conn).unwrap(), 1, "error books are counted");
     let details = book_by_id(&db.conn, id).unwrap().unwrap();
     assert_eq!(details.status, BookStatus::Error);
     assert_eq!(details.error_message.as_deref(), Some("invalid XML: oops"));

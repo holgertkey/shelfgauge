@@ -318,14 +318,19 @@ impl Config {
 }
 
 /// Normalizes a URL prefix to `/` or `/a/b`: adds the leading slash, drops trailing and
-/// duplicate slashes, and rejects `.`/`..` segments and characters that are not allowed
-/// in a path prefix.
+/// duplicate slashes, and rejects `.`/`..` segments and characters other than ASCII
+/// letters, digits, `-`, `.`, `_` and `~`.
 fn normalize_base_path(path: &str) -> Result<String, String> {
+    // Only unreserved URL characters: the prefix is used verbatim in generated URLs and
+    // in router paths, where `{`, `}` and `*` would be parameters.
     if let Some(c) = path
         .chars()
-        .find(|c| c.is_whitespace() || c.is_control() || matches!(c, '?' | '#' | '\\'))
+        .find(|&c| !(c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '.' | '_' | '~')))
     {
-        return Err(format!("{path:?} contains the invalid character {c:?}"));
+        return Err(format!(
+            "{path:?} contains the invalid character {c:?} (allowed: letters, digits, \
+             `-`, `.`, `_`, `~` and `/`)"
+        ));
     }
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     if segments.iter().any(|s| *s == "." || *s == "..") {
@@ -468,7 +473,20 @@ mod tests {
 
     #[test]
     fn base_path_rejects_invalid_input() {
-        for input in ["/a/./b", "/..", "/a b", "/a?x", "/a#x", "\\a"] {
+        for input in [
+            "/a/./b",
+            "/..",
+            "/a b",
+            "/a?x",
+            "/a#x",
+            "\\a",
+            "/{id}",
+            "/a/*x",
+            "/a:b",
+            "/%20",
+            "/книги",
+            "/a&b",
+        ] {
             assert!(normalize_base_path(input).is_err(), "{input:?}");
         }
     }
