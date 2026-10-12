@@ -20,17 +20,19 @@ pub(crate) enum AppError {
     /// No such page or object (404).
     NotFound,
     /// The book is indexed but its file is gone: the library needs a rescan (404).
-    #[allow(dead_code, reason = "used by the reading routes (Phase 10)")]
     FileMissing,
+    /// The book cannot be read or parsed (500); the reason is shown.
+    Unreadable(String),
     /// An unexpected failure (500); the message is logged, not shown.
     Internal(String),
 }
 
 /// Which error page a response should get; set by [`AppError::into_response`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ErrorPage {
     NotFound,
     FileMissing,
+    Unreadable(String),
     Internal,
 }
 
@@ -39,6 +41,13 @@ impl IntoResponse for AppError {
         let (status, page) = match self {
             Self::NotFound => (StatusCode::NOT_FOUND, ErrorPage::NotFound),
             Self::FileMissing => (StatusCode::NOT_FOUND, ErrorPage::FileMissing),
+            Self::Unreadable(reason) => {
+                tracing::warn!("cannot read a book: {reason}");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ErrorPage::Unreadable(reason),
+                )
+            }
             Self::Internal(message) => {
                 tracing::error!("{message}");
                 (StatusCode::INTERNAL_SERVER_ERROR, ErrorPage::Internal)
@@ -80,6 +89,7 @@ struct ErrorTemplate<'a> {
     layout: Layout,
     status: u16,
     message: &'a str,
+    detail: Option<String>,
     rescan: bool,
 }
 
@@ -98,10 +108,14 @@ pub(crate) async fn render_errors(
     next: Next,
 ) -> Response {
     let response = next.run(req).await;
-    let Some(&page) = response.extensions().get::<ErrorPage>() else {
+    let Some(page) = response.extensions().get::<ErrorPage>().cloned() else {
         return response;
     };
     let status = response.status();
+    let detail = match &page {
+        ErrorPage::Unreadable(reason) => Some(reason.clone()),
+        _ => None,
+    };
     let (title, message, rescan) = match page {
         ErrorPage::NotFound => ("Not found", "There is no such page in this library.", false),
         ErrorPage::FileMissing => (
@@ -109,6 +123,11 @@ pub(crate) async fn render_errors(
             "The book's file is no longer where the index says it is. It may have been \
              moved, renamed or deleted; rescan the library to update the index.",
             true,
+        ),
+        ErrorPage::Unreadable(_) => (
+            "Cannot read the book",
+            "The book's file could not be read or parsed.",
+            false,
         ),
         ErrorPage::Internal => (
             "Internal error",
@@ -120,6 +139,7 @@ pub(crate) async fn render_errors(
         layout: Layout::without_sidebar(&state, title),
         status: status.as_u16(),
         message,
+        detail,
         rescan,
     };
     match page.render() {

@@ -11,6 +11,7 @@ pub mod container;
 pub mod error;
 pub mod format;
 pub mod library;
+pub mod render;
 pub mod scanner;
 pub mod storage;
 pub mod web;

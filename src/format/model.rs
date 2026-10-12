@@ -354,6 +354,20 @@ pub struct Block {
 }
 
 impl Block {
+    /// Calls `f` for this block and every block nested in it, in numbering order (a
+    /// container before its contents).
+    pub fn walk<'a>(&'a self, mut f: impl FnMut(&'a Block)) {
+        walk_block(self, &mut f);
+    }
+
+    /// The highest block ID in this block and its contents: a container and everything
+    /// in it occupy the IDs `self.id..=self.last_id()`.
+    pub fn last_id(&self) -> BlockId {
+        let mut last = self.id;
+        self.walk(|block| last = last.max(block.id));
+        last
+    }
+
     /// Creates an unnumbered block without an anchor.
     pub fn new(kind: BlockKind) -> Self {
         Self {
@@ -852,6 +866,22 @@ mod tests {
             .map(|(id, kind, text)| (id.to_string(), *kind, text.to_string()))
             .collect();
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn containers_occupy_a_contiguous_id_range() {
+        let content = sample();
+        let blocks = content.blocks();
+        let poem = blocks.iter().find(|b| b.kind.name() == "poem").unwrap();
+        assert_eq!(
+            (poem.id.to_string(), poem.last_id().to_string()),
+            ("b13".into(), "b23".into())
+        );
+        let mut inside = Vec::new();
+        poem.walk(|b| inside.push(b.id.ordinal()));
+        assert_eq!(inside, (13..=23).collect::<Vec<_>>());
+        let leaf = blocks.iter().find(|b| b.id.ordinal() == 11).unwrap();
+        assert_eq!(leaf.last_id(), leaf.id);
     }
 
     #[test]

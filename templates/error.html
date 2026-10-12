@@ -3,6 +3,9 @@
 <h1>{{ layout.title }}</h1>
 <p class="muted">Error {{ status }}</p>
 <p>{{ message }}</p>
+{%- if let Some(detail) = detail %}
+<p class="notice error">{{ detail }}</p>
+{%- endif %}
 {% if rescan -%}
 <form method="post" action="{{ layout.urls.scan() }}">
   <button type="submit">Rescan the library</button>

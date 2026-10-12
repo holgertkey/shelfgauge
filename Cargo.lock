@@ -1279,7 +1279,7 @@ dependencies = [
 
 [[package]]
 name = "shelfgauge"
-version = "0.3.0+000"
+version = "0.4.0+000"
 dependencies = [
  "anyhow",
  "askama",

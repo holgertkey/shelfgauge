@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block sidebar %}
+<p class="toc-book"><a href="{{ card_href }}">‹ {{ book_title }}</a></p>
+{{ toc|safe }}
+{% endblock %}
+{% block main %}
+<article class="reader">
+  <header class="reader-head">
+    <a class="book-link" href="{{ card_href }}">{{ book_title }}</a>
+    {%- if !part_title.is_empty() %} <span class="muted">· {{ part_title }}</span>{% endif %}
+  </header>
+  {% include "partials/reader_nav.html" %}
+  <div class="text">{{ html|safe }}</div>
+  {% include "partials/reader_nav.html" %}
+</article>
+{% endblock %}

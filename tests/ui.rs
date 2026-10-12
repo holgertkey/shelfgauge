@@ -502,7 +502,12 @@ async fn book_card_shows_metadata_and_cover() {
     assert!(main.contains("Первая строка аннотации"));
     assert!(main.contains("Толстой Лев/Война и мир.fb2"));
     assert!(!main.contains("class=\"notice"), "{main}");
-    assert!(!main.contains(">Read<"), "no reader before 0.4.0");
+    assert!(
+        main.contains(&format!(
+            "<a class=\"button primary\" href=\"/book/{id}/read\">Read</a>"
+        )),
+        "{main}"
+    );
 
     let cover = main
         .split("src=\"")

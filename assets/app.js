@@ -185,7 +185,10 @@ function setMode(mode) {
 
 function toggleMode() {
   const active = document.querySelector(".modes a.active");
-  setMode(active && active.dataset.mode === "folders" ? "authors" : "folders");
+  if (!active) {
+    return; // No mode switch on this page (reading mode).
+  }
+  setMode(active.dataset.mode === "folders" ? "authors" : "folders");
 }
 
 function setupFilter(sidebar) {
@@ -226,7 +229,10 @@ function setupFilter(sidebar) {
 function setupScroll(sidebar) {
   const active = sidebar.querySelector("a.active");
   if (active) {
-    active.scrollIntoView({ block: "center" });
+    // Scroll only the sidebar: scrollIntoView would also move the page and undo a
+    // #b123 position in reading mode.
+    const offset = active.getBoundingClientRect().top - sidebar.getBoundingClientRect().top;
+    sidebar.scrollTop += offset - sidebar.clientHeight / 2;
   } else {
     const saved = Number(storageGet(sessionStorage, SCROLL_KEY));
     if (saved > 0) {
@@ -364,6 +370,17 @@ function setupKeys() {
       case "m":
         toggleMode();
         break;
+      case "ArrowLeft":
+      case "ArrowRight": {
+        // Reading mode: previous / next part.
+        const rel = event.key === "ArrowLeft" ? "prev" : "next";
+        const link = document.querySelector(`.reader-nav a[rel="${rel}"]`);
+        if (link) {
+          event.preventDefault();
+          window.location.href = link.href;
+        }
+        break;
+      }
       default:
     }
   });

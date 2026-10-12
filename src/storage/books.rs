@@ -218,6 +218,8 @@ pub struct BookDetails {
     pub container_kind: ContainerKind,
     /// The archive entry, for books in archives.
     pub entry: Option<EntryRecord>,
+    /// The content hash recorded by the last scan (plain files only).
+    pub content_hash: Option<Vec<u8>>,
     /// When the book was first indexed (Unix seconds).
     pub added_at: i64,
     /// When the record last changed (Unix seconds).
@@ -483,7 +485,7 @@ pub fn book_by_id(conn: &Connection, id: i64) -> Result<Option<BookDetails>, Sto
             "SELECT b.id, b.title, b.annotation, b.language, b.cover_mime, b.format,
                     b.status, b.error_message, c.path, c.kind,
                     b.entry_name, b.entry_path, b.entry_index, b.entry_size, b.entry_crc32,
-                    b.added_at, b.updated_at
+                    b.added_at, b.updated_at, b.content_hash
              FROM books b JOIN containers c ON c.id = b.container_id
              WHERE b.id = ?1",
             [id],
@@ -515,6 +517,7 @@ pub fn book_by_id(conn: &Connection, id: i64) -> Result<Option<BookDetails>, Sto
                     container_path: row.get(8)?,
                     container_kind: parse_kind(&row.get::<_, String>(9)?),
                     entry,
+                    content_hash: row.get(17)?,
                     added_at: row.get(15)?,
                     updated_at: row.get(16)?,
                 })

@@ -489,7 +489,7 @@ impl Run<'_> {
                 return;
             }
         };
-        let hash = xxhash_rust::xxh3::xxh3_128(&data).to_be_bytes().to_vec();
+        let hash = crate::cache::content::content_hash(&data);
         if let Some((_, Some(stored))) = &job.existing
             && *stored == hash
         {

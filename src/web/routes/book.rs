@@ -2,8 +2,8 @@
 
 use askama::Template;
 use axum::extract::{Path, RawQuery, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
-use axum::response::{Html, IntoResponse, Response};
+use axum::http::HeaderMap;
+use axum::response::{Html, Response};
 
 use super::{date, parse_id, render};
 use crate::cache::covers;
@@ -28,6 +28,7 @@ struct BookPage {
     folder_href: String,
     added: String,
     file_present: bool,
+    read_href: Option<String>,
     annotation: Vec<String>,
 }
 
@@ -112,6 +113,7 @@ pub(crate) async fn card(
         location,
         added: date(book.added_at),
         file_present,
+        read_href: (book.status == BookStatus::Ok && file_present).then(|| urls.read(book.id, 1)),
         annotation: book
             .annotation
             .lines()
@@ -155,31 +157,11 @@ pub(crate) async fn cover(
         })
         .await?;
 
-    let etag = format!("\"{version}\"");
-    let current = query
-        .as_deref()
-        .is_some_and(|q| q.split('&').any(|pair| pair == format!("v={version}")));
-    let cache_control = if current {
-        "public, max-age=31536000, immutable"
-    } else {
-        "no-cache"
-    };
-    let response_headers = [
-        (
-            header::ETAG,
-            HeaderValue::from_str(&etag).expect("digits are a valid header"),
-        ),
-        (
-            header::CACHE_CONTROL,
-            HeaderValue::from_static(cache_control),
-        ),
-    ];
-    let not_modified = headers
-        .get(header::IF_NONE_MATCH)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.split(',').any(|tag| tag.trim() == etag));
-    if not_modified {
-        return Ok((StatusCode::NOT_MODIFIED, response_headers).into_response());
-    }
-    Ok((response_headers, [(header::CONTENT_TYPE, mime)], data).into_response())
+    Ok(super::versioned_bytes(
+        mime,
+        version,
+        query.as_deref(),
+        &headers,
+        data,
+    ))
 }

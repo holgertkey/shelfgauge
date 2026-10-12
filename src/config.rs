@@ -48,7 +48,8 @@ page_size = 100
 [reader]
 # How a book is split into parts for reading: "none", "section" or "size".
 split = "section"
-# For split = "section": split at sections of this nesting depth (1 = top level).
+# For split = "section": split at sections down to this nesting depth (1 = top
+# level); very short untitled parts (a copyright notice, an epigraph) join the next.
 section_depth = 1
 # For split = "size": approximate number of characters per part.
 part_size = 50000

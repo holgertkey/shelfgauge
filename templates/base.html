@@ -46,6 +46,7 @@
 </div>
 <div class="layout">
   <nav id="sidebar" class="sidebar" aria-label="Library" data-cookie-path="{{ layout.urls.home() }}">
+    {%- block sidebar %}
     <div class="modes">
       <a href="{{ layout.urls.authors("", 1) }}" data-mode="authors"{% if !layout.sidebar.mode.is_folders() %} class="active" aria-current="true"{% endif %}>Authors</a>
       <a href="{{ layout.urls.folders() }}" data-mode="folders"{% if layout.sidebar.mode.is_folders() %} class="active" aria-current="true"{% endif %}>Folders</a>
@@ -56,6 +57,7 @@
     </form>
     {%- endif %}
     <div class="tree-root">{{ layout.sidebar.html|safe }}</div>
+    {%- endblock %}
   </nav>
   <main class="main">{% block main %}{% endblock %}</main>
 </div>

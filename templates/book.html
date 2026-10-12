@@ -22,6 +22,9 @@
       <dt>Location</dt><dd class="path"><a href="{{ folder_href }}">{{ location }}</a></dd>
       <dt>Added</dt><dd>{{ added }}</dd>
     </dl>
+    {%- if let Some(read) = read_href %}
+    <p class="actions"><a class="button primary" href="{{ read }}">Read</a></p>
+    {%- endif %}
     {%- if !file_present %}
     <form method="post" action="{{ layout.urls.scan() }}" class="actions">
       <button type="submit">Rescan the library</button>

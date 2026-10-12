@@ -1,6 +1,6 @@
 # shelfgauge — Architecture
 
-> Status: partly implemented (scanner, storage, web server, library mode UI). This document
+> Status: partly implemented (scanner, storage, web server, library and reading mode). This document
 > describes the target architecture for v1; details may change as implementation
 > proceeds.
 
@@ -83,6 +83,16 @@ Key design points to keep in mind when implementing:
   - *Reading mode*: sidebar shows the book's TOC; main area shows one part of the book as
     HTML, rendered from `BookContent` (never directly from FB2). Splitting into parts is
     configured in `[reader]` (`none` / `section` / `size`, cut at block boundaries).
+    A part is a contiguous range of block IDs, cut only between whole top-level blocks
+    of a section (a poem or cite is never split); `section` cuts at sections up to
+    `section_depth`, merges title-only parts and small untitled parts (front matter)
+    into the next one and never splits a notes body per note. `?at=b<n>` redirects to the part URL with `#b<n>`.
+  - Content comes from `.shelfgauge/content/` (keyed by the indexed content identity:
+    a plain file's hash, a zip entry's size + CRC32), else the book is read, verified
+    against that identity (a mismatch asks for a rescan) and parsed; loading, splitting
+    and rendering run on a thread with the parser stack. A few parsed books are kept in
+    memory for part changes and images. Source-format anchors are resolved to block
+    IDs and never emitted as HTML ids.
   - **Block IDs** are the block's ordinal in document order (`b1234`), counting every
     block (the exact rule is documented in `src/format/model.rs` and pinned by a golden
     test). Each FB2 `<body>` is a root section (main body first, then notes bodies). They must be deterministic and **must not depend on the split setting**; deep

@@ -10,18 +10,24 @@
 //! state-changing methods, the `Origin` check (see [`security`]). All paths are
 //! registered and generated through [`Urls`], which applies `server.base_path`.
 
+use std::collections::VecDeque;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::Router;
 use axum::middleware::{from_fn, from_fn_with_state};
 use axum::routing::{get, post};
 
-use crate::config::{Config, ServerConfig};
+use crate::config::{Config, ReaderConfig, ServerConfig};
+use crate::container::ReadLimits;
+use crate::format::Registry;
+use crate::format::model::BookContent;
 use crate::library::Library;
+use crate::render::load;
 use crate::scanner::BackgroundScan;
 use crate::storage::ReadPool;
+use crate::storage::books::BookDetails;
 
 mod assets;
 mod error;
@@ -81,7 +87,17 @@ struct Inner {
     pool: ReadPool,
     scan: Arc<BackgroundScan>,
     page_size: u32,
+    reader: ReaderConfig,
+    registry: Registry,
+    /// Recently read books, newest last.
+    recent: Mutex<VecDeque<RecentBook>>,
 }
+
+/// A parsed book kept in memory: `(book id, content key, content)`.
+type RecentBook = (i64, Vec<u8>, Arc<BookContent>);
+
+/// The number of parsed books kept in memory (images and part changes reuse them).
+const RECENT_BOOKS: usize = 4;
 
 impl AppState {
     /// Creates the state for `library` with its (validated) `config`.
@@ -99,6 +115,9 @@ impl AppState {
             pool,
             scan,
             page_size: config.library.page_size,
+            reader: config.reader.clone(),
+            registry: Registry::with_builtin_formats(),
+            recent: Mutex::new(VecDeque::new()),
         }))
     }
 
@@ -135,6 +154,48 @@ impl AppState {
     /// Entries per list page (`library.page_size`).
     pub fn page_size(&self) -> u32 {
         self.0.page_size
+    }
+
+    /// The `[reader]` settings.
+    pub fn reader(&self) -> &ReaderConfig {
+        &self.0.reader
+    }
+
+    /// The content of `book`, from memory, the content cache or the book file.
+    ///
+    /// Parses and decodes recursively: call it on a thread with the parser stack.
+    pub(crate) fn content(&self, book: &BookDetails) -> Result<Arc<BookContent>, AppError> {
+        let key = load::content_key(book);
+        let lock = || self.0.recent.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(key) = &key
+            && let Some((_, _, content)) =
+                lock().iter().find(|(id, k, _)| *id == book.id && k == key)
+        {
+            return Ok(Arc::clone(content));
+        }
+        let content = load::load(
+            self.library(),
+            &self.0.registry,
+            &ReadLimits::default(),
+            book,
+        )
+        .map_err(|e| match e {
+            load::LoadError::NeedsRescan(reason) => {
+                tracing::info!("book {}: {reason}", book.id);
+                AppError::FileMissing
+            }
+            load::LoadError::Unreadable(reason) => AppError::Unreadable(reason),
+        })?;
+        let content = Arc::new(content);
+        if let Some(key) = key {
+            let mut recent = lock();
+            recent.retain(|(id, _, _)| *id != book.id);
+            recent.push_back((book.id, key, Arc::clone(&content)));
+            while recent.len() > RECENT_BOOKS {
+                recent.pop_front();
+            }
+        }
+        Ok(content)
     }
 
     /// Runs `f` with a pooled read connection on a blocking thread.
@@ -179,6 +240,11 @@ pub fn router(state: AppState) -> Router {
         .route(&urls.path("/folder"), get(routes::library::folder))
         .route(&urls.path("/book/{id}"), get(routes::book::card))
         .route(&urls.path("/cover/{id}"), get(routes::book::cover))
+        .route(&urls.path("/book/{id}/read"), get(routes::read::read))
+        .route(
+            &urls.path("/book/{id}/image/{image}"),
+            get(routes::read::image),
+        )
         .route(&urls.path("/search"), get(routes::search::search))
         .route(&urls.path("/scan/status"), get(routes::scan::status))
         .route(

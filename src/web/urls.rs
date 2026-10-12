@@ -15,6 +15,14 @@ const QUERY_VALUE: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'~')
     .remove(b'/');
 
+/// Characters percent-encoded in a path segment: everything except unreserved
+/// characters (so `/`, `?`, `#` and `%` are encoded too).
+const PATH_SEGMENT: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+
 /// Builds URLs under the configured `server.base_path`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Urls {
@@ -116,6 +124,46 @@ impl Urls {
     /// A book's card.
     pub fn book(&self, id: i64) -> String {
         self.path(&format!("/book/{id}"))
+    }
+
+    /// Reading mode: 1-based `part` of a book.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use shelfgauge::web::Urls;
+    ///
+    /// assert_eq!(Urls::new("/").read(3, 1), "/book/3/read");
+    /// assert_eq!(Urls::new("/").read(3, 2), "/book/3/read?part=2");
+    /// ```
+    pub fn read(&self, id: i64, part: usize) -> String {
+        let url = self.path(&format!("/book/{id}/read"));
+        if part > 1 {
+            format!("{url}?part={part}")
+        } else {
+            url
+        }
+    }
+
+    /// Reading mode at a block: the server redirects to the part that contains it.
+    pub fn read_at(&self, id: i64, block: crate::format::model::BlockId) -> String {
+        self.path(&format!("/book/{id}/read?at={block}"))
+    }
+
+    /// An image of a book's content, versioned by the book's `updated_at`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use shelfgauge::web::Urls;
+    ///
+    /// assert_eq!(Urls::new("/").image(3, "a/b #1.jpg", 9), "/book/3/image/a%2Fb%20%231.jpg?v=9");
+    /// ```
+    pub fn image(&self, id: i64, image_id: &str, version: i64) -> String {
+        self.path(&format!(
+            "/book/{id}/image/{}?v={version}",
+            utf8_percent_encode(image_id, PATH_SEGMENT)
+        ))
     }
 
     /// A book's cover, versioned by the book's `updated_at`.

@@ -8,6 +8,32 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-12
+
+### Added
+
+- Reading mode: `/book/<id>/read` shows one part of a book as semantic HTML (sections,
+  titles, epigraphs, poems, cites, tables, images, notes), with prev/next links, `←`/`→`
+  keys, reading typography and the book's table of contents in the sidebar (entries of
+  the current part highlighted). The book card has a Read button.
+- Splitting into parts (`render::split`) per `[reader]`: `none`, `section` (sections up
+  to `section_depth`; parts of only titles and small untitled parts such as a
+  copyright notice or an epigraph join the next part) or `size` (about `part_size`
+  characters). Parts
+  are cut only between whole blocks, every block is in exactly one part, and a notes
+  body is never split per note.
+- Deep links: `?at=b<n>` redirects to the part with that block and scrolls to it;
+  every rendered block has `id="b<n>"` independent of the split setting.
+- HTML rendering (`render::html`): all text escaped; internal links resolved to block
+  IDs (source anchors never become HTML ids); external links only for `http`, `https`
+  and `mailto`; table alignment by classes.
+- Content loading (`render::load`): parsed content is cached in
+  `.shelfgauge/content/` keyed by the indexed content identity; a file changed or gone
+  since the last scan shows the "rescan" page, an unparsable book a "cannot read" page
+  with the reason. The last few books are also kept in memory.
+- Book images at `/book/<id>/image/<image-id>`, only for known raster types, with
+  immutable caching per book version.
+
 ## [0.3.0] - 2026-10-12
 
 ### Added

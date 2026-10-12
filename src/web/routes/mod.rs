@@ -6,7 +6,8 @@
 use askama::Template;
 use axum::extract::Query;
 use axum::extract::rejection::QueryRejection;
-use axum::response::Html;
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::response::{Html, IntoResponse, Response};
 use serde::Deserialize;
 
 use super::AppError;
@@ -16,6 +17,7 @@ use crate::storage::folders::FolderPath;
 
 pub(crate) mod book;
 pub(crate) mod library;
+pub(crate) mod read;
 pub(crate) mod scan;
 pub(crate) mod search;
 pub(crate) mod sidebar;
@@ -35,6 +37,10 @@ pub(crate) struct Params {
     /// A directory inside `zip`.
     #[serde(rename = "in")]
     inner: Option<String>,
+    /// 1-based part (reading mode).
+    part: Option<String>,
+    /// A block id to open (reading mode), e.g. `b12`.
+    at: Option<String>,
 }
 
 impl Params {
@@ -72,6 +78,44 @@ fn parse_id(text: &str) -> Result<i64, AppError> {
 /// Renders a template into an HTML response.
 fn render(template: &impl Template) -> Result<Html<String>, AppError> {
     Ok(Html(template.render()?))
+}
+
+/// A response with binary data that belongs to a book version (covers, images).
+///
+/// The `ETag` is the version; a URL whose query carries `v=<version>` is cached as
+/// immutable, other URLs are revalidated. `mime` must come from an allowlist.
+fn versioned_bytes(
+    mime: &'static str,
+    version: i64,
+    query: Option<&str>,
+    headers: &HeaderMap,
+    data: Vec<u8>,
+) -> Response {
+    let etag = format!("\"{version}\"");
+    let current = query.is_some_and(|q| q.split('&').any(|pair| pair == format!("v={version}")));
+    let cache_control = if current {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    };
+    let response_headers = [
+        (
+            header::ETAG,
+            HeaderValue::from_str(&etag).expect("digits are a valid header"),
+        ),
+        (
+            header::CACHE_CONTROL,
+            HeaderValue::from_static(cache_control),
+        ),
+    ];
+    let not_modified = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(',').any(|tag| tag.trim() == etag));
+    if not_modified {
+        return (StatusCode::NOT_MODIFIED, response_headers).into_response();
+    }
+    (response_headers, [(header::CONTENT_TYPE, mime)], data).into_response()
 }
 
 /// An entry of a book list in the main area.

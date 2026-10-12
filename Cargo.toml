@@ -1,6 +1,6 @@
 [package]
 name = "shelfgauge"
-version = "0.3.0+000"
+version = "0.4.0+000"
 edition = "2024"
 license = "MIT"
 description = "Index a folder of ebooks (FB2, plain and zipped) and browse it in a local web library"

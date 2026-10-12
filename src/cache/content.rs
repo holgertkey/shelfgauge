@@ -10,6 +10,12 @@ use std::path::{Path, PathBuf};
 use super::write_atomic;
 use crate::format::model::{BookContent, PARSER_VERSION};
 
+/// The content hash of a plain-file book, as recorded by the scanner (xxh3-128,
+/// big-endian).
+pub fn content_hash(data: &[u8]) -> Vec<u8> {
+    xxhash_rust::xxh3::xxh3_128(data).to_be_bytes().to_vec()
+}
+
 /// File signature of a cache entry.
 const MAGIC: &[u8; 4] = b"SGC1";
 
