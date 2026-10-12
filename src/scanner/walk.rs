@@ -243,7 +243,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         touch(dir.path(), "real.fb2");
         let bad = std::ffi::OsStr::from_bytes(b"bad\xff.fb2");
-        std::fs::write(dir.path().join(bad), b"x").unwrap();
+        // macOS file systems refuse non-UTF-8 names (EILSEQ); elsewhere this must work.
+        let created = std::fs::write(dir.path().join(bad), b"x").is_ok();
+        assert!(created || cfg!(target_os = "macos"));
         std::os::unix::fs::symlink(dir.path().join("real.fb2"), dir.path().join("link.fb2"))
             .unwrap();
         let walk = walk(
@@ -253,6 +255,6 @@ mod tests {
             &AtomicBool::new(false),
         );
         assert_eq!(paths(&walk), ["real.fb2"]);
-        assert_eq!(walk.skipped_non_utf8, 1);
+        assert_eq!(walk.skipped_non_utf8, u64::from(created));
     }
 }
