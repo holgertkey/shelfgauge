@@ -9,6 +9,9 @@ const THEME_KEY = "shelfgauge-theme";
 const SIDEBAR_KEY = "shelfgauge-sidebar-hidden";
 const SCROLL_KEY = "shelfgauge-sidebar-scroll";
 const MODE_COOKIE = "shelfgauge-sidebar";
+const WIDTH_KEY = "shelfgauge-sidebar-width";
+const MIN_SIDEBAR_WIDTH = 192; // 12rem
+const WIDTH_STEP = 16;
 
 function storageGet(storage, key) {
   try {
@@ -106,6 +109,91 @@ function setupSidebarToggle() {
   });
   narrow.addEventListener("change", syncToggle);
   syncToggle();
+}
+
+// ---------- Sidebar width ----------
+
+function maxSidebarWidth() {
+  return Math.max(MIN_SIDEBAR_WIDTH, Math.floor(window.innerWidth / 2));
+}
+
+function clampWidth(width) {
+  return Math.round(Math.min(Math.max(width, MIN_SIDEBAR_WIDTH), maxSidebarWidth()));
+}
+
+function sidebarWidth() {
+  const sidebar = document.getElementById("sidebar");
+  return sidebar ? sidebar.getBoundingClientRect().width : MIN_SIDEBAR_WIDTH;
+}
+
+// Sets the width (`null`: the default from the stylesheet) and updates the ARIA values.
+function setSidebarWidth(width, save) {
+  const root = document.documentElement;
+  if (width === null) {
+    root.style.removeProperty("--sidebar-width");
+  } else {
+    root.style.setProperty("--sidebar-width", `${clampWidth(width)}px`);
+  }
+  if (save) {
+    storageSet(localStorage, WIDTH_KEY, width === null ? null : String(clampWidth(width)));
+  }
+  const handle = document.querySelector(".sidebar-resizer");
+  if (handle) {
+    handle.setAttribute("aria-valuemin", String(MIN_SIDEBAR_WIDTH));
+    handle.setAttribute("aria-valuemax", String(maxSidebarWidth()));
+    handle.setAttribute("aria-valuenow", String(Math.round(sidebarWidth())));
+  }
+}
+
+function setupResizer() {
+  const handle = document.querySelector(".sidebar-resizer");
+  const sidebar = document.getElementById("sidebar");
+  if (!handle || !sidebar) {
+    return;
+  }
+  const saved = Number(storageGet(localStorage, WIDTH_KEY));
+  setSidebarWidth(saved > 0 ? saved : null, false);
+
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    handle.setPointerCapture(event.pointerId);
+    document.body.classList.add("resizing");
+    const left = sidebar.getBoundingClientRect().left;
+    const move = (e) => setSidebarWidth(e.clientX - left, false);
+    const end = (e) => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", end);
+      handle.removeEventListener("pointercancel", end);
+      document.body.classList.remove("resizing");
+      setSidebarWidth(e.clientX - left, true);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+  });
+  handle.addEventListener("dblclick", () => setSidebarWidth(null, true));
+  handle.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+      return;
+    }
+    // Not the reader's previous/next part.
+    event.preventDefault();
+    event.stopPropagation();
+    const step = (event.shiftKey ? 4 : 1) * WIDTH_STEP;
+    const delta = event.key === "ArrowLeft" ? -step : step;
+    setSidebarWidth(sidebarWidth() + delta, true);
+  });
+  // Keep the saved width within half of a smaller window (the saved value, not the
+  // current one: a hidden sidebar has no width).
+  window.addEventListener("resize", () => {
+    const width = Number(storageGet(localStorage, WIDTH_KEY));
+    if (width > 0) {
+      setSidebarWidth(width, false);
+    }
+  });
 }
 
 // ---------- Sidebar tree ----------
@@ -389,6 +477,7 @@ function setupKeys() {
 document.addEventListener("DOMContentLoaded", () => {
   setupTheme();
   setupSidebarToggle();
+  setupResizer();
   const sidebar = document.getElementById("sidebar");
   if (sidebar) {
     setupTree(sidebar);

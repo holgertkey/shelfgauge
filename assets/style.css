@@ -196,6 +196,7 @@ button:hover {
 }
 
 .no-js .theme-select,
+.no-js .sidebar-resizer,
 .no-js .twisty {
   display: none;
 }
@@ -281,7 +282,43 @@ button:hover {
 
 .layout {
   display: grid;
-  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  /* sidebar | resizer (zero-width column; the handle overlaps the border) | main */
+  grid-template-columns: var(--sidebar-width) 0 minmax(0, 1fr);
+}
+
+.sidebar-resizer {
+  position: sticky;
+  top: var(--topbar-height);
+  z-index: 5;
+  width: 9px;
+  height: calc(100vh - var(--topbar-height));
+  margin-left: -5px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.sidebar-resizer::after {
+  display: block;
+  width: 3px;
+  height: 100%;
+  margin: 0 auto;
+  content: "";
+  transition: background 0.15s;
+}
+
+.sidebar-resizer:hover::after,
+.sidebar-resizer:focus-visible::after,
+body.resizing .sidebar-resizer::after {
+  background: var(--accent);
+}
+
+.sidebar-resizer:focus-visible {
+  outline: none;
+}
+
+body.resizing {
+  cursor: col-resize;
+  user-select: none;
 }
 
 .sidebar {
@@ -304,7 +341,8 @@ body.sidebar-hidden .layout {
   grid-template-columns: minmax(0, 1fr);
 }
 
-body.sidebar-hidden .sidebar {
+body.sidebar-hidden .sidebar,
+body.sidebar-hidden .sidebar-resizer {
   display: none;
 }
 
@@ -828,6 +866,10 @@ body.sidebar-hidden .sidebar {
 @media (max-width: 48rem) {
   .layout {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sidebar-resizer {
+    display: none;
   }
 
   .sidebar {

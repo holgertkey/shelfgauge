@@ -59,6 +59,9 @@ scan keeps what it has indexed so far, and the next scan completes it.
   parts as configured in `[reader]`, with the table of contents in the sidebar.
 - A link to `/book/<id>/read?at=b<n>` opens a book at a given block; block numbers do not
   depend on how the book is split.
+- The border between the sidebar and the main area can be dragged (or moved with `←`/`→`
+  when focused) to resize the sidebar; double-click restores the default width. The
+  width is remembered per browser.
 - Themes: auto (system), light, dark, sepia, navy.
 - Keys: `/` or `s` search, `t` next theme, `m` sidebar mode, `←`/`→` previous/next part
   while reading, `Esc` leave the search field.

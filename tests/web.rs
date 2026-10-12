@@ -114,6 +114,7 @@ async fn library_page_renders_the_layout() {
         "href=\"/assets/style.css?v=",
         "src=\"/assets/app.js?v=",
         "action=\"/scan\"",
+        "<div class=\"sidebar-resizer\" role=\"separator\"",
     ] {
         assert!(
             reply.body.contains(part),

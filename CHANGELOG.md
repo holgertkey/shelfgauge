@@ -29,6 +29,8 @@ Build numbers (`+NNN`) do not get their own sections.
   longer part, e.g. a book without chapters, is cut into equal pieces between whole
   blocks ("Title (1/3)", ...) instead of becoming one huge page (a 200 MB book used to
   render as a single 212 MB page).
+- The sidebar can be resized by dragging its border (or with `←`/`→` on the focused
+  border; double-click restores the default); the width is remembered per browser.
 - README: installation, configuration reference (checked against the default config by a
   test), remote access via SSH tunnel or an authenticating reverse proxy, legal note.
 
