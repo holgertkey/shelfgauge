@@ -53,6 +53,9 @@ split = "section"
 section_depth = 1
 # For split = "size": approximate number of characters per part.
 part_size = 50000
+# Longest part in characters, in every mode: a longer part (e.g. a book without
+# chapters) is cut into equal pieces at block boundaries. 0 = no limit.
+max_part_size = 300000
 "#;
 
 /// The complete configuration of a library.
@@ -126,6 +129,9 @@ pub struct ReaderConfig {
     pub section_depth: u32,
     /// For [`SplitMode::Size`]: approximate number of characters per part.
     pub part_size: u32,
+    /// The longest part in characters, in every mode; longer parts are cut into equal
+    /// pieces at block boundaries. 0 means no limit.
+    pub max_part_size: u32,
 }
 
 impl Default for ReaderConfig {
@@ -134,6 +140,7 @@ impl Default for ReaderConfig {
             split: SplitMode::Section,
             section_depth: 1,
             part_size: 50_000,
+            max_part_size: 300_000,
         }
     }
 }

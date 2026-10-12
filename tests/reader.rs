@@ -587,3 +587,51 @@ async fn base_path_applies_to_reader_links() {
             .contains(&format!("href=\"/books/book/{id}/read\">Read</a>"))
     );
 }
+
+/// A book without chapters is cut by `reader.max_part_size` instead of becoming one huge
+/// page; deep links still find every block.
+#[tokio::test]
+async fn long_parts_are_limited() {
+    let lib = TestLibrary::new();
+    let paragraphs: String = (1..=30)
+        .map(|i| format!("<p>Paragraph {i}: {}</p>", "слово ".repeat(330)))
+        .collect();
+    lib.write("flat.fb2", &fb2("Flat", &paragraphs, ""));
+    lib.scan();
+    let id = lib.id_of("flat.fb2");
+    let server = lib.server(
+        "/",
+        ReaderConfig {
+            max_part_size: 20_000,
+            ..ReaderConfig::default()
+        },
+    );
+    let parts = server.parts(&format!("/book/{id}/read")).await;
+    assert_eq!(
+        parts.len(),
+        4,
+        "about 60 000 characters, at most 20 000 per part"
+    );
+    assert!(parts[0].body.contains("Part 1 of 4"));
+    assert!(
+        parts[1].body.contains("Part 1 (2/4)"),
+        "pieces are numbered"
+    );
+    let rendered: Vec<u32> = parts.iter().flat_map(Reply::block_ids).collect();
+    assert_eq!(rendered, (1..=rendered.len() as u32).collect::<Vec<_>>());
+    let last = *rendered.last().unwrap();
+    let reply = server.get(&format!("/book/{id}/read?at=b{last}")).await;
+    assert_eq!(
+        reply.header(header::LOCATION),
+        format!("/book/{id}/read?part=4#b{last}")
+    );
+
+    let unlimited = lib.server(
+        "/",
+        ReaderConfig {
+            max_part_size: 0,
+            ..ReaderConfig::default()
+        },
+    );
+    assert_eq!(unlimited.parts(&format!("/book/{id}/read")).await.len(), 1);
+}

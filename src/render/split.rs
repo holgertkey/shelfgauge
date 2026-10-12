@@ -21,6 +21,10 @@
 //! In every mode a part also starts at each body, and a notes body is never split by
 //! sections (a notes body has one section per note), only by size in
 //! [`SplitMode::Size`].
+//!
+//! Finally, in every mode, a part longer than `max_part_size` characters (unless 0) is
+//! cut into pieces of about equal size, titled "Title (1/3)", "Title (2/3)", ... (a book
+//! without chapters would otherwise be one huge page).
 
 use crate::config::{ReaderConfig, SplitMode};
 use crate::format::model::{Block, BlockId, BlockKind, BodyKind, BookContent, Section};
@@ -144,36 +148,73 @@ pub fn split(content: &BookContent, config: &ReaderConfig) -> Vec<Part> {
         cuts = absorb_small_parts(&units, &cuts);
     }
 
-    cuts.iter()
-        .enumerate()
-        .map(|(n, &start)| {
-            let end = cuts.get(n + 1).copied().unwrap_or(units.len());
-            let first = &units[start];
-            let body_start = start == 0 || units[start - 1].body != first.body;
-            let body_end = end == units.len() || units[end].body != first.body;
-            let title = if first.notes {
-                // A notes body is named by its title, not by its first note.
-                first
-                    .root_title
-                    .clone()
-                    .unwrap_or_else(|| "Notes".to_owned())
-            } else if body_start && body_end && first.root_title.is_some() {
-                first.root_title.clone().unwrap_or_default()
-            } else {
-                units[start..end]
-                    .iter()
-                    .find_map(|u| u.started_title().map(str::to_owned))
-                    .or_else(|| first.context.clone())
-                    .or_else(|| body_start.then(|| first.root_title.clone()).flatten())
-                    .unwrap_or_else(|| format!("Part {}", n + 1))
-            };
-            Part {
-                start: first.first,
-                end: units[end - 1].last,
-                title,
-            }
-        })
-        .collect()
+    let mut parts = Vec::with_capacity(cuts.len());
+    for (n, &start) in cuts.iter().enumerate() {
+        let end = cuts.get(n + 1).copied().unwrap_or(units.len());
+        let title = part_title(&units, start, end, n);
+        // Cut a part longer than the limit into pieces of about equal size.
+        let pieces = pieces(&units[start..end], config.max_part_size as usize);
+        let count = pieces.len();
+        for (k, &(from, to)) in pieces.iter().enumerate() {
+            parts.push(Part {
+                start: units[start + from].first,
+                end: units[start + to - 1].last,
+                title: if count > 1 {
+                    format!("{title} ({}/{count})", k + 1)
+                } else {
+                    title.clone()
+                },
+            });
+        }
+    }
+    parts
+}
+
+/// The title of the part made of `units[start..end]`, the `n`th part before limiting.
+fn part_title(units: &[Unit], start: usize, end: usize, n: usize) -> String {
+    let first = &units[start];
+    let body_start = start == 0 || units[start - 1].body != first.body;
+    let body_end = end == units.len() || units[end].body != first.body;
+    if first.notes {
+        // A notes body is named by its title, not by its first note.
+        first
+            .root_title
+            .clone()
+            .unwrap_or_else(|| "Notes".to_owned())
+    } else if body_start && body_end && first.root_title.is_some() {
+        first.root_title.clone().unwrap_or_default()
+    } else {
+        units[start..end]
+            .iter()
+            .find_map(|u| u.started_title().map(str::to_owned))
+            .or_else(|| first.context.clone())
+            .or_else(|| body_start.then(|| first.root_title.clone()).flatten())
+            .unwrap_or_else(|| format!("Part {}", n + 1))
+    }
+}
+
+/// Cuts `units` into pieces of at most `limit` characters (0: no limit) with about the
+/// same size each; returns `(from, to)` index ranges. A single unit larger than the
+/// limit is a piece of its own.
+fn pieces(units: &[Unit], limit: usize) -> Vec<(usize, usize)> {
+    let total: usize = units.iter().map(|u| u.chars).sum();
+    if limit == 0 || total <= limit {
+        return vec![(0, units.len())];
+    }
+    // Aim at equal pieces: 650 000 characters with a limit of 300 000 give three
+    // pieces of about 217 000, not 300 000 + 300 000 + 50 000.
+    let target = total.div_ceil(total.div_ceil(limit));
+    let mut result = Vec::new();
+    let (mut from, mut size) = (0, 0);
+    for (i, unit) in units.iter().enumerate() {
+        if size > 0 && size + unit.chars > target {
+            result.push((from, i));
+            (from, size) = (i, 0);
+        }
+        size += unit.chars;
+    }
+    result.push((from, units.len()));
+    result
 }
 
 /// Drops every cut that would end a part made only of section titles, or an untitled
@@ -344,6 +385,7 @@ pub(crate) mod tests {
             split,
             section_depth,
             part_size,
+            max_part_size: 0,
         }
     }
 
@@ -514,6 +556,81 @@ pub(crate) mod tests {
             ranges(&parts)[0],
             (1, 3),
             "title and copyright join chapter 1"
+        );
+    }
+
+    /// A book without chapters: ten paragraphs of 1000 characters.
+    fn flat_book() -> BookContent {
+        let paragraphs = (0..10)
+            .map(|i| p(&format!("{i}{}", "x".repeat(999))))
+            .collect();
+        let root = section("Flat", paragraphs, vec![]);
+        BookContent::new(vec![Body::main(root)], Default::default())
+    }
+
+    fn limited(split: SplitMode, max_part_size: u32) -> ReaderConfig {
+        ReaderConfig {
+            max_part_size,
+            ..config(split, 1, 50_000)
+        }
+    }
+
+    fn part_chars(content: &BookContent, part: &Part) -> usize {
+        content
+            .blocks()
+            .iter()
+            .filter(|b| part.contains(b.id))
+            .map(|b| b.plain_text().chars().count())
+            .sum()
+    }
+
+    #[test]
+    fn long_parts_are_cut_into_equal_pieces() {
+        let content = flat_book();
+        for split_mode in [SplitMode::None, SplitMode::Section, SplitMode::Size] {
+            let parts = split(&content, &limited(split_mode, 3000));
+            assert_valid(&content, &parts);
+            // 10 000 characters, at most 3 000 per part, equal pieces of up to 2 500.
+            let sizes: Vec<usize> = parts.iter().map(|p| part_chars(&content, p)).collect();
+            assert!(
+                sizes.iter().all(|&n| n <= 3000),
+                "{split_mode:?}: {sizes:?}"
+            );
+            // The first piece also holds the title "Flat".
+            assert_eq!(sizes, [2004, 2000, 2000, 2000, 2000], "{split_mode:?}");
+            let titles: Vec<&str> = parts.iter().map(|p| p.title.as_str()).collect();
+            assert_eq!(titles[0], "Flat (1/5)", "{split_mode:?}");
+            assert_eq!(titles[4], "Flat (5/5)");
+        }
+    }
+
+    #[test]
+    fn short_parts_and_disabled_limit_are_left_alone() {
+        let content = flat_book();
+        let whole = split(&content, &limited(SplitMode::Section, 0));
+        assert_eq!(whole.len(), 1, "0 disables the limit");
+        assert_eq!(whole[0].title, "Flat");
+        let roomy = split(&content, &limited(SplitMode::Section, 1_000_000));
+        assert_eq!(roomy, whole);
+        // Only the long parts of a book are cut.
+        let parts = split(&book(), &limited(SplitMode::Section, 100));
+        assert_valid(&book(), &parts);
+        assert!(parts.iter().any(|p| p.title == "Chapter 3"), "{parts:?}");
+        assert!(
+            parts.iter().any(|p| p.title.starts_with("Part One (")),
+            "{parts:?}"
+        );
+    }
+
+    #[test]
+    fn a_single_unit_larger_than_the_limit_stays_whole() {
+        let content = flat_book();
+        let parts = split(&content, &limited(SplitMode::Section, 10));
+        assert_valid(&content, &parts);
+        assert_eq!(
+            parts.len(),
+            11,
+            "the title and each paragraph alone, none cut"
         );
     }
 

@@ -100,7 +100,9 @@ Key design points to keep in mind when implementing:
     A part is a contiguous range of block IDs, cut only between whole top-level blocks
     of a section (a poem or cite is never split); `section` cuts at sections up to
     `section_depth`, merges title-only parts and small untitled parts (front matter)
-    into the next one and never splits a notes body per note. `?at=b<n>` redirects to the part URL with `#b<n>`.
+    into the next one and never splits a notes body per note. In every mode a part
+    longer than `max_part_size` characters is cut into equal pieces ("Title (1/3)").
+    `?at=b<n>` redirects to the part URL with `#b<n>`.
   - Content comes from `.shelfgauge/content/` (keyed by the indexed content identity:
     a plain file's hash, a zip entry's size + CRC32), else the book is read, verified
     against that identity (a mismatch asks for a rescan) and parsed; loading, splitting

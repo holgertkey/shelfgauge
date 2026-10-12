@@ -158,6 +158,11 @@ fn exercise(content: &BookContent) {
             part_size: 1,
             ..ReaderConfig::default()
         },
+        ReaderConfig {
+            split: SplitMode::None,
+            max_part_size: 50,
+            ..ReaderConfig::default()
+        },
     ] {
         let parts = split(content, &config);
         if count == 0 {

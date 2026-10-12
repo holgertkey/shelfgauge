@@ -23,6 +23,10 @@ Build numbers (`+NNN`) do not get their own sections.
   panic; `SHELFGAUGE_FUZZ_ITERATIONS` / `SHELFGAUGE_FUZZ_SEED` for long runs.
 - CI builds release binaries for Linux, Windows and macOS (workflow artifacts) on pushes
   to `main` and on manual runs.
+- `reader.max_part_size` (default 300 000 characters, `0` = off): in every split mode a
+  longer part, e.g. a book without chapters, is cut into equal pieces between whole
+  blocks ("Title (1/3)", ...) instead of becoming one huge page (a 200 MB book used to
+  render as a single 212 MB page).
 - README: installation, configuration reference (checked against the default config by a
   test), remote access via SSH tunnel or an authenticating reverse proxy, legal note.
 
