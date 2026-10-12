@@ -255,3 +255,19 @@ fn mutated_and_random_input_never_panics() {
         assert!(parsed > 0, "some mutations should still be valid FB2");
     });
 }
+
+/// Regression: a stray `</section>` (found 2026-10-11 in a real library) made the book
+/// unreadable ("expected 'body' tag, not 'section'"); it is now repaired.
+#[test]
+fn stray_close_tag_is_repaired() {
+    const UNBALANCED: &[u8] = include_bytes!("fixtures/fb2/unbalanced.fb2");
+    assert_eq!(metadata(UNBALANCED).unwrap().title, "Лишний тег");
+    let content = content(UNBALANCED).unwrap();
+    let chapters: Vec<String> = content.bodies()[0]
+        .section
+        .children
+        .iter()
+        .filter_map(|s| s.title_text())
+        .collect();
+    assert_eq!(chapters, ["Глава 1", "Глава 2", "Глава 3"]);
+}

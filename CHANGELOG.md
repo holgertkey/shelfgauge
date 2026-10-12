@@ -8,6 +8,39 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-12
+
+### Added
+
+- FB2 books with unbalanced tags (a stray close tag such as `</section>`, unclosed
+  elements, a truncated end) are repaired and parsed instead of failing; comments,
+  CDATA and attribute values are left untouched and all parser limits still apply.
+- Books that failed to parse with an older parser are parsed again by the next scan
+  (schema v2: `books.parser_version`), so parser improvements reach existing libraries
+  without touching the files.
+- In-tree mutation fuzzer (`tests/mutation.rs`): corrupted FB2 files through parse →
+  split → render and corrupted zip archives through listing and reading must never
+  panic; `SHELFGAUGE_FUZZ_ITERATIONS` / `SHELFGAUGE_FUZZ_SEED` for long runs.
+- CI builds release binaries for Linux, Windows and macOS (workflow artifacts) on pushes
+  to `main` and on manual runs.
+- README: installation, configuration reference (checked against the default config by a
+  test), remote access via SSH tunnel or an authenticating reverse proxy, legal note.
+
+### Changed
+
+- The author list and author pages are 3–10 times faster on large libraries (the list
+  walks the authors index instead of grouping every book-author link).
+- Huge archives are scanned in at most `threads × 4` jobs: an archive with 200 000
+  entries took 219 s, now 41 s.
+- The index is upgraded to schema version 2 when a library is opened; afterwards 0.4.0
+  and older builds refuse it ("created by a newer version").
+- Parser log lines name the book (e.g. which book was repaired).
+
+### Security
+
+- Error messages stored for books and shown in the UI no longer contain absolute server
+  paths, only library-relative ones.
+
 ## [0.4.0] - 2026-10-12
 
 ### Added

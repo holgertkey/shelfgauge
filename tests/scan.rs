@@ -318,7 +318,10 @@ fn deleted_and_restored_book() {
 fn broken_book_is_recorded_and_not_reparsed() {
     let mut lib = TestLibrary::new();
     lib.write("good.fb2", &fb2("Хорошая", "А"));
-    lib.write("broken.fb2", b"<FictionBook><body>");
+    lib.write(
+        "broken.fb2",
+        b"<FictionBook><body a=1></body></FictionBook>",
+    );
     lib.zip(
         "mixed.zip",
         &[
@@ -483,4 +486,73 @@ fn progress_reports_completion() {
     let snapshot = progress.snapshot();
     assert_eq!(snapshot.phase, shelfgauge::scanner::ScanPhase::Done);
     assert_eq!((snapshot.total, snapshot.done, snapshot.errors), (2, 2, 0));
+}
+
+/// Books that failed with an older parser are parsed again once (for example after the
+/// parser learned to repair unbalanced tags); books that parsed are left alone.
+#[test]
+fn error_books_from_an_older_parser_are_parsed_again() {
+    const UNBALANCED: &[u8] = include_bytes!("fixtures/fb2/unbalanced.fb2");
+    let mut lib = TestLibrary::new();
+    lib.write("unbalanced.fb2", UNBALANCED);
+    lib.write("good.fb2", &fb2("Хорошая", "А"));
+    lib.zip("pack.zip", &[("inner.fb2", UNBALANCED.to_vec())]);
+    let s = lib.scan();
+    assert_eq!(
+        (s.added, s.errors),
+        (3, 0),
+        "the current parser repairs the book"
+    );
+
+    // Pretend the books were written by an older parser: the unbalanced ones failed.
+    lib.conn
+        .execute_batch(
+            "UPDATE books SET parser_version = 0;
+             UPDATE books SET status = 'error', error_message = 'invalid XML'
+              WHERE title = 'Лишний тег';",
+        )
+        .unwrap();
+    let s = lib.scan();
+    assert_eq!(
+        (s.updated, s.parsed, s.unchanged, s.errors),
+        (2, 2, 1, 0),
+        "{s:?}"
+    );
+    for (_, title, status) in lib.books() {
+        assert_eq!(status, BookStatus::Ok, "{title}");
+    }
+    // Retried once: now they carry the current parser version.
+    assert_eq!(lib.scan(), summary(0, 0, 0, 0, 3, 0));
+}
+
+/// Regression: read errors stored for the UI used to contain the absolute path of the
+/// library (revealing the server's directory layout).
+#[test]
+fn error_messages_do_not_reveal_absolute_paths() {
+    let mut lib = TestLibrary::new();
+    lib.write("big.fb2", &fb2("Большая", "А"));
+    let registry = Registry::with_builtin_formats();
+    let progress = ScanProgress::default();
+    let cancel = AtomicBool::new(false);
+    Scanner {
+        library: &lib.library,
+        exclude: &[],
+        registry: &registry,
+        limits: ReadLimits { max_book_size: 10 },
+        threads: 1,
+        progress: &progress,
+        cancel: &cancel,
+    }
+    .run(&mut lib.conn)
+    .unwrap();
+    let (id, _, status) = lib.books().remove(0);
+    assert_eq!(status, BookStatus::Error);
+    let message = book_by_id(&lib.conn, id)
+        .unwrap()
+        .unwrap()
+        .error_message
+        .unwrap();
+    assert!(message.contains("exceeds the limit"), "{message}");
+    let root = lib.root().display().to_string();
+    assert!(!message.contains(&root), "{message}");
 }

@@ -3,16 +3,17 @@
 //! Each migration upgrades the schema by one version and is applied in a
 //! transaction together with the `user_version` bump.
 //!
-//! Policy: until the first public release, schema v1 may still be edited in place
-//! (existing local databases are then simply rebuilt). After a release, existing
-//! migrations are frozen and changes are only ever appended as new migrations.
+//! Policy: until the first public release, existing migrations may still be edited in
+//! place (local databases are then rebuilt). Version 2 was appended instead because
+//! local indexes of real libraries already exist and a full rescan of a large library
+//! takes long.
 
 use rusqlite::Connection;
 
 use super::StorageError;
 
 /// Schema migrations; index `i` upgrades version `i` to `i + 1`.
-const MIGRATIONS: &[&str] = &[V1];
+const MIGRATIONS: &[&str] = &[V1, V2];
 
 /// The schema version this build creates and understands.
 pub const SCHEMA_VERSION: u32 = MIGRATIONS.len() as u32;
@@ -127,6 +128,14 @@ CREATE VIRTUAL TABLE books_fts USING fts5 (
 );
 "#;
 
+/// Version 2: `books.parser_version`, the
+/// [`PARSER_VERSION`](crate::format::model::PARSER_VERSION) that produced the record
+/// (0 for books written before). Books that failed to parse with an older parser are
+/// parsed again by the next scan.
+const V2: &str = r#"
+ALTER TABLE books ADD COLUMN parser_version INTEGER NOT NULL DEFAULT 0;
+"#;
+
 /// Brings the schema to [`SCHEMA_VERSION`]; refuses databases from newer builds.
 pub fn migrate(conn: &mut Connection) -> Result<(), StorageError> {
     let current: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
@@ -171,6 +180,24 @@ mod tests {
         assert_eq!(tables, 1);
         migrate(&mut conn).unwrap();
         assert_eq!(version(&conn), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn version_1_database_gets_parser_version() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(V1).unwrap();
+        conn.pragma_update(None, "user_version", 1).unwrap();
+        conn.execute_batch(
+            "INSERT INTO containers (path, kind, size, mtime_ns) VALUES ('a.fb2', 'file', 1, 1);
+             INSERT INTO books (container_id, format, title, sort_title) VALUES (1, 'fb2', 'T', 't');",
+        )
+        .unwrap();
+        migrate(&mut conn).unwrap();
+        assert_eq!(version(&conn), 2);
+        let parser_version: i64 = conn
+            .query_row("SELECT parser_version FROM books", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(parser_version, 0, "books written before are marked unknown");
     }
 
     #[test]

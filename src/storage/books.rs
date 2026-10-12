@@ -6,7 +6,7 @@ use super::authors::{self, AuthorRef};
 use super::containers::parse_kind;
 use super::{StorageError, fold_for_search, genres, normalize_key};
 use crate::container::ContainerKind;
-use crate::format::model::{BookMetadata, Person, Series};
+use crate::format::model::{BookMetadata, PARSER_VERSION, Person, Series};
 
 /// The state of a book in the index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,6 +161,15 @@ pub struct LocatedBook {
     pub content_hash: Option<Vec<u8>>,
     /// Status.
     pub status: BookStatus,
+    /// The parser version that wrote the record (0 if unknown).
+    pub parser_version: u32,
+}
+
+impl LocatedBook {
+    /// Whether the book failed to parse with an older parser and should be parsed again.
+    pub fn retry_parse(&self) -> bool {
+        self.status == BookStatus::Error && self.parser_version < PARSER_VERSION
+    }
 }
 
 /// A short description of a book for lists.
@@ -265,7 +274,8 @@ pub fn update_book(conn: &Connection, id: i64, record: &BookRecord) -> Result<()
              container_id = ?2, entry_name = ?3, entry_path = ?4, entry_index = ?5,
              entry_size = ?6, entry_crc32 = ?7, format = ?8, title = ?9, sort_title = ?10,
              language = ?11, annotation = ?12, cover_mime = ?13, status = ?14,
-             error_message = ?15, content_hash = ?16, updated_at = unixepoch()
+             error_message = ?15, content_hash = ?16, parser_version = ?17,
+             updated_at = unixepoch()
          WHERE id = ?1",
         params![
             id,
@@ -284,6 +294,7 @@ pub fn update_book(conn: &Connection, id: i64, record: &BookRecord) -> Result<()
             record.status.as_str(),
             record.error_message,
             record.content_hash,
+            PARSER_VERSION,
         ],
     )?;
 
@@ -460,7 +471,7 @@ fn located(
 ) -> Result<Vec<LocatedBook>, StorageError> {
     let sql = format!(
         "SELECT b.id, b.container_id, b.entry_name, b.entry_size, b.entry_crc32,
-                b.content_hash, b.status
+                b.content_hash, b.status, b.parser_version
          FROM books b {tail}"
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -473,6 +484,7 @@ fn located(
             entry_crc32: row.get::<_, Option<i64>>(4)?.map(|v| v as u32),
             content_hash: row.get(5)?,
             status: BookStatus::parse(&row.get::<_, String>(6)?),
+            parser_version: row.get(7)?,
         })
     })?;
     Ok(rows.collect::<Result<_, _>>()?)

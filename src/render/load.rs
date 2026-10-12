@@ -77,10 +77,12 @@ pub fn load(
         }),
     };
     let data = read_book(library.root(), &location, limits).map_err(|e| {
+        // The library-relative path, never the absolute one (shown in the UI).
+        let reason = format!("{}: {}", book.container_path, e.detail());
         if e.needs_rescan() {
-            LoadError::NeedsRescan(e.to_string())
+            LoadError::NeedsRescan(reason)
         } else {
-            LoadError::Unreadable(e.to_string())
+            LoadError::Unreadable(reason)
         }
     })?;
     if book.entry.is_none()
@@ -95,9 +97,17 @@ pub fn load(
     let parser = registry
         .for_extension(&book.format)
         .ok_or_else(|| LoadError::Unreadable(format!("unsupported format {:?}", book.format)))?;
-    let content = parser
-        .parse_content(&data)
-        .map_err(|e| LoadError::Unreadable(e.to_string()))?;
+    let content = {
+        // Parser log lines (e.g. a repaired book) name the book.
+        let path = match &book.entry {
+            Some(entry) => format!("{}/{}", book.container_path, entry.path),
+            None => book.container_path.clone(),
+        };
+        let _book = tracing::info_span!("book", %path).entered();
+        parser
+            .parse_content(&data)
+            .map_err(|e| LoadError::Unreadable(e.to_string()))?
+    };
     if let Some(key) = &key
         && let Err(e) = cache.store(book.id, key, &content)
     {

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic test book written for shelfgauge: the second chapter is closed twice
+     (a stray </section>, as found in a real library). -->
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+  <description>
+    <title-info>
+      <author><last-name>Тестов</last-name></author>
+      <book-title>Лишний тег</book-title>
+      <lang>ru</lang>
+    </title-info>
+  </description>
+  <body>
+    <section>
+      <title><p>Глава 1</p></title>
+      <p>Первая глава.</p>
+    </section>
+    <section>
+      <title><p>Глава 2</p></title>
+      <p>Вторая глава.</p>
+    </section>
+  </section>
+    <section>
+      <title><p>Глава 3</p></title>
+      <p>Третья глава.</p>
+    </section>
+  </body>
+</FictionBook>

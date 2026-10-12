@@ -146,6 +146,11 @@ pub(crate) fn book_people(conn: &Connection, book_id: i64) -> Result<Vec<Person>
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
+/// The condition that author `a` has at least one book that is not removed.
+const HAS_LIVE_BOOK: &str =
+    "EXISTS (SELECT 1 FROM book_authors ba JOIN books b ON b.id = ba.book_id
+                         WHERE ba.author_id = a.id AND b.status != 'removed')";
+
 /// Authors with at least one book that is not removed, alphabetically (namesakes by
 /// id), whose normalized name starts with `prefix` (empty for all); one page of `limit`
 /// entries starting at `offset`.
@@ -156,16 +161,18 @@ pub fn list_authors(
     offset: u64,
 ) -> Result<Vec<AuthorSummary>, StorageError> {
     let prefix = normalize_key(prefix);
-    let mut stmt = conn.prepare(
-        "SELECT a.id, a.display_name, count(b.id)
+    // Walk the authors in `sort_key` order (an index) and count books only for the
+    // page: grouping all book-author links first is ten times slower on large
+    // libraries.
+    let mut stmt = conn.prepare(&format!(
+        "SELECT a.id, a.display_name,
+                (SELECT count(*) FROM book_authors ba JOIN books b ON b.id = ba.book_id
+                  WHERE ba.author_id = a.id AND b.status != 'removed')
            FROM authors a
-           JOIN book_authors ba ON ba.author_id = a.id
-           JOIN books b ON b.id = ba.book_id AND b.status != 'removed'
-          WHERE a.sort_key >= ?1 AND a.sort_key < ?2
-          GROUP BY a.id
+          WHERE a.sort_key >= ?1 AND a.sort_key < ?2 AND {HAS_LIVE_BOOK}
           ORDER BY a.sort_key, a.id
-          LIMIT ?3 OFFSET ?4",
-    )?;
+          LIMIT ?3 OFFSET ?4"
+    ))?;
     let rows = stmt.query_map(
         params![
             prefix,

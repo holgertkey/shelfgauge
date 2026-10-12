@@ -2,7 +2,9 @@
 //!
 //! Parsing is defensive: element names are matched by local name (files with missing or
 //! wrong namespaces are common), unknown elements keep their text, and no input makes
-//! the parser panic. Only input that is not XML, or not FictionBook, is an error.
+//! the parser panic. A document whose only problem is unbalanced tags (a stray close
+//! tag, unclosed elements) is repaired and parsed again (see `repair`). Only input that
+//! is not XML, or not FictionBook, is an error.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::{GeneralPurpose, PAD_INDIFFERENT};
@@ -14,6 +16,7 @@ use super::{BookParser, ParseError};
 mod content;
 pub mod encoding;
 mod metadata;
+mod repair;
 
 /// Maximum number of XML nodes in one file; protects against memory exhaustion.
 ///
@@ -79,13 +82,35 @@ fn with_root<T>(data: &[u8], f: impl FnOnce(Node<'_, '_>) -> T) -> Result<T, Par
             "elements are nested more than {MAX_XML_DEPTH} levels deep"
         )));
     }
-    let options = ParsingOptions {
+    let options = || ParsingOptions {
         allow_dtd: false,
         nodes_limit: NODES_LIMIT,
         ..ParsingOptions::default()
     };
-    let doc = Document::parse_with_options(&decoded.text, options)
-        .map_err(|e| ParseError::new(format!("invalid XML: {e}")))?;
+    let invalid = |e: roxmltree::Error| ParseError::new(format!("invalid XML: {e}"));
+    let repaired: String;
+    let doc = match Document::parse_with_options(&decoded.text, options()) {
+        Ok(doc) => doc,
+        // Only the tag structure is wrong: retry with rebalanced tags.
+        Err(
+            e @ (roxmltree::Error::UnexpectedCloseTag(..)
+            | roxmltree::Error::UnclosedRootNode
+            | roxmltree::Error::UnexpectedEndOfStream),
+        ) => {
+            let Some(fixed) = repair::rebalance(&decoded.text) else {
+                return Err(invalid(e));
+            };
+            repaired = fixed;
+            if nesting_exceeds(&repaired, MAX_XML_DEPTH) {
+                return Err(invalid(e));
+            }
+            let reason = e.to_string();
+            let doc = Document::parse_with_options(&repaired, options()).map_err(|_| invalid(e))?;
+            tracing::info!("repaired unbalanced tags ({reason})");
+            doc
+        }
+        Err(e) => return Err(invalid(e)),
+    };
     let root = doc.root_element();
     if root.tag_name().name() != "FictionBook" {
         return Err(ParseError::new(format!(
@@ -293,13 +318,36 @@ mod tests {
             .unwrap_err();
         assert!(err.message.contains("<html>"), "{err}");
         let err = Fb2Parser
-            .parse_metadata(b"<FictionBook><body>")
+            .parse_content(b"<FictionBook>\n<body a=1></body></FictionBook>")
             .unwrap_err();
         assert!(err.message.starts_with("invalid XML:"), "{err}");
-        let err = Fb2Parser
-            .parse_content(b"<FictionBook>\n<body></section></FictionBook>")
-            .unwrap_err();
         assert!(err.message.contains("2:"), "position expected: {err}");
+    }
+
+    #[test]
+    fn unbalanced_tags_are_repaired() {
+        // A stray close tag (found in real books) and an unclosed document.
+        let content = Fb2Parser
+            .parse_content(
+                b"<FictionBook><body><section><p>One</p></section></section>\
+                  <section><p>Two</p></section></body></FictionBook>",
+            )
+            .unwrap();
+        let text: Vec<String> = content.blocks().iter().map(|b| b.plain_text()).collect();
+        assert_eq!(text, ["One", "Two"]);
+        let metadata = Fb2Parser
+            .parse_metadata(b"<FictionBook><description><title-info><book-title>T")
+            .unwrap();
+        assert_eq!(metadata.title, "T");
+    }
+
+    #[test]
+    fn repair_keeps_the_depth_limit() {
+        let xml = format!(
+            "<FictionBook><body>{}</FictionBook>",
+            "<section>".repeat(MAX_XML_DEPTH + 10)
+        );
+        assert!(Fb2Parser.parse_content(xml.as_bytes()).is_err());
     }
 
     #[test]

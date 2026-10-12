@@ -56,8 +56,21 @@ pub use walk::mtime_ns;
 /// never equal to a real file time, so an interrupted scan re-examines the archive.
 pub const UNFINISHED_MTIME: i64 = i64::MIN;
 
-/// Entries of one archive handled by one parallel job (one open archive handle each).
+/// The minimum number of entries of one archive handled by one parallel job.
 const CHUNK_SIZE: usize = 64;
+
+/// Parallel jobs per parser thread that one archive is split into at most.
+const CHUNKS_PER_THREAD: usize = 4;
+
+/// Entries per job for an archive with `entries` entries to index.
+///
+/// Every job opens the archive, which parses its whole central directory, so a huge
+/// archive must not be cut into many small jobs (that is quadratic: 200 000 entries in
+/// chunks of 64 took minutes). At most `threads * CHUNKS_PER_THREAD` jobs per archive
+/// keep all threads busy.
+fn chunk_size(entries: usize, threads: usize) -> usize {
+    CHUNK_SIZE.max(entries.div_ceil(threads.max(1) * CHUNKS_PER_THREAD))
+}
 
 /// Errors that abort a scan. Problems with individual books never do; they are
 /// recorded and counted in [`ScanSummary::errors`].
@@ -292,6 +305,7 @@ impl Scanner<'_> {
             .thread_name(|i| format!("scan-{i}"))
             .build()
             .map_err(|e| ScanError::ThreadPool(e.to_string()))?;
+        let threads = pool.current_num_threads();
 
         let total =
             plan.files.len() + archive_work.iter().map(Vec::len).sum::<usize>() + zip_moves.len();
@@ -333,7 +347,7 @@ impl Scanner<'_> {
             // One job per plain file and per chunk of archive entries.
             let remaining: Vec<AtomicUsize> = archive_work
                 .iter()
-                .map(|work| AtomicUsize::new(work.len().div_ceil(CHUNK_SIZE)))
+                .map(|work| AtomicUsize::new(work.len().div_ceil(chunk_size(work.len(), threads))))
                 .collect();
             let failed: Vec<AtomicBool> = archive_work
                 .iter()
@@ -347,7 +361,10 @@ impl Scanner<'_> {
             let chunks: Vec<(usize, &[EntryRecord])> = archive_work
                 .iter()
                 .enumerate()
-                .flat_map(|(i, work)| work.chunks(CHUNK_SIZE).map(move |chunk| (i, chunk)))
+                .flat_map(|(i, work)| {
+                    work.chunks(chunk_size(work.len(), threads))
+                        .map(move |chunk| (i, chunk))
+                })
                 .collect();
             pool.install(|| {
                 plan.files.par_iter().for_each(|job| run.file(job, true));
@@ -387,6 +404,7 @@ impl Scanner<'_> {
                 .map(|(_, found)| FileJob {
                     found,
                     existing: None,
+                    reparse: false,
                 })
                 .collect();
             pool.install(|| rest.par_iter().for_each(|job| run.file(job, false)));
@@ -483,7 +501,7 @@ impl Run<'_> {
                     content_hash: None,
                     format: parser.format(),
                     fallback_title: fallback_title(&found.path),
-                    outcome: Outcome::Failed(error.to_string()),
+                    outcome: Outcome::Failed(error.detail()),
                 });
                 self.done();
                 return;
@@ -492,6 +510,7 @@ impl Run<'_> {
         let hash = crate::cache::content::content_hash(&data);
         if let Some((_, Some(stored))) = &job.existing
             && *stored == hash
+            && !job.reparse
         {
             self.send(Op::Touch(file_record(found, Some(hash))));
             self.unchanged.fetch_add(1, Ordering::Relaxed);
@@ -505,7 +524,11 @@ impl Run<'_> {
                 .push((hash, found.clone()));
             return;
         }
-        let outcome = self.parse(parser, &data);
+        // Parser log lines (e.g. a repaired book) name the book.
+        let outcome = {
+            let _book = tracing::info_span!("book", path = %found.path).entered();
+            self.parse(parser, &data)
+        };
         self.send(Op::Book {
             container: ContainerRef::File(file_record(found, Some(hash.clone()))),
             entry: None,
@@ -547,7 +570,12 @@ impl Run<'_> {
                 crc32: entry.crc32,
             };
             let outcome = match reader.read_entry(&entry_ref, &self.scanner.limits) {
-                Ok(data) => self.parse(parser, &data),
+                Ok(data) => {
+                    let _book =
+                        tracing::info_span!("book", path = %format!("{}/{}", archive.path, entry.path))
+                            .entered();
+                    self.parse(parser, &data)
+                }
                 Err(error) if is_transient(&error) => {
                     tracing::warn!(
                         "cannot read {:?} in {:?}: {error}",
@@ -559,7 +587,7 @@ impl Run<'_> {
                     complete = false;
                     continue;
                 }
-                Err(error) => Outcome::Failed(error.to_string()),
+                Err(error) => Outcome::Failed(error.detail()),
             };
             self.send(Op::Book {
                 container: ContainerRef::Archive(archive.path.clone()),
@@ -635,6 +663,16 @@ fn fallback_title(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn huge_archives_are_cut_into_few_jobs() {
+        assert_eq!(chunk_size(10, 4), CHUNK_SIZE);
+        assert_eq!(chunk_size(1_000, 4), CHUNK_SIZE);
+        assert_eq!(chunk_size(2_000, 4), 125);
+        assert_eq!(chunk_size(200_000, 4), 12_500);
+        assert_eq!(200_000usize.div_ceil(chunk_size(200_000, 4)), 16);
+        assert_eq!(chunk_size(1_000, 0), 250, "0 threads count as 1");
+    }
 
     #[test]
     fn fallback_titles() {

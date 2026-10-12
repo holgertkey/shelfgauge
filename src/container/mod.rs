@@ -131,6 +131,33 @@ pub enum ContainerError {
 }
 
 impl ContainerError {
+    /// The error without the file path, for messages shown in the UI: the path is
+    /// absolute and would reveal the server's directory layout.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use shelfgauge::container::ContainerError;
+    ///
+    /// let err = ContainerError::TooLarge { path: "/srv/books/a.fb2".into(), size: 9, limit: 8 };
+    /// assert_eq!(err.detail(), "book of 9 bytes exceeds the limit of 8 bytes");
+    /// ```
+    pub fn detail(&self) -> String {
+        match self {
+            Self::Io { error, .. } => error.to_string(),
+            Self::Zip { message, .. } => format!("invalid zip archive: {message}"),
+            Self::EntryNotFound { name, .. } => format!("entry {name:?} not found"),
+            Self::EntryChanged { name, .. } => {
+                format!("entry {name:?} changed since the last scan")
+            }
+            Self::Encrypted { name, .. } => format!("entry {name:?} is encrypted"),
+            Self::TooLarge { size, limit, .. } => {
+                format!("book of {size} bytes exceeds the limit of {limit} bytes")
+            }
+            Self::UnsafePath(path) => format!("unsafe container path {}", path.display()),
+        }
+    }
+
     /// Whether the book is gone or changed, so a rescan is needed (rather than the
     /// file being broken).
     pub fn needs_rescan(&self) -> bool {

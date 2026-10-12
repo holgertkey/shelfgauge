@@ -1,26 +1,30 @@
-# shelfgauge v0.4.0
+# shelfgauge v0.5.0
 
 A single-binary tool that indexes a folder tree of ebooks — FB2 files, plain or inside
 `.zip` archives — into a local SQLite database and serves a browsable, searchable web
 library on `localhost`, with an in-browser reader.
 
-**Current version:** 0.4.0
+**Current version:** 0.5.0
 
 ## Status
 
-Early development. `shelfgauge [PATH]` indexes a library of FB2 books (plain files and
-`.zip` archives) in the background and serves it as a web library: browse by author or
-by folder, open a book card (cover, series, genres, annotation), search by title,
-author, series or annotation, and read books in the browser, split into parts as
-configured in `[reader]` (`split = "none" | "section" | "size"`).
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for
-the target design.
+Early development, not yet published. `shelfgauge [PATH]` indexes a library of FB2 books
+(plain files and `.zip` archives, any number of books per archive) in the background and
+serves it as a web library: browse by author or by folder, open a book card (cover,
+series, genres, annotation), search by title, author, series or annotation, and read
+books in the browser. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design.
 
-## Building
+## Installation
+
+Build from source with a current stable Rust toolchain:
 
 ```sh
 cargo build --release
+# the binary is target/release/shelfgauge (shelfgauge.exe on Windows)
 ```
+
+The CI also builds release binaries for Linux, Windows and macOS on every push to `main`;
+they can be downloaded from the workflow run's artifacts on GitHub.
 
 ## Usage
 
@@ -29,13 +33,89 @@ shelfgauge [PATH]        # serve the library at PATH (default: current directory
 shelfgauge scan [PATH]   # update the library index and exit
 ```
 
-Options: `--port <PORT>`, `--bind <ADDR>`, `--no-scan`, `-v`/`-vv` (more logging; otherwise
-`RUST_LOG` is used), `-V` (version).
+Options: `--port <PORT>`, `--bind <ADDR>`, `--no-scan` (serve without scanning first),
+`-v`/`-vv` (more logging; otherwise `RUST_LOG` is used), `-V` (version).
 
-A new library is created only when PATH is given explicitly (e.g. `shelfgauge scan .`):
-its working data goes into `.shelfgauge/` with a commented `config.toml`. Without PATH,
-the current directory must already be a library. Command-line options override the
-config.
+A new library is created only when PATH is given explicitly (e.g. `shelfgauge .`): its
+working data goes into `.shelfgauge/` inside PATH (configuration, index, cover and
+content caches), so the library stays portable with its books. Without PATH, the current
+directory must already be a library.
+
+`shelfgauge PATH` prints its address (`http://127.0.0.1:8742/` by default) and scans the
+library in the background while serving the existing index. Only changed files are read
+again; moved or renamed books keep their identity. Ctrl+C stops the server; a running
+scan keeps what it has indexed so far, and the next scan completes it.
+
+### In the browser
+
+- The sidebar lists the library **by author** or **by folder** (zip archives are shown as
+  folders); the choice is remembered per browser.
+- A book card shows the cover and metadata; **Read** opens the book. Books are split into
+  parts as configured in `[reader]`, with the table of contents in the sidebar.
+- A link to `/book/<id>/read?at=b<n>` opens a book at a given block; block numbers do not
+  depend on how the book is split.
+- Themes: auto (system), light, dark, sepia, navy.
+- Keys: `/` or `s` search, `t` next theme, `m` sidebar mode, `←`/`→` previous/next part
+  while reading, `Esc` leave the search field.
+- **Rescan** (top bar) updates the index while the library stays usable.
+
+Books whose XML has unbalanced tags (e.g. a stray `</section>`) are repaired when they
+are parsed; books that cannot be read are listed with the reason on their card.
+
+## Configuration
+
+`.shelfgauge/config.toml` is created with commented defaults on first run. Missing keys
+use their defaults, unknown keys are reported as warnings, and invalid values stop the
+program with a message naming the key. `--port` and `--bind` override the file.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `server.bind` | `"127.0.0.1"` | Address to listen on. Only loopback addresses are accepted (there is no built-in authentication; see [Remote access](#remote-access)). |
+| `server.port` | `8742` | Fixed port. If it is busy, shelfgauge exits with an error instead of picking another one: the port is part of the browser origin. |
+| `server.allowed_hosts` | `[]` | Extra host names accepted in the `Host` and `Origin` headers, e.g. `["books.example.org"]` behind a reverse proxy. An entry without a port matches any port. |
+| `server.base_path` | `"/"` | URL prefix when served on a sub-path of a reverse proxy, e.g. `"/books"` (letters, digits, `-`, `.`, `_`, `~`, `/`). |
+| `scan.exclude` | `[]` | Gitignore-style patterns of paths not to index, in addition to `.shelfgauge/`. |
+| `library.page_size` | `100` | Entries per page of the author list, folders and search results. |
+| `reader.split` | `"section"` | How a book is split into parts: `"none"` (one part), `"section"` or `"size"`. |
+| `reader.section_depth` | `1` | For `"section"`: split at sections down to this depth (1 = top level). Very short untitled parts (a copyright notice, an epigraph) join the next part. |
+| `reader.part_size` | `50000` | For `"size"`: approximate number of characters per part (cut between whole blocks). |
+
+## Remote access
+
+shelfgauge listens on `127.0.0.1` and has no authentication, so it refuses a non-loopback
+`bind`. It accepts requests only for the host names `localhost`, `127.0.0.1` and `[::1]`
+with its port, plus `server.allowed_hosts` (protection against DNS rebinding), and every
+state-changing request (rescan) must come with a matching `Origin` (CSRF protection).
+
+- **SSH tunnel** (simplest): `ssh -L 8742:127.0.0.1:8742 user@server`, then open
+  `http://localhost:8742/` locally. No configuration change is needed.
+- **Reverse proxy with HTTPS** on the same host, forwarding to `127.0.0.1:8742`. The proxy
+  must add authentication. Add the public host name to `server.allowed_hosts` (and set
+  `server.base_path` if the library is served on a sub-path). For example with
+  [Caddy](https://caddyserver.com/docs/caddyfile/directives/basic_auth) (automatic HTTPS;
+  create the password hash with `caddy hash-password`):
+
+  ```
+  books.example.org {
+  	basic_auth {
+  		reader <hashed password>
+  	}
+  	reverse_proxy 127.0.0.1:8742
+  }
+  ```
+
+  and in `.shelfgauge/config.toml`: `allowed_hosts = ["books.example.org"]`. On a
+  sub-path, set `base_path` (e.g. `"/books"`) and forward the prefix unchanged: in Caddy
+  use `handle /books*` (not `handle_path`, which strips it); in nginx use
+  `location /books/ { proxy_pass http://127.0.0.1:8742; }` (no URI after the port). With nginx,
+  `proxy_pass http://127.0.0.1:8742;` works the same way (nginx sends the upstream
+  address as `Host` unless `proxy_set_header Host $host;` is set; either is accepted
+  when the public name is in `allowed_hosts`).
+- **Private network** (Tailscale, WireGuard): combine it with an SSH tunnel or a reverse
+  proxy as above, since shelfgauge itself only listens on loopback.
+
+Note: making a library reachable by others makes its books available to them; whether
+that is allowed depends on the books' licenses and is the operator's responsibility.
 
 ## Changelog
 
@@ -47,4 +127,4 @@ MIT — see [LICENSE](LICENSE).
 
 ---
 
-_shelfgauge v0.4.0 — MIT License_
+_shelfgauge v0.5.0 — MIT License_

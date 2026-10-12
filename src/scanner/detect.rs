@@ -6,6 +6,8 @@
 //!   stat changed.
 //! - A changed archive's central directory is listed (no decompression); entries whose
 //!   `(size, CRC32)` equal the recorded ones are unchanged.
+//! - A book that failed to parse with an older parser
+//!   ([`LocatedBook::retry_parse`]) is parsed again even if its file is unchanged.
 //! - Books are considered vanished only when it is certain that their file is gone:
 //!   never below a directory that could not be read, never for an archive that could
 //!   not be listed, and never after an incomplete walk.
@@ -24,6 +26,8 @@ pub(super) struct FileJob {
     pub found: Found,
     /// The live book at this path and the recorded content hash, if any.
     pub existing: Option<(i64, Option<Vec<u8>>)>,
+    /// Parse even if the content hash is unchanged (a retry with a newer parser).
+    pub reparse: bool,
 }
 
 /// A changed archive that was listed successfully.
@@ -80,21 +84,20 @@ pub(super) fn plan(
         });
         match found.kind {
             ContainerKind::File => {
-                let existing = live_books
-                    .iter()
-                    .find(|b| b.entry_name.is_empty())
-                    .map(|b| (b.id, b.content_hash.clone()));
-                if unchanged_stat && existing.is_some() {
+                let book = live_books.iter().find(|b| b.entry_name.is_empty());
+                let reparse = book.is_some_and(|b| b.retry_parse());
+                if unchanged_stat && book.is_some() && !reparse {
                     plan.unchanged_books += 1;
                     continue;
                 }
                 plan.files.push(FileJob {
                     found: found.clone(),
-                    existing,
+                    existing: book.map(|b| (b.id, b.content_hash.clone())),
+                    reparse,
                 });
             }
             ContainerKind::Zip => {
-                if unchanged_stat {
+                if unchanged_stat && !live_books.iter().any(|b| b.retry_parse()) {
                     plan.unchanged_books += live_books.len() as u64;
                     continue;
                 }
@@ -129,6 +132,7 @@ pub(super) fn plan(
                             seen.insert(book.entry_name.as_slice());
                             if book.entry_size == Some(entry.size)
                                 && book.entry_crc32 == Some(entry.crc32)
+                                && !book.retry_parse()
                             {
                                 plan.unchanged_books += 1;
                             } else {

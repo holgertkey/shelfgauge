@@ -91,7 +91,10 @@ impl TestLibrary {
             "</section>".repeat(240)
         );
         lib.write("deep.fb2", &fb2("Deep", &deep, ""));
-        lib.write("broken.fb2", b"<FictionBook><body><p>unclosed");
+        lib.write(
+            "broken.fb2",
+            b"<FictionBook><body a=1></body></FictionBook>",
+        );
         lib.write("gone.fb2", &chapters());
         lib.scan();
         std::fs::remove_file(lib.dir.path().join("gone.fb2")).unwrap();
