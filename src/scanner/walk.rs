@@ -230,8 +230,10 @@ mod tests {
     #[test]
     fn mtime_conversion() {
         use std::time::Duration;
-        assert_eq!(mtime_ns(UNIX_EPOCH + Duration::from_nanos(5)), 5);
-        assert_eq!(mtime_ns(UNIX_EPOCH - Duration::from_nanos(5)), -5);
+        // Multiples of 100 ns: Windows `SystemTime` has 100 ns resolution.
+        assert_eq!(mtime_ns(UNIX_EPOCH + Duration::from_nanos(1_500)), 1_500);
+        assert_eq!(mtime_ns(UNIX_EPOCH - Duration::from_nanos(1_500)), -1_500);
+        assert_eq!(mtime_ns(UNIX_EPOCH), 0);
     }
 
     #[cfg(unix)]
