@@ -3,7 +3,6 @@ name: CI
 on:
   push:
   pull_request:
-  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -41,26 +40,3 @@ jobs:
       # committed docs are out of date with Cargo.toml.
       - name: Check docs are in sync with the version
         run: git diff --exit-code
-
-  # Release binaries for every OS, kept as workflow artifacts (not attached to GitHub
-  # releases): on pushes to main and when started by hand.
-  release-build:
-    name: release build (${{ matrix.os }})
-    needs: check
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release --locked
-      - uses: actions/upload-artifact@v7
-        with:
-          name: shelfgauge-${{ runner.os }}
-          path: target/release/shelfgauge${{ runner.os == 'Windows' && '.exe' || '' }}
-          retention-days: 14
-          if-no-files-found: error

@@ -21,8 +21,10 @@ Build numbers (`+NNN`) do not get their own sections.
 - In-tree mutation fuzzer (`tests/mutation.rs`): corrupted FB2 files through parse →
   split → render and corrupted zip archives through listing and reading must never
   panic; `SHELFGAUGE_FUZZ_ITERATIONS` / `SHELFGAUGE_FUZZ_SEED` for long runs.
-- CI builds release binaries for Linux, Windows and macOS (workflow artifacts) on pushes
-  to `main` and on manual runs.
+- Release workflow: pushing a version tag (`v0.5.0`) checks that it matches
+  `Cargo.toml`, runs the tests, builds binaries for Linux, Windows and macOS, creates
+  the GitHub release (with a short note linking to `CHANGELOG.md`) and publishes the
+  crate to crates.io (needs the `CARGO_REGISTRY_TOKEN` secret).
 - `reader.max_part_size` (default 300 000 characters, `0` = off): in every split mode a
   longer part, e.g. a book without chapters, is cut into equal pieces between whole
   blocks ("Title (1/3)", ...) instead of becoming one huge page (a 200 MB book used to

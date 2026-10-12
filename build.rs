@@ -22,6 +22,11 @@ fn main() {
     println!("cargo::rustc-env=SHELFGAUGE_VERSION={program}");
 
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    // Only in a git checkout: a packaged crate (`cargo publish` verification,
+    // `cargo install`) must never have its sources modified.
+    if !root.join(".git").exists() {
+        return;
+    }
     let base = version_sync::base_version(version);
     sync_file(&root.join("README.md"), |content| {
         version_sync::sync_readme(content, base)

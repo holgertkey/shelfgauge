@@ -1,0 +1,123 @@
+name: Release
+
+# Pushing a version tag (`v1.2.3`, matching `MAJOR.MINOR.PATCH` in Cargo.toml) builds
+# the binaries, creates the GitHub release and publishes the crate to crates.io.
+# Publishing needs the repository secret CARGO_REGISTRY_TOKEN (a crates.io API token
+# with the publish-update scope; publish-new for the first version).
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: check version and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Tag matches the version in Cargo.toml
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          base="${version%%+*}"
+          if [ "v$base" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+            exit 1
+          fi
+      - run: cargo test --locked
+
+  build:
+    name: build (${{ matrix.target }})
+    needs: check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked
+      - name: Package
+        shell: bash
+        run: |
+          name="shelfgauge-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir "$name"
+          cp README.md CHANGELOG.md LICENSE "$name/"
+          if [ "${{ matrix.archive }}" = zip ]; then
+            cp target/release/shelfgauge.exe "$name/"
+            7z a "$name.zip" "$name"
+          else
+            cp target/release/shelfgauge "$name/"
+            tar czf "$name.tar.gz" "$name"
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.target }}
+          path: shelfgauge-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }}
+          retention-days: 7
+          if-no-files-found: error
+
+  github-release:
+    name: GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: release-*
+          merge-multiple: true
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          changelog="https://github.com/${GH_REPO}/blob/${GITHUB_REF_NAME}/CHANGELOG.md"
+          cat > notes.md <<EOF
+          The changes in this version are listed in [CHANGELOG.md](${changelog}).
+
+          Binaries: Linux (x86_64), Windows (x86_64), macOS (Apple Silicon).
+          From crates.io: \`cargo install shelfgauge\`.
+          EOF
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --verify-tag \
+            --title "shelfgauge ${GITHUB_REF_NAME}" \
+            --notes-file notes.md
+
+  crates-io:
+    name: publish to crates.io
+    needs: github-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Drop the local build number from the version
+        # `+BUILD` is a local development counter (see CLAUDE.md); crates.io gets
+        # the plain MAJOR.MINOR.PATCH. Only this checkout is changed.
+        run: |
+          base="${GITHUB_REF_NAME#v}"
+          sed -i -E "0,/^version = \".*\"/s//version = \"${base}\"/" Cargo.toml
+          grep -m1 '^version' Cargo.toml
+      - run: cargo publish --allow-dirty
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

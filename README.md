@@ -16,15 +16,20 @@ books in the browser. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the d
 
 ## Installation
 
-Build from source with a current stable Rust toolchain:
+Released versions are on [crates.io](https://crates.io/crates/shelfgauge), and binaries
+for Linux (x86_64), Windows (x86_64) and macOS (Apple Silicon) are attached to the
+[GitHub releases](https://github.com/holgertkey/shelfgauge/releases):
+
+```sh
+cargo install shelfgauge
+```
+
+Or build from source with a current stable Rust toolchain:
 
 ```sh
 cargo build --release
 # the binary is target/release/shelfgauge (shelfgauge.exe on Windows)
 ```
-
-The CI also builds release binaries for Linux, Windows and macOS on every push to `main`;
-they can be downloaded from the workflow run's artifacts on GitHub.
 
 ## Usage
 
