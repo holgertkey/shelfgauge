@@ -362,7 +362,7 @@ async fn marks_bookmarks_notes_and_export() {
     // The book card.
     let card = server.ok(&format!("/book/{id}")).await;
     assert!(
-        card.contains("Bookmarks (1)") && card.contains("Marks (1)"),
+        card.contains("Bookmarks (1)") && card.contains("Quotes (1)"),
         "{card}"
     );
     assert!(
@@ -392,7 +392,7 @@ async fn marks_bookmarks_notes_and_export() {
         md.contains("# The Book") && md.contains("Writer Anna"),
         "{md}"
     );
-    assert!(md.find("## Bookmarks").unwrap() < md.find("## Marks").unwrap());
+    assert!(md.find("## Bookmarks").unwrap() < md.find("## Quotes").unwrap());
     assert!(
         md.contains("### Chapter 1\n\n> the sly fox\n\n<b>bold</b> & note\n"),
         "{md}"
@@ -439,8 +439,8 @@ async fn marks_bookmarks_notes_and_export() {
         .await;
     assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
     let card = server.ok(&format!("/book/{id}")).await;
-    assert!(card.contains("Marks (0)") && card.contains("Bookmarks (1)"));
-    assert!(!lib.export_text().contains("## Marks"));
+    assert!(card.contains("Quotes (0)") && card.contains("Bookmarks (1)"));
+    assert!(!lib.export_text().contains("## Quotes"));
     let reply = server
         .form(
             &format!("/annotation/{bookmark}/delete"),
@@ -450,7 +450,7 @@ async fn marks_bookmarks_notes_and_export() {
     assert_eq!(reply.status, StatusCode::SEE_OTHER);
     assert!(lib.export_files().is_empty(), "no file without annotations");
     let card = server.ok(&format!("/book/{id}")).await;
-    assert!(card.contains("No bookmarks yet") && card.contains("No marks yet"));
+    assert!(card.contains("No bookmarks yet") && card.contains("No quotes yet"));
     // Gone: 404 (JSON for the reader).
     let reply = server
         .json(&format!("/annotation/{mark}/delete"), serde_json::json!({}))
@@ -682,7 +682,7 @@ async fn annotations_follow_moves_and_reattach_across_containers() {
         server
             .ok(&format!("/book/{id}"))
             .await
-            .contains("Marks (1)")
+            .contains("Quotes (1)")
     );
 
     // Moved into an archive: a new id and content key; the card re-attaches the
@@ -695,7 +695,7 @@ async fn annotations_follow_moves_and_reattach_across_containers() {
     assert_eq!(lib.export_files().len(), 1, "the orphan keeps its file");
     assert!(lib.export_text().contains("Place in the book not found"));
     let card = server.ok(&format!("/book/{zip_id}")).await;
-    assert!(card.contains("Marks (1)"), "{card}");
+    assert!(card.contains("Quotes (1)"), "{card}");
     assert!(
         card.contains(&format!("read?at={p32}\">Continue")),
         "position follows: {card}"
@@ -727,7 +727,7 @@ async fn replaced_books_reattach_above_the_threshold_only() {
         blocks.push(block);
     }
     let card = server.ok(&format!("/book/{id}")).await;
-    assert!(card.contains("Marks (5)"));
+    assert!(card.contains("Quotes (5)"));
 
     // Replaced in place with a new edition: a paragraph inserted at the start (the
     // offsets move) and one marked paragraph rewritten: 4 of 5 = 80 % are found.
@@ -790,7 +790,7 @@ async fn replaced_books_reattach_above_the_threshold_only() {
     );
     lib.scan();
     let card = server.ok(&format!("/book/{other}")).await;
-    assert!(card.contains("Marks (0)"), "{card}");
+    assert!(card.contains("Quotes (0)"), "{card}");
     assert_eq!(
         store::for_book(&lib.userdata.lock(), &old_key)
             .unwrap()

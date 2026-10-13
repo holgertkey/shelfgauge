@@ -449,8 +449,8 @@
     popup.className = "mark-popup";
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = "Mark";
-    button.title = "Keep this text as a mark (with a note if you like)";
+    button.textContent = "Quote";
+    button.title = "Keep this text as a quote (with a note if you like)";
     // Keep the selection: a mousedown on the button would collapse it.
     button.addEventListener("mousedown", (e) => e.preventDefault());
     button.addEventListener("click", () => showNoteForm(range));
@@ -520,7 +520,7 @@
           selection.removeAllRanges();
         }
         await refreshLists();
-        toast("Mark saved.");
+        toast("Quote saved.");
       } catch (e) {
         info.textContent = `Could not save: ${e.message}`;
         save.disabled = false;

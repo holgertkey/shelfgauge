@@ -36,7 +36,7 @@ cargo build --release
 ```sh
 shelfgauge [PATH]        # serve the library at PATH (default: current directory)
 shelfgauge scan [PATH]   # update the library index and exit
-shelfgauge annotations export [PATH]   # rewrite the Markdown export of bookmarks and marks
+shelfgauge annotations export [PATH]   # rewrite the Markdown export of bookmarks and quotes
 ```
 
 Options: `--port <PORT>`, `--bind <ADDR>`, `--no-scan` (serve without scanning first),
@@ -68,26 +68,26 @@ scan keeps what it has indexed so far, and the next scan completes it.
   and `b` bookmark while reading, `Esc` leave the search field.
 - **Rescan** (top bar) updates the index while the library stays usable.
 
-### Bookmarks, marks and the reading position
+### Bookmarks, quotes and the reading position
 
-- While reading, select text and choose **Mark** to keep it as a quote, with an optional
+- While reading, select text and choose **Quote** to keep it as a quote, with an optional
   note. Press `b` (or the bookmark button in the top bar) to bookmark the place at the
-  top of the screen. Saved marks are highlighted in the text.
-- The reader's sidebar has three tabs: **Contents**, **Bookmarks** and **Marks**. A book
-  card lists its bookmarks and marks too, where notes can be edited and entries deleted.
-  A mark's text cannot be changed; a selection lies within one part of the book.
+  top of the screen. Saved quotes are highlighted in the text.
+- The reader's sidebar has three tabs: **Contents**, **Bookmarks** and **Quotes**. A book
+  card lists its bookmarks and quotes too, where notes can be edited and entries deleted.
+  A quote's text cannot be changed; a selection lies within one part of the book.
 - The reading position is saved as you read (after you stay at a place for a few
-  seconds; never in footnotes, and not while you look at a bookmark or mark). The book
+  seconds; never in footnotes, and not while you look at a bookmark or quote). The book
   card then offers **Continue reading** and shows how much you have read.
-- Bookmarks and marks belong to the book's content: they survive rescans, moves and
+- Bookmarks and quotes belong to the book's content: they survive rescans, moves and
   renames. If a book file is replaced (e.g. a corrected edition), they are moved to it
   when it is opened and most of the quotes are found in it; quotes that are not found
-  are marked "place not found". Marks of a book removed from the library are deleted
+  are marked "place not found". Quotes of a book removed from the library are deleted
   after `annotations.removed_book_retention_days`, unless it comes back.
 - Everything is stored in `.shelfgauge/userdata.sqlite`. Unlike the rest of
   `.shelfgauge/`, it cannot be rebuilt by rescanning: **back it up** (copy it while
   shelfgauge is not running).
-- For each book with bookmarks or marks, a Markdown file is kept up to date in
+- For each book with bookmarks or quotes, a Markdown file is kept up to date in
   `.shelfgauge/annotations/` (`<Authors> — <Title> (<key>).md`): bookmarks, then the
   quotes by chapter with their notes and links back into the reader. The export is
   **one way**: edits to these files are overwritten and never read back.
@@ -117,9 +117,9 @@ program with a message naming the key. `--port` and `--bind` override the file.
 | `reader.part_size` | `50000` | For `"size"`: approximate number of characters per part (cut between whole blocks). |
 | `reader.max_part_size` | `300000` | The longest part in characters, in every mode: a longer part (e.g. a book without chapters) is cut into equal pieces between whole blocks, titled "Title (1/3)", ... `0` disables the limit. |
 | `reader.remember_position` | `true` | Remember where you stopped reading each book: the book card offers "Continue reading" and shows the progress. `false` stops saving and hides both (saved positions are kept). |
-| `annotations.max_text_length` | `10000` | The longest text that can be marked, in characters (about 3–4 book pages); `1`–`1000000`. |
-| `annotations.max_note_length` | `10000` | The longest note, in characters; `1`–`1000000`. Lowering a limit never changes saved marks. |
-| `annotations.removed_book_retention_days` | `30` | Days to keep the bookmarks and marks of a book that was removed from the library, in case it comes back (a moved folder, an unmounted drive); `0` deletes them at the next scan. |
+| `annotations.max_text_length` | `10000` | The longest text that can be saved as a quote, in characters (about 3–4 book pages); `1`–`1000000`. |
+| `annotations.max_note_length` | `10000` | The longest note, in characters; `1`–`1000000`. Lowering a limit never changes saved quotes. |
+| `annotations.removed_book_retention_days` | `30` | Days to keep the bookmarks and quotes of a book that was removed from the library, in case it comes back (a moved folder, an unmounted drive); `0` deletes them at the next scan. |
 
 ## Remote access
 

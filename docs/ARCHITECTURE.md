@@ -120,12 +120,13 @@ Key design points to keep in mind when implementing:
 Code: `src/annotations/` (`text`, `anchor`, `store`, `export`, `attach`),
 `src/web/routes/annotations.rs`, `assets/reader.js`/`reader.css`.
 
-- **One entity**, the annotation (UI: "Mark"), replaces bookmarks, notes and quotes: the
-  **selected text is immutable** (it is the quote and the anchor's fingerprint), a
-  separate **note** is editable and optional (bookmark name / note body). An annotation
-  with no selection is a **bookmark** on the topmost visible block (note optional; the
-  automatic label is the section title and the start of the block). No `kind` field:
-  bookmarks (empty text) and marks (non-empty text) are one model shown as two lists.
+- **One entity**, the annotation (UI: "Quote"; "mark" in the code), replaces bookmarks,
+  notes and quotes: the **selected text is immutable** (it is the quote and the anchor's
+  fingerprint), a separate **note** is editable and optional (bookmark name / note
+  body). An annotation with no selection is a **bookmark** on the topmost visible block
+  (note optional; the automatic label is the section title and the start of the block).
+  No `kind` field: bookmarks (empty text) and quotes (non-empty text) are one model
+  shown as two lists.
 - **The server owns annotations.** They live in a separate SQLite file,
   `.shelfgauge/userdata.sqlite` (own migrations), not in the index DB: the index can be
   rebuilt by rescanning, user data cannot, and the scanner's single writer stays alone.
@@ -145,9 +146,9 @@ Code: `src/annotations/` (`text`, `anchor`, `store`, `export`, `attach`),
   10000 characters by default).
 - Ids are UUIDs and deletion is soft (`deleted_at`), so the V2 offline reader can sync
   into this table later.
-- **UI**: `reader.js`/`reader.css` load only on read pages; selecting text offers "Mark";
+- **UI**: `reader.js`/`reader.css` load only on read pages; selecting text offers "Quote";
   saved annotations are highlighted on the client; a bookmark is one action (button or
-  `B`). The reader sidebar has tabs Contents | Bookmarks | Marks; the book card lists
+  `B`). The reader sidebar has tabs Contents | Bookmarks | Quotes; the book card lists
   bookmarks and marks in two `<details>` blocks with plain-form edit/delete.
   Lists are server-rendered and work without JS. Writes are a separate route group
   behind the Origin check.

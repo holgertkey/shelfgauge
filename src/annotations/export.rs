@@ -263,7 +263,7 @@ pub fn render(book: &ExportBook, annotations: &[Annotation], base_url: &str) -> 
         out.push('\n');
     }
     if !marks.is_empty() {
-        let _ = writeln!(out, "## Marks\n");
+        let _ = writeln!(out, "## Quotes\n");
         let mut section: Option<Option<&str>> = None;
         for mark in marks {
             let title = mark.section_title.as_deref();
@@ -336,7 +336,7 @@ mod tests {
             "{md}"
         );
         let bookmarks = md.find("## Bookmarks").unwrap();
-        let marks = md.find("## Marks").unwrap();
+        let marks = md.find("## Quotes").unwrap();
         assert!(bookmarks < marks, "{md}");
         assert!(
             md.contains(

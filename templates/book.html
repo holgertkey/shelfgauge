@@ -50,7 +50,7 @@
 {%- endif %}
 {%- if let Some(lists) = lists %}
 <section class="book-annotations" id="annotations">
-  <details{% if !lists.bookmarks.is_empty() %} open{% endif %}>
+  <details>
     <summary>Bookmarks ({{ lists.bookmarks.len() }})</summary>
     {%- if lists.bookmarks.is_empty() %}
     <p class="hint">No bookmarks yet. While reading, press <kbd>B</kbd> or the bookmark button in the top bar to remember a place.</p>
@@ -62,10 +62,10 @@
     </ol>
     {%- endif %}
   </details>
-  <details{% if !lists.marks.is_empty() %} open{% endif %}>
-    <summary>Marks ({{ lists.marks.len() }})</summary>
+  <details>
+    <summary>Quotes ({{ lists.marks.len() }})</summary>
     {%- if lists.marks.is_empty() %}
-    <p class="hint">No marks yet. While reading, select text and choose “Mark” to keep a quote with a note.</p>
+    <p class="hint">No quotes yet. While reading, select text and choose “Quote” to keep it, with a note if you like.</p>
     {%- else %}
     <ol class="annotation-list">
       {%- for item in lists.marks %}

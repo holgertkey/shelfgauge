@@ -12,13 +12,14 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ### Added
 
-- Bookmarks and marks: select text in the reader and choose **Mark** to keep it as a
-  quote with an optional note; press `b` (or the top-bar button) to bookmark the place at
-  the top of the screen. Saved marks are highlighted in the text (CSS Custom Highlight
-  API, with a `<mark>` fallback). The text of a mark is immutable, its note editable.
-- Reader sidebar tabs **Contents | Bookmarks | Marks** and two lists on the book card,
-  with note editing and deleting through plain forms; all lists are rendered by the
-  server and work without JavaScript.
+- Bookmarks and quotes: select text in the reader and choose **Quote** to keep it with
+  an optional note; press `b` (or use the top-bar button, or "Bookmark this place" in
+  the sidebar) to bookmark the place at the top of the screen. Saved quotes are
+  highlighted in the text (CSS Custom Highlight API, with a `<mark>` fallback). The
+  text of a quote is immutable, its note editable.
+- Reader sidebar tabs **Contents | Bookmarks | Quotes** and two collapsed lists on the
+  book card, with note editing and deleting through plain forms; all lists are rendered
+  by the server and work without JavaScript.
 - Reading position: saved while reading (after scrolling stops and a dwell time; never
   in notes, never for a page opened from a bookmark or mark link, `from=mark`); the book
   card offers **Continue reading** / **Read from the start** and shows the progress.
