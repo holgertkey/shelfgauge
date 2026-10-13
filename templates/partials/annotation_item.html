@@ -1,13 +1,25 @@
-<div class="annotation-head"><a href="{{ item.href }}">{% if item.bookmark %}{{ item.label }}{% else %}Open in the book{% endif %}</a>{% if item.lost %} <span class="badge" title="The book has changed; this place was not found in it.">place not found</span>{% endif %}</div>
-      {%- if !item.bookmark %}
-      <blockquote class="quote">{{ item.text }}</blockquote>
-      {%- endif %}
-      <form method="post" action="{{ item.note_action }}" class="note-form">
-        <input type="hidden" name="back" value="{{ lists.back }}">
-        <label>Note <textarea name="note" rows="2">{{ item.note }}</textarea></label>
-        <button type="submit">Save note</button>
-      </form>
+<div class="annotation-body">
+        {%- if item.bookmark %}
+        <a class="label" href="{{ item.href }}">{{ item.label }}</a>
+        {%- if !item.note.is_empty() && item.note != item.label %}<p class="note">{{ item.note }}</p>{% endif %}
+        {%- else %}
+        <a class="quote" href="{{ item.href }}" title="Open in the book">{{ item.text }}</a>
+        {%- if !item.note.is_empty() %}<p class="note">{{ item.note }}</p>{% endif %}
+        {%- endif %}
+        {%- if item.lost %} <span class="badge" title="The book has changed; this place was not found in it.">place not found</span>{% endif %}
+      </div>
+      <details class="note-edit">
+        <summary class="icon-button" title="{% if item.note.is_empty() %}Add a note{% else %}Edit the note{% endif %}" aria-label="{% if item.note.is_empty() %}Add a note{% else %}Edit the note{% endif %}"><svg class="icon" aria-hidden="true"><use href="#i-edit"></use></svg></summary>
+        <form method="post" action="{{ item.note_action }}" class="note-form">
+          <input type="hidden" name="back" value="{{ lists.back }}">
+          <textarea name="note" rows="3" aria-label="Note" placeholder="Note">{{ item.note }}</textarea>
+          <div class="note-actions">
+            <button type="submit" class="small primary">Save</button>
+            <button type="reset" class="small note-cancel">Cancel</button>
+          </div>
+        </form>
+      </details>
       <form method="post" action="{{ item.delete_action }}" class="delete-form">
         <input type="hidden" name="back" value="{{ lists.back }}">
-        <button type="submit" class="danger">Delete</button>
+        <button type="submit" class="icon-button danger" title="Delete" aria-label="Delete"><svg class="icon" aria-hidden="true"><use href="#i-delete"></use></svg></button>
       </form>

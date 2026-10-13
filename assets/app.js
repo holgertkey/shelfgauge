@@ -417,6 +417,29 @@ function setupScan() {
   }
 }
 
+// ---------- Notes on the book card ----------
+
+// "Cancel" resets the note (a reset button) and closes its <details>.
+function setupNoteForms() {
+  document.addEventListener("click", (event) => {
+    const cancel = event.target.closest(".note-cancel");
+    const details = cancel && cancel.closest("details");
+    if (details) {
+      details.open = false;
+    }
+  });
+  document.addEventListener("toggle", (event) => {
+    const details = event.target;
+    if (details instanceof HTMLDetailsElement && details.matches(".note-edit") && details.open) {
+      const textarea = details.querySelector("textarea");
+      if (textarea) {
+        textarea.focus();
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      }
+    }
+  }, true);
+}
+
 // ---------- Keyboard ----------
 
 function setupKeys() {
@@ -485,5 +508,6 @@ document.addEventListener("DOMContentLoaded", () => {
     setupScroll(sidebar);
   }
   setupScan();
+  setupNoteForms();
   setupKeys();
 });

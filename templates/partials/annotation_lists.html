@@ -1,8 +1,9 @@
 <div class="annotation-lists">
 <section class="tab-panel" id="tab-bookmarks" data-tab="bookmarks" aria-label="Bookmarks">
   <h2 class="panel-title">Bookmarks</h2>
+  <button type="button" class="add-bookmark" title="Bookmark the place at the top of the page (b)"><svg class="icon" aria-hidden="true"><use href="#i-bookmark"></use></svg> Bookmark this place (or press <kbd>b</kbd>)</button>
   {%- if lists.bookmarks.is_empty() %}
-  <p class="hint">No bookmarks yet. Press <kbd>B</kbd> or the bookmark button to remember the place you are reading.</p>
+  <p class="hint">No bookmarks yet. A bookmark remembers the place at the top of the page.</p>
   {%- else %}
   <ul class="annotation-links">
     {%- for item in lists.bookmarks %}

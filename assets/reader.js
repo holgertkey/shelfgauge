@@ -262,6 +262,10 @@
         showTab(tab.dataset.tab);
         return;
       }
+      if (event.target.closest(".add-bookmark")) {
+        addBookmark();
+        return;
+      }
       if (event.target.closest("[data-mark-link]")) {
         // A jump to a bookmark or mark never moves the reading position.
         suspendPosition();

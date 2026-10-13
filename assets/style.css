@@ -685,46 +685,110 @@ kbd {
 
 .annotation-list {
   margin: 0.5rem 0 0;
-  padding-left: 1.5rem;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--border);
 }
 
+/* One entry: the text on the left, edit and delete icons at the top right; the note
+   form (a native <details>) opens below the text, so it works without JavaScript. */
 .annotation-list li {
-  margin-bottom: 1rem;
+  position: relative;
+  padding: 0.6rem 4.5rem 0.6rem 0.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.annotation-list .label {
+  color: var(--fg);
 }
 
 .annotation-list .quote {
-  margin: 0.4rem 0;
+  display: block;
   padding-left: 0.75rem;
+  color: var(--fg);
   white-space: pre-line;
   border-left: 3px solid var(--border);
 }
 
-.annotation-list form {
-  display: inline-flex;
-  align-items: flex-end;
-  gap: 0.5rem;
-  margin: 0.25rem 0.5rem 0 0;
+.annotation-list .quote:hover {
+  text-decoration: none;
+  border-left-color: var(--accent);
 }
 
-.annotation-list label {
-  display: flex;
-  flex-direction: column;
+.annotation-list .note {
+  margin: 0.3rem 0 0;
   color: var(--muted);
-  font-size: 0.85rem;
+  font-size: 0.9rem;
+  white-space: pre-line;
 }
 
-.annotation-list textarea {
-  width: min(28rem, 70vw);
+.annotation-list .icon-button {
+  padding: 0.3rem;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.annotation-list li:hover .icon-button,
+.annotation-list .icon-button:focus-visible,
+.annotation-list details[open] > summary {
+  opacity: 1;
+}
+
+.annotation-list .icon-button.danger:hover {
+  color: var(--error);
+}
+
+.annotation-list .delete-form {
+  position: absolute;
+  top: 0.45rem;
+  right: 0;
+}
+
+.note-edit > summary {
+  position: absolute;
+  top: 0.45rem;
+  right: 2rem;
+  list-style: none;
+}
+
+.note-edit > summary::-webkit-details-marker {
+  display: none;
+}
+
+.note-form {
+  margin: 0.5rem -4.25rem 0 0;
+}
+
+/* While the note is edited, it is shown only in the form. */
+.annotation-list li:has(> details[open]) .note {
+  display: none;
+}
+
+.note-form textarea {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  padding: 0.35rem 0.5rem;
   font: inherit;
+  font-size: 0.95rem;
   color: var(--fg);
   background: var(--input-bg);
   border: 1px solid var(--border);
   border-radius: 4px;
+  resize: vertical;
 }
 
-.annotation-list button {
-  padding: 0.2rem 0.7rem;
+.note-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+}
+
+button.small {
+  padding: 0.15rem 0.75rem;
   font: inherit;
+  font-size: 0.85rem;
   color: var(--fg);
   background: var(--sidebar-bg);
   border: 1px solid var(--border);
@@ -732,8 +796,19 @@ kbd {
   cursor: pointer;
 }
 
-.annotation-list button.danger:hover {
-  color: var(--error);
+button.small:hover {
+  background: var(--hover);
+}
+
+button.small.primary {
+  color: #ffffff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Without JavaScript the form is closed with the edit icon again. */
+.no-js .note-cancel {
+  display: none;
 }
 
 /* ---------- Reading mode ---------- */

@@ -125,6 +125,8 @@ impl Annotation {
         if self.is_bookmark() {
             let start = one_line(&words(&self.quote.suffix));
             return match (&self.section_title, start.is_empty()) {
+                // A bookmark on the section's title: the title alone.
+                (Some(section), false) if start == one_line(section) => section.clone(),
                 (Some(section), false) => format!("{section} — {start}"),
                 (Some(section), true) => section.clone(),
                 (None, false) => start,
@@ -214,6 +216,9 @@ mod tests {
         assert_eq!(bare.label(), "Short");
         bare.quote.suffix.clear();
         assert_eq!(bare.label(), "Bookmark");
+        let mut heading = sample("", None);
+        heading.quote.suffix = "Chapter 1".into();
+        assert_eq!(heading.label(), "Chapter 1");
         assert!(!sample("x", None).is_bookmark() && sample("", None).is_bookmark());
     }
 

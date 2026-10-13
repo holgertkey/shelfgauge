@@ -334,6 +334,10 @@ async fn marks_bookmarks_notes_and_export() {
     // The reader's lists (server-rendered, so they work without JS).
     let read = server.ok(&format!("/book/{id}/read")).await;
     assert!(read.contains("id=\"tab-bookmarks\"") && read.contains("id=\"tab-marks\""));
+    assert!(
+        read.contains("class=\"add-bookmark\"")
+            && read.contains("Bookmark this place (or press <kbd>b</kbd>)")
+    );
     assert!(read.contains(&format!("data-id=\"{mark}\"")), "{read}");
     assert!(read.contains("data-text=\"the sly fox\""), "{read}");
     assert!(
@@ -361,7 +365,18 @@ async fn marks_bookmarks_notes_and_export() {
         card.contains("Bookmarks (1)") && card.contains("Marks (1)"),
         "{card}"
     );
-    assert!(card.contains("<blockquote class=\"quote\">the sly fox</blockquote>"));
+    assert!(
+        card.contains("title=\"Open in the book\">the sly fox</a>"),
+        "{card}"
+    );
+    assert!(
+        card.contains("<p class=\"note\">&#60;b&#62;bold"),
+        "the note is shown as text"
+    );
+    assert!(
+        card.contains("<details class=\"note-edit\">"),
+        "the form is folded away"
+    );
     assert!(
         card.contains(">&#60;b&#62;bold&#60;/b&#62; &#38; note</textarea>"),
         "{card}"
