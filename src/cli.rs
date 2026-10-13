@@ -58,6 +58,19 @@ pub enum Command {
         /// Library directory (default: the current directory).
         path: Option<PathBuf>,
     },
+    /// Work with bookmarks and marks.
+    #[command(subcommand)]
+    Annotations(AnnotationsCommand),
+}
+
+/// `shelfgauge annotations` subcommands.
+#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
+pub enum AnnotationsCommand {
+    /// Rewrite the Markdown export (.shelfgauge/annotations/) from the database and exit.
+    Export {
+        /// Library directory (default: the current directory).
+        path: Option<PathBuf>,
+    },
 }
 
 /// What to run, resolved from the parsed command line.
@@ -70,6 +83,8 @@ pub enum Mode {
     },
     /// Update the index and exit.
     Scan,
+    /// Rewrite the annotation export and exit.
+    ExportAnnotations,
 }
 
 /// The resolved invocation: mode, library root and config overrides.
@@ -93,6 +108,12 @@ impl Cli {
             Some(Command::Scan { path }) => Invocation {
                 mode: Mode::Scan,
                 explicit_path: path.is_some(),
+                path: path.unwrap_or_else(current_dir),
+                overrides: ConfigOverrides::default(),
+            },
+            Some(Command::Annotations(AnnotationsCommand::Export { path })) => Invocation {
+                mode: Mode::ExportAnnotations,
+                explicit_path: false,
                 path: path.unwrap_or_else(current_dir),
                 overrides: ConfigOverrides::default(),
             },
@@ -203,6 +224,19 @@ mod tests {
             parse(&["scan", "books"]).unwrap().path,
             PathBuf::from("books")
         );
+    }
+
+    #[test]
+    fn annotations_export_never_creates_a_library() {
+        let inv = parse(&["annotations", "export", "books"]).unwrap();
+        assert_eq!(inv.mode, Mode::ExportAnnotations);
+        assert_eq!(inv.path, PathBuf::from("books"));
+        assert!(!inv.explicit_path, "only an existing library is exported");
+        assert_eq!(
+            parse(&["annotations", "export"]).unwrap().path,
+            PathBuf::from(".")
+        );
+        assert!(parse(&["annotations"]).is_err());
     }
 
     #[test]

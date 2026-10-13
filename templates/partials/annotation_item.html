@@ -1,0 +1,13 @@
+<div class="annotation-head"><a href="{{ item.href }}">{% if item.bookmark %}{{ item.label }}{% else %}Open in the book{% endif %}</a>{% if item.lost %} <span class="badge" title="The book has changed; this place was not found in it.">place not found</span>{% endif %}</div>
+      {%- if !item.bookmark %}
+      <blockquote class="quote">{{ item.text }}</blockquote>
+      {%- endif %}
+      <form method="post" action="{{ item.note_action }}" class="note-form">
+        <input type="hidden" name="back" value="{{ lists.back }}">
+        <label>Note <textarea name="note" rows="2">{{ item.note }}</textarea></label>
+        <button type="submit">Save note</button>
+      </form>
+      <form method="post" action="{{ item.delete_action }}" class="delete-form">
+        <input type="hidden" name="back" value="{{ lists.back }}">
+        <button type="submit" class="danger">Delete</button>
+      </form>

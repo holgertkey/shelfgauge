@@ -1,10 +1,27 @@
 {% extends "base.html" %}
+{% block head %}
+<link rel="stylesheet" href="{{ layout.urls.asset("reader.css") }}">
+<script src="{{ layout.urls.asset("reader.js") }}" defer></script>
+{%- endblock %}
+{% block topbar %}
+  <button type="button" class="icon-button bookmark-button" title="Bookmark this place (b)" aria-label="Bookmark this place" hidden>
+    <svg class="icon" aria-hidden="true"><use href="#i-bookmark"></use></svg>
+  </button>
+{%- endblock %}
 {% block sidebar %}
 <p class="toc-book"><a href="{{ card_href }}">‹ {{ book_title }}</a></p>
+<nav class="reader-tabs" aria-label="Sidebar">
+  <a href="#tab-toc" data-tab="toc">Contents</a>
+  <a href="#tab-bookmarks" data-tab="bookmarks">Bookmarks</a>
+  <a href="#tab-marks" data-tab="marks">Marks</a>
+</nav>
+<section class="tab-panel" id="tab-toc" data-tab="toc" aria-label="Contents">
 {{ toc|safe }}
+</section>
+{% include "partials/annotation_lists.html" %}
 {% endblock %}
 {% block main %}
-<article class="reader">
+<article class="reader" data-annotations="{{ annotations_href }}" data-position="{{ position_href }}" data-max-text="{{ max_text }}" data-max-note="{{ max_note }}">
   <header class="reader-head">
     <a class="book-link" href="{{ card_href }}">{{ book_title }}</a>
     {%- if !part_title.is_empty() %} <span class="muted">· {{ part_title }}</span>{% endif %}

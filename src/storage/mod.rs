@@ -61,18 +61,25 @@ pub enum StorageError {
 /// assert_eq!(books, 0);
 /// ```
 pub fn open_writer(path: &Path) -> Result<Connection, StorageError> {
-    let mut conn = Connection::open(path)?;
+    let mut conn = open_wal(path)?;
+    migrations::migrate(&mut conn)?;
+    Ok(conn)
+}
+
+/// Opens (creating if needed) a database for writing in WAL mode (falling back to the
+/// rollback journal with a warning), with the shared connection settings.
+pub(crate) fn open_wal(path: &Path) -> Result<Connection, StorageError> {
+    let conn = Connection::open(path)?;
     let mode: String = conn.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get(0))?;
     if !mode.eq_ignore_ascii_case("wal") {
         tracing::warn!(
             "WAL mode is not available for {} (journal mode: {mode}); readers may be \
-             blocked while the index is updated",
+             blocked while it is written",
             path.display()
         );
     }
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     configure(&conn)?;
-    migrations::migrate(&mut conn)?;
     Ok(conn)
 }
 
@@ -104,7 +111,7 @@ pub fn open_read_pool(path: &Path, size: u32) -> Result<ReadPool, StorageError> 
 }
 
 /// Per-connection settings shared by the writer and readers.
-fn configure(conn: &Connection) -> rusqlite::Result<()> {
+pub(crate) fn configure(conn: &Connection) -> rusqlite::Result<()> {
     conn.pragma_update(None, "foreign_keys", true)?;
     conn.busy_timeout(BUSY_TIMEOUT)
 }

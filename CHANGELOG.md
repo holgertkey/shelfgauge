@@ -8,6 +8,35 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-13
+
+### Added
+
+- Bookmarks and marks: select text in the reader and choose **Mark** to keep it as a
+  quote with an optional note; press `b` (or the top-bar button) to bookmark the place at
+  the top of the screen. Saved marks are highlighted in the text (CSS Custom Highlight
+  API, with a `<mark>` fallback). The text of a mark is immutable, its note editable.
+- Reader sidebar tabs **Contents | Bookmarks | Marks** and two lists on the book card,
+  with note editing and deleting through plain forms; all lists are rendered by the
+  server and work without JavaScript.
+- Reading position: saved while reading (after scrolling stops and a dwell time; never
+  in notes, never for a page opened from a bookmark or mark link, `from=mark`); the book
+  card offers **Continue reading** / **Read from the start** and shows the progress.
+  `reader.remember_position` turns it off.
+- Annotations are stored in `.shelfgauge/userdata.sqlite` (separate from the index,
+  own migrations, UUIDs, soft deletes) and belong to the book's content, so they survive
+  rescans, moves and renames. When a book file is replaced or moved between a plain file
+  and an archive, they are re-attached when the book is opened if at least 80 % of the
+  quotes are found in it (the others are listed as "place not found"). Annotations of a
+  book removed from the library are deleted after a complete scan, restored if the book
+  comes back and purged after `annotations.removed_book_retention_days`.
+- Markdown export, one file per book in `.shelfgauge/annotations/`, kept up to date
+  after every change (one way: edits to the files are overwritten);
+  `shelfgauge annotations export [PATH]` rewrites all files and removes stale generated
+  ones.
+- Config: `[annotations]` with `max_text_length`, `max_note_length` (10 000 characters
+  each by default) and `removed_book_retention_days` (30); `reader.remember_position`.
+
 ## [0.5.0] - 2026-10-12
 
 ### Added

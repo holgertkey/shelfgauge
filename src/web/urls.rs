@@ -150,6 +150,65 @@ impl Urls {
         self.path(&format!("/book/{id}/read?at={block}"))
     }
 
+    /// Reading mode at a bookmark or mark: like [`read_at`](Self::read_at), with
+    /// `from=mark` so that this page view does not move the reading position.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use shelfgauge::format::model::BlockId;
+    /// use shelfgauge::web::Urls;
+    ///
+    /// let b = BlockId::new(5).unwrap();
+    /// assert_eq!(Urls::new("/").read_mark(3, b), "/book/3/read?at=b5&from=mark");
+    /// ```
+    pub fn read_mark(&self, id: i64, block: crate::format::model::BlockId) -> String {
+        self.path(&format!("/book/{id}/read?at={block}&from=mark"))
+    }
+
+    /// Reading mode: 1-based `part`, opened from a bookmark or mark (`from=mark`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use shelfgauge::web::Urls;
+    ///
+    /// assert_eq!(Urls::new("/").read_from_mark(3, 1), "/book/3/read?from=mark");
+    /// assert_eq!(Urls::new("/").read_from_mark(3, 2), "/book/3/read?part=2&from=mark");
+    /// ```
+    pub fn read_from_mark(&self, id: i64, part: usize) -> String {
+        let url = self.read(id, part);
+        let separator = if url.contains('?') { '&' } else { '?' };
+        format!("{url}{separator}from=mark")
+    }
+
+    /// A book's annotations: `POST` creates one (JSON), `GET` is the reader's lists as
+    /// an HTML fragment.
+    pub fn annotations(&self, id: i64) -> String {
+        self.path(&format!("/book/{id}/annotations"))
+    }
+
+    /// Edits an annotation's note (`POST`, JSON or form).
+    pub fn annotation_note(&self, id: &str) -> String {
+        self.path(&format!(
+            "/annotation/{}/note",
+            utf8_percent_encode(id, PATH_SEGMENT)
+        ))
+    }
+
+    /// Deletes an annotation (`POST`, JSON or form).
+    pub fn annotation_delete(&self, id: &str) -> String {
+        self.path(&format!(
+            "/annotation/{}/delete",
+            utf8_percent_encode(id, PATH_SEGMENT)
+        ))
+    }
+
+    /// Saves a book's reading position (`POST`, JSON).
+    pub fn position(&self, id: i64) -> String {
+        self.path(&format!("/book/{id}/position"))
+    }
+
     /// An image of a book's content, versioned by the book's `updated_at`.
     ///
     /// # Examples

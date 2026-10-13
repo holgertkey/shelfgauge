@@ -1279,7 +1279,7 @@ dependencies = [
 
 [[package]]
 name = "shelfgauge"
-version = "0.5.0+003"
+version = "0.6.0+001"
 dependencies = [
  "anyhow",
  "askama",
@@ -1308,6 +1308,7 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "walkdir",
  "xxhash-rust",
  "zip",

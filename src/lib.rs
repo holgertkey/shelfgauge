@@ -5,6 +5,7 @@
 
 #![warn(missing_docs)]
 
+pub mod annotations;
 pub mod cache;
 pub mod config;
 pub mod container;

@@ -23,7 +23,15 @@
       <dt>Added</dt><dd>{{ added }}</dd>
     </dl>
     {%- if let Some(read) = read_href %}
-    <p class="actions"><a class="button primary" href="{{ read }}">Read</a></p>
+    <p class="actions">
+      {%- if let Some(continue_href) = continue_href %}
+      <a class="button primary" href="{{ continue_href }}">Continue reading</a>
+      <a class="button" href="{{ read }}">Read from the start</a>
+      {%- if let Some(progress) = progress %} <span class="progress muted">{{ progress }}</span>{% endif %}
+      {%- else %}
+      <a class="button primary" href="{{ read }}">Read</a>
+      {%- endif %}
+    </p>
     {%- endif %}
     {%- if !file_present %}
     <form method="post" action="{{ layout.urls.scan() }}" class="actions">
@@ -38,6 +46,34 @@
   {%- for paragraph in annotation %}
   <p>{{ paragraph }}</p>
   {%- endfor %}
+</section>
+{%- endif %}
+{%- if let Some(lists) = lists %}
+<section class="book-annotations" id="annotations">
+  <details{% if !lists.bookmarks.is_empty() %} open{% endif %}>
+    <summary>Bookmarks ({{ lists.bookmarks.len() }})</summary>
+    {%- if lists.bookmarks.is_empty() %}
+    <p class="hint">No bookmarks yet. While reading, press <kbd>B</kbd> or the bookmark button in the top bar to remember a place.</p>
+    {%- else %}
+    <ol class="annotation-list">
+      {%- for item in lists.bookmarks %}
+      <li>{% include "partials/annotation_item.html" %}</li>
+      {%- endfor %}
+    </ol>
+    {%- endif %}
+  </details>
+  <details{% if !lists.marks.is_empty() %} open{% endif %}>
+    <summary>Marks ({{ lists.marks.len() }})</summary>
+    {%- if lists.marks.is_empty() %}
+    <p class="hint">No marks yet. While reading, select text and choose “Mark” to keep a quote with a note.</p>
+    {%- else %}
+    <ol class="annotation-list">
+      {%- for item in lists.marks %}
+      <li>{% include "partials/annotation_item.html" %}</li>
+      {%- endfor %}
+    </ol>
+    {%- endif %}
+  </details>
 </section>
 {%- endif %}
 {% endblock %}

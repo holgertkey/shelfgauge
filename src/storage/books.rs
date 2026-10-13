@@ -490,6 +490,59 @@ fn located(
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
+/// Live books (not `removed`) with the content key `key` (see
+/// [`content_key`](crate::render::load::content_key)), newest first.
+pub fn live_books_by_key(conn: &Connection, key: &[u8]) -> Result<Vec<i64>, StorageError> {
+    use crate::render::load::{ContentKey, parse_content_key};
+    let ids = match parse_content_key(key) {
+        Some(ContentKey::FileHash(hash)) => located(
+            conn,
+            "WHERE b.content_hash = ?1 AND b.entry_name = x'' AND b.status != 'removed'
+             ORDER BY b.id DESC",
+            params![hash],
+        )?,
+        Some(ContentKey::Entry { size, crc32 }) => located(
+            conn,
+            "WHERE b.entry_size = ?1 AND b.entry_crc32 = ?2 AND b.entry_name != x''
+                   AND b.status != 'removed'
+             ORDER BY b.id DESC",
+            params![size as i64, i64::from(crc32)],
+        )?,
+        None => Vec::new(),
+    };
+    Ok(ids.into_iter().map(|b| b.id).collect())
+}
+
+/// Live books (not `removed`) whose title and author display names (joined with
+/// `, `) equal `title` and `authors`, compared with [`normalize_key`]; newest first.
+pub fn live_books_by_title(
+    conn: &Connection,
+    title: &str,
+    authors: &str,
+) -> Result<Vec<i64>, StorageError> {
+    let mut stmt = conn.prepare(
+        "SELECT b.id,
+                (SELECT group_concat(a.display_name, ', ' ORDER BY ba.position)
+                   FROM book_authors ba JOIN authors a ON a.id = ba.author_id
+                  WHERE ba.book_id = b.id)
+           FROM books b
+          WHERE b.sort_title = ?1 AND b.status != 'removed'
+          ORDER BY b.id DESC",
+    )?;
+    let authors = normalize_key(authors);
+    let rows = stmt.query_map([normalize_key(title)], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?))
+    })?;
+    let mut ids = Vec::new();
+    for row in rows {
+        let (id, names) = row?;
+        if normalize_key(names.as_deref().unwrap_or("")) == authors {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
+}
+
 /// Everything about a book, or `None` if there is no such book.
 pub fn book_by_id(conn: &Connection, id: i64) -> Result<Option<BookDetails>, StorageError> {
     let book = conn

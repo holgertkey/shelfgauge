@@ -5,6 +5,7 @@ use axum::extract::{Path, RawQuery, State};
 use axum::http::HeaderMap;
 use axum::response::{Html, Response};
 
+use super::annotations::{Lists, book_annotations, progress_label};
 use super::{date, parse_id, render};
 use crate::cache::covers;
 use crate::storage::books::{BookStatus, book_by_id};
@@ -29,7 +30,13 @@ struct BookPage {
     added: String,
     file_present: bool,
     read_href: Option<String>,
+    /// "Continue reading" at the saved position.
+    continue_href: Option<String>,
+    /// "read 37 %" / "finished".
+    progress: Option<String>,
     annotation: Vec<String>,
+    /// The bookmarks and marks (`None` for a book that cannot have any).
+    lists: Option<Lists>,
 }
 
 /// `GET /book/{id}`: the book card.
@@ -40,9 +47,8 @@ pub(crate) async fn card(
 ) -> Result<Html<String>, AppError> {
     let id = parse_id(&id)?;
     let mode = SidebarMode::from_headers(&headers);
-    let s = state.clone();
-    let (book, file_present, sidebar) = state
-        .db(move |conn| {
+    let (book, file_present, sidebar, annotations) = state
+        .user_db(move |s, conn| {
             let book = book_by_id(conn, id)?.ok_or(AppError::NotFound)?;
             let file_present = book.status != BookStatus::Removed
                 && s.library().root().join(&book.container_path).is_file();
@@ -51,8 +57,14 @@ pub(crate) async fn card(
             } else {
                 Focus::book(&book)
             };
-            let sidebar = sidebar::build(conn, &s, mode, &focus)?;
-            Ok((book, file_present, sidebar))
+            let sidebar = sidebar::build(conn, s, mode, &focus)?;
+            // Re-attaching may load the book: only when its file is there.
+            let annotations = if file_present || book.status == BookStatus::Removed {
+                book_annotations(s, conn, s.userdata(), &book, None)?
+            } else {
+                None
+            };
+            Ok((book, file_present, sidebar, annotations))
         })
         .await?;
 
@@ -89,7 +101,26 @@ pub(crate) async fn card(
         .as_deref()
         .and_then(covers::known_mime)
         .map(|_| urls.cover(book.id, book.updated_at));
+    let readable = book.status == BookStatus::Ok && file_present;
+    let position = annotations
+        .as_ref()
+        .and_then(|a| a.position.as_ref())
+        .filter(|_| readable);
+    let lists = annotations
+        .as_ref()
+        .filter(|a| readable || !a.annotations.is_empty())
+        .map(|a| {
+            Lists::new(
+                urls,
+                book.id,
+                &a.annotations,
+                format!("{}#annotations", urls.book(book.id)),
+            )
+        });
     render(&BookPage {
+        continue_href: position.map(|p| urls.read_at(book.id, p.block)),
+        progress: position.map(|p| progress_label(p.progress)),
+        lists,
         layout: Layout::new(&state, book.title.clone(), sidebar),
         cover,
         authors: book
@@ -113,7 +144,7 @@ pub(crate) async fn card(
         location,
         added: date(book.added_at),
         file_present,
-        read_href: (book.status == BookStatus::Ok && file_present).then(|| urls.read(book.id, 1)),
+        read_href: readable.then(|| urls.read(book.id, 1)),
         annotation: book
             .annotation
             .lines()

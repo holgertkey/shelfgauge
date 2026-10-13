@@ -24,6 +24,17 @@ pub struct BackgroundScan {
     cancel: Arc<AtomicBool>,
     thread: Mutex<Option<JoinHandle<()>>>,
     last: Arc<Mutex<Option<Result<ScanSummary, String>>>>,
+    after_complete: Option<AfterScan>,
+}
+
+/// A hook run on the scan thread after every complete, uncancelled scan.
+#[derive(Clone)]
+struct AfterScan(Arc<dyn Fn() + Send + Sync>);
+
+impl std::fmt::Debug for AfterScan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AfterScan")
+    }
 }
 
 impl BackgroundScan {
@@ -37,7 +48,16 @@ impl BackgroundScan {
             cancel: Arc::new(AtomicBool::new(false)),
             thread: Mutex::new(None),
             last: Arc::new(Mutex::new(None)),
+            after_complete: None,
         }
+    }
+
+    /// Sets a hook that runs on the scan thread after every scan that completed without
+    /// being cancelled (and never after a failed or cancelled one), before the scan
+    /// counts as finished. Used to clean up the annotations of removed books.
+    pub fn after_complete_scan(mut self, hook: impl Fn() + Send + Sync + 'static) -> Self {
+        self.after_complete = Some(AfterScan(Arc::new(hook)));
+        self
     }
 
     /// Starts a scan unless one is running or the controller is shut down.
@@ -54,6 +74,7 @@ impl BackgroundScan {
         let progress = Arc::clone(&self.progress);
         let cancel = Arc::clone(&self.cancel);
         let last = Arc::clone(&self.last);
+        let after_complete = self.after_complete.clone();
         let spawned = std::thread::Builder::new()
             .name("scan".to_owned())
             .spawn(move || {
@@ -75,6 +96,7 @@ impl BackgroundScan {
                     ),
                     Err(e) => tracing::error!("scan failed: {e}"),
                 }
+                run_after_complete(&result, after_complete.as_ref());
                 *last.lock().unwrap_or_else(|e| e.into_inner()) =
                     Some(result.map_err(|e| e.to_string()));
             });
@@ -125,6 +147,17 @@ impl BackgroundScan {
     }
 }
 
+/// Runs `hook` if `result` is a complete, uncancelled scan; returns whether it ran.
+fn run_after_complete(result: &Result<ScanSummary, ScanError>, hook: Option<&AfterScan>) -> bool {
+    match (result, hook) {
+        (Ok(summary), Some(hook)) if !summary.cancelled => {
+            (hook.0)();
+            true
+        }
+        _ => false,
+    }
+}
+
 /// One scan with its own writer connection.
 fn run(
     library: &Library,
@@ -144,4 +177,51 @@ fn run(
         cancel,
     }
     .run(&mut conn)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::AtomicUsize;
+
+    use super::*;
+
+    #[test]
+    fn hook_runs_only_after_a_complete_scan() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&calls);
+        let hook = AfterScan(Arc::new(move || {
+            counter.fetch_add(1, Ordering::Relaxed);
+        }));
+        let complete = Ok(ScanSummary::default());
+        let cancelled = Ok(ScanSummary {
+            cancelled: true,
+            ..ScanSummary::default()
+        });
+        let failed = Err(ScanError::from(crate::storage::StorageError::NewerSchema {
+            found: 9,
+            supported: 1,
+        }));
+        assert!(run_after_complete(&complete, Some(&hook)));
+        assert!(!run_after_complete(&cancelled, Some(&hook)));
+        assert!(!run_after_complete(&failed, Some(&hook)));
+        assert!(!run_after_complete(&complete, None));
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn background_scan_runs_the_hook() {
+        let dir = tempfile::tempdir().unwrap();
+        let library = Library::open(dir.path()).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&calls);
+        let scan = BackgroundScan::new(library, Vec::new()).after_complete_scan(move || {
+            counter.fetch_add(1, Ordering::Relaxed);
+        });
+        assert!(scan.start());
+        while scan.is_running() {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        scan.shutdown();
+    }
 }

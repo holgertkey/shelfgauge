@@ -138,14 +138,22 @@ ALTER TABLE books ADD COLUMN parser_version INTEGER NOT NULL DEFAULT 0;
 
 /// Brings the schema to [`SCHEMA_VERSION`]; refuses databases from newer builds.
 pub fn migrate(conn: &mut Connection) -> Result<(), StorageError> {
+    apply(conn, MIGRATIONS)
+}
+
+/// Applies the `migrations` not yet recorded in `user_version` (index `i` upgrades
+/// version `i` to `i + 1`), each in a transaction with its version bump; refuses a
+/// database with a newer version.
+pub(crate) fn apply(conn: &mut Connection, migrations: &[&str]) -> Result<(), StorageError> {
+    let supported = migrations.len() as u32;
     let current: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if current > SCHEMA_VERSION {
+    if current > supported {
         return Err(StorageError::NewerSchema {
             found: current,
-            supported: SCHEMA_VERSION,
+            supported,
         });
     }
-    for (index, sql) in MIGRATIONS.iter().enumerate().skip(current as usize) {
+    for (index, sql) in migrations.iter().enumerate().skip(current as usize) {
         let version = index as u32 + 1;
         let tx = conn.transaction()?;
         tx.execute_batch(sql)?;

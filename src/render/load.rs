@@ -46,6 +46,44 @@ pub fn content_key(book: &BookDetails) -> Option<Vec<u8>> {
     }
 }
 
+/// A content key taken apart (see [`content_key`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContentKey<'a> {
+    /// A plain file's content hash (xxh3-128, 16 bytes).
+    FileHash(&'a [u8]),
+    /// A zip entry's size and CRC32 (12 bytes).
+    Entry {
+        /// Uncompressed size.
+        size: u64,
+        /// CRC32.
+        crc32: u32,
+    },
+}
+
+/// Takes apart a key made by [`content_key`]; `None` for any other byte string.
+///
+/// # Examples
+///
+/// ```
+/// use shelfgauge::render::load::{ContentKey, parse_content_key};
+///
+/// let mut key = 10u64.to_le_bytes().to_vec();
+/// key.extend_from_slice(&7u32.to_le_bytes());
+/// assert_eq!(parse_content_key(&key), Some(ContentKey::Entry { size: 10, crc32: 7 }));
+/// assert_eq!(parse_content_key(&[0; 16]), Some(ContentKey::FileHash(&[0; 16])));
+/// assert_eq!(parse_content_key(b"x"), None);
+/// ```
+pub fn parse_content_key(key: &[u8]) -> Option<ContentKey<'_>> {
+    match key.len() {
+        12 => Some(ContentKey::Entry {
+            size: u64::from_le_bytes(key[..8].try_into().ok()?),
+            crc32: u32::from_le_bytes(key[8..].try_into().ok()?),
+        }),
+        16 => Some(ContentKey::FileHash(key)),
+        _ => None,
+    }
+}
+
 /// Loads the content of `book` from the cache, or reads, verifies, parses and caches
 /// it.
 pub fn load(

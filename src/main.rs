@@ -9,6 +9,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use clap::Parser;
+use shelfgauge::annotations::attach;
+use shelfgauge::annotations::export::Exporter;
+use shelfgauge::annotations::store::UserData;
 use shelfgauge::config::Config;
 use shelfgauge::container::ReadLimits;
 use shelfgauge::format::{PARSER_STACK_SIZE, Registry};
@@ -60,7 +63,38 @@ fn main() -> anyhow::Result<()> {
     match invocation.mode {
         Mode::Scan => scan(&library, &config),
         Mode::Serve { scan } => serve(library, &config, scan),
+        Mode::ExportAnnotations => export_annotations(&library, &config),
     }
+}
+
+/// The exporter of a library's annotations, linking to the configured server address.
+fn exporter(library: &Library, config: &Config) -> Exporter {
+    let urls = web::Urls::new(&config.server.base_path);
+    Exporter::new(
+        library.annotations_dir(),
+        &web::display_url(&config.server, &urls),
+    )
+}
+
+/// `shelfgauge annotations export`: rewrites every export file and removes stale ones.
+fn export_annotations(library: &Library, config: &Config) -> anyhow::Result<()> {
+    let index = shelfgauge::storage::open_writer(&library.db_path())
+        .with_context(|| format!("cannot open the index {}", library.db_path().display()))?;
+    let user = open_userdata(library)?;
+    let summary = attach::export_all(&index, &user.lock(), &exporter(library, config))?;
+    println!(
+        "Exported {} annotations of {} books to {}; removed {} stale files.",
+        summary.annotations,
+        summary.files,
+        library.annotations_dir().display(),
+        summary.removed
+    );
+    Ok(())
+}
+
+fn open_userdata(library: &Library) -> anyhow::Result<UserData> {
+    let path = library.userdata_path();
+    UserData::open(&path).with_context(|| format!("cannot open {}", path.display()))
 }
 
 /// The default command: serves the library, scanning it in the background.
@@ -75,11 +109,26 @@ fn serve(library: Library, config: &Config, scan: bool) -> anyhow::Result<()> {
         .with_context(|| format!("cannot open the index {}", db_path.display()))?;
     drop(writer);
 
-    let background = Arc::new(BackgroundScan::new(
-        library.clone(),
-        config.scan.exclude.clone(),
-    ));
-    let state = web::AppState::new(library, config, pool, Arc::clone(&background));
+    let userdata = Arc::new(open_userdata(&library)?);
+    let exporter = exporter(&library, config);
+    let background = {
+        let (library, userdata, exporter) =
+            (library.clone(), Arc::clone(&userdata), exporter.clone());
+        let retention = config.annotations.removed_book_retention_days;
+        Arc::new(
+            BackgroundScan::new(library.clone(), config.scan.exclude.clone()).after_complete_scan(
+                move || {
+                    if let Err(e) =
+                        attach::cleanup_library(&library, &userdata, &exporter, retention)
+                    {
+                        tracing::error!("cannot clean up the annotations of removed books: {e}");
+                    }
+                },
+            ),
+        )
+    };
+    let state = web::AppState::new(library, config, pool, Arc::clone(&background))
+        .with_annotations(userdata, exporter);
     let url = web::display_url(&config.server, state.urls());
     let router = web::router(state);
 
@@ -178,6 +227,16 @@ fn scan(library: &Library, config: &Config) -> anyhow::Result<()> {
         finished.store(true, Ordering::Relaxed);
         result
     })?;
+    if !summary.cancelled {
+        let user = open_userdata(library)?;
+        attach::cleanup_library(
+            library,
+            &user,
+            &exporter(library, config),
+            config.annotations.removed_book_retention_days,
+        )
+        .context("cannot clean up the annotations of removed books")?;
+    }
     println!(
         "Scanned {} in {:.1} s: {} added, {} updated, {} moved, {} removed, {} unchanged, \
          {} errors ({} parsed){}.",

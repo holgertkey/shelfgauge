@@ -4,8 +4,9 @@
 //! and takes the fixed port (a busy port is an error, never a fallback), [`router`]
 //! builds the app, and [`serve`] runs it until a shutdown signal.
 //!
-//! Routes come in three groups: *public* (assets), *read* (browsing) and *admin*
-//! (rescan); read and admin pass through the authentication slot
+//! Routes come in four groups: *public* (assets), *read* (browsing), *admin* (rescan)
+//! and *user writes* (annotations, reading position); all but public pass through the
+//! authentication slot
 //! ([`security::Auth`]). Every request goes through the `Host` check and, for
 //! state-changing methods, the `Origin` check (see [`security`]). All paths are
 //! registered and generated through [`Urls`], which applies `server.base_path`.
@@ -16,10 +17,13 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::middleware::{from_fn, from_fn_with_state};
 use axum::routing::{get, post};
 
-use crate::config::{Config, ReaderConfig, ServerConfig};
+use crate::annotations::export::Exporter;
+use crate::annotations::store::UserData;
+use crate::config::{AnnotationsConfig, Config, ReaderConfig, ServerConfig};
 use crate::container::ReadLimits;
 use crate::format::Registry;
 use crate::format::model::BookContent;
@@ -88,6 +92,9 @@ struct Inner {
     scan: Arc<BackgroundScan>,
     page_size: u32,
     reader: ReaderConfig,
+    annotations: AnnotationsConfig,
+    userdata: Arc<UserData>,
+    exporter: Exporter,
     registry: Registry,
     /// Recently read books, newest last.
     recent: Mutex<VecDeque<RecentBook>>,
@@ -101,15 +108,28 @@ const RECENT_BOOKS: usize = 4;
 
 impl AppState {
     /// Creates the state for `library` with its (validated) `config`.
+    ///
+    /// Annotations go to an in-memory database until
+    /// [`with_annotations`](Self::with_annotations) sets the library's own.
     pub fn new(
         library: Library,
         config: &Config,
         pool: ReadPool,
         scan: Arc<BackgroundScan>,
     ) -> Self {
+        let urls = Urls::new(&config.server.base_path);
+        let exporter = Exporter::new(
+            library.annotations_dir(),
+            &display_url(&config.server, &urls),
+        );
         Self(Arc::new(Inner {
             library,
-            urls: Urls::new(&config.server.base_path),
+            urls,
+            annotations: config.annotations.clone(),
+            userdata: Arc::new(
+                UserData::open_in_memory().expect("an in-memory database always opens"),
+            ),
+            exporter,
             hosts: HostAllowlist::new(&config.server),
             auth: Auth::None,
             pool,
@@ -119,6 +139,20 @@ impl AppState {
             registry: Registry::with_builtin_formats(),
             recent: Mutex::new(VecDeque::new()),
         }))
+    }
+
+    /// Uses `userdata` for annotations and reading positions and `exporter` for their
+    /// Markdown export. Call it right after [`new`](Self::new), before the state is
+    /// shared.
+    ///
+    /// # Panics
+    ///
+    /// If the state has already been cloned.
+    pub fn with_annotations(mut self, userdata: Arc<UserData>, exporter: Exporter) -> Self {
+        let inner = Arc::get_mut(&mut self.0).expect("the state is not shared yet");
+        inner.userdata = userdata;
+        inner.exporter = exporter;
+        self
     }
 
     /// The library being served.
@@ -159,6 +193,21 @@ impl AppState {
     /// The `[reader]` settings.
     pub fn reader(&self) -> &ReaderConfig {
         &self.0.reader
+    }
+
+    /// The `[annotations]` settings.
+    pub fn annotations(&self) -> &AnnotationsConfig {
+        &self.0.annotations
+    }
+
+    /// The user-data database.
+    pub fn userdata(&self) -> &UserData {
+        &self.0.userdata
+    }
+
+    /// The annotation export.
+    pub fn exporter(&self) -> &Exporter {
+        &self.0.exporter
     }
 
     /// The content of `book`, from memory, the content cache or the book file.
@@ -206,6 +255,32 @@ impl AppState {
         let pool = self.0.pool.clone();
         tokio::task::spawn_blocking(move || f(&*pool.get()?)).await?
     }
+
+    /// Runs `f` on a blocking thread with the parser stack and a pooled index
+    /// connection, for work that may load a book and use the user-data database.
+    ///
+    /// `f` locks [`userdata`](Self::userdata) itself, only around its database calls:
+    /// never while a book is loaded or parsed.
+    pub(crate) async fn user_db<T: Send + 'static>(
+        &self,
+        f: impl FnOnce(&AppState, &rusqlite::Connection) -> Result<T, AppError> + Send + 'static,
+    ) -> Result<T, AppError> {
+        let state = self.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::format::run_with_parser_stack(|| {
+                let index = state.0.pool.get()?;
+                f(&state, &index)
+            })
+        })
+        .await?
+    }
+}
+
+/// The request body limit of the annotation write routes: the longest note, at up to
+/// 12 bytes per code point (a UTF-8 sequence percent-encoded in a form, or a
+/// surrogate pair escaped in JSON), plus room for the other fields.
+pub fn write_body_limit(config: &AnnotationsConfig) -> usize {
+    (config.max_note_length as usize + 256) * 12 + 4096
 }
 
 /// Checks the bind safety rule and listens on the configured address and fixed port.
@@ -242,6 +317,10 @@ pub fn router(state: AppState) -> Router {
         .route(&urls.path("/cover/{id}"), get(routes::book::cover))
         .route(&urls.path("/book/{id}/read"), get(routes::read::read))
         .route(
+            &urls.path("/book/{id}/annotations"),
+            get(routes::annotations::lists),
+        )
+        .route(
             &urls.path("/book/{id}/image/{image}"),
             get(routes::read::image),
         )
@@ -260,8 +339,29 @@ pub fn router(state: AppState) -> Router {
     let admin = Router::new()
         .route(&urls.path("/scan"), post(routes::scan::rescan))
         .route_layer(auth());
+    // User writes (annotations, reading position): behind the Origin check like every
+    // POST, and with a body limit derived from the configured lengths.
+    let writes = Router::new()
+        .route(
+            &urls.path("/book/{id}/annotations"),
+            post(routes::annotations::create),
+        )
+        .route(
+            &urls.path("/annotation/{id}/note"),
+            post(routes::annotations::note),
+        )
+        .route(
+            &urls.path("/annotation/{id}/delete"),
+            post(routes::annotations::delete),
+        )
+        .route(
+            &urls.path("/book/{id}/position"),
+            post(routes::annotations::position),
+        )
+        .route_layer(auth())
+        .layer(DefaultBodyLimit::max(write_body_limit(state.annotations())));
 
-    let mut app = public.merge(read).merge(admin);
+    let mut app = public.merge(read).merge(admin).merge(writes);
     if let Some(prefix) = urls.prefix() {
         app = app.route(prefix, get(routes::library::to_home));
     }

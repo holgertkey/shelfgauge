@@ -6,6 +6,7 @@ use axum::extract::{Path, Query, RawQuery, State};
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Redirect, Response};
 
+use super::annotations::{Lists, book_annotations};
 use super::{Params, parse_id, render};
 use crate::cache::covers;
 use crate::format::model::BlockId;
@@ -51,6 +52,14 @@ struct ReadPage {
     toc: String,
     prev: Option<PartLink>,
     next: Option<PartLink>,
+    /// The bookmark and mark lists.
+    lists: Lists,
+    /// URL to create annotations (POST) and to fetch the lists (GET).
+    annotations_href: String,
+    /// URL to save the reading position; empty when positions are not remembered.
+    position_href: String,
+    max_text: u32,
+    max_note: u32,
 }
 
 /// What a read request results in.
@@ -106,7 +115,13 @@ fn page(state: &AppState, book: &BookDetails, params: &Params) -> Result<Outcome
     if let Some(at) = &params.at {
         let block: BlockId = at.parse().map_err(|_| AppError::NotFound)?;
         let part = part_of(&parts, block).ok_or(AppError::NotFound)?;
-        return Ok(Outcome::Redirect(links.block(part, block)));
+        // `from=mark` survives the redirect: that page view must not move the position.
+        let url = if params.from.as_deref() == Some("mark") {
+            format!("{}#{block}", urls.read_from_mark(book.id, part + 1))
+        } else {
+            links.block(part, block)
+        };
+        return Ok(Outcome::Redirect(url));
     }
     let count = parts.len().max(1);
     let index = usize::try_from(page_number(params.part.as_deref()))
@@ -127,6 +142,12 @@ fn page(state: &AppState, book: &BookDetails, params: &Params) -> Result<Outcome
     let part_title = parts
         .get(index)
         .map_or_else(String::new, |part| part.title.clone());
+    let annotations = {
+        let index = state.pool().get()?;
+        book_annotations(state, &index, state.userdata(), book, Some(&content))?
+            .map_or_else(Vec::new, |a| a.annotations)
+    };
+    let current = urls.read(book.id, index + 1);
     let title = if count > 1 {
         format!("{} — {}", book.title, part_title)
     } else {
@@ -142,6 +163,15 @@ fn page(state: &AppState, book: &BookDetails, params: &Params) -> Result<Outcome
         toc: render_toc(&content, &parts, index, &links),
         prev: index.checked_sub(1).and_then(neighbour),
         next: neighbour(index + 1),
+        lists: Lists::new(urls, book.id, &annotations, current),
+        annotations_href: urls.annotations(book.id),
+        position_href: if state.reader().remember_position {
+            urls.position(book.id)
+        } else {
+            String::new()
+        },
+        max_text: state.annotations().max_text_length,
+        max_note: state.annotations().max_note_length,
     })))
 }
 

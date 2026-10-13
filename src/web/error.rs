@@ -23,6 +23,8 @@ pub(crate) enum AppError {
     FileMissing,
     /// The book cannot be read or parsed (500); the reason is shown.
     Unreadable(String),
+    /// The request is invalid (400); the reason is shown.
+    BadRequest(String),
     /// An unexpected failure (500); the message is logged, not shown.
     Internal(String),
 }
@@ -33,6 +35,7 @@ pub(crate) enum ErrorPage {
     NotFound,
     FileMissing,
     Unreadable(String),
+    BadRequest(String),
     Internal,
 }
 
@@ -48,6 +51,7 @@ impl IntoResponse for AppError {
                     ErrorPage::Unreadable(reason),
                 )
             }
+            Self::BadRequest(reason) => (StatusCode::BAD_REQUEST, ErrorPage::BadRequest(reason)),
             Self::Internal(message) => {
                 tracing::error!("{message}");
                 (StatusCode::INTERNAL_SERVER_ERROR, ErrorPage::Internal)
@@ -61,6 +65,12 @@ impl IntoResponse for AppError {
 
 impl From<StorageError> for AppError {
     fn from(e: StorageError) -> Self {
+        Self::Internal(e.to_string())
+    }
+}
+
+impl From<crate::annotations::attach::AttachError> for AppError {
+    fn from(e: crate::annotations::attach::AttachError) -> Self {
         Self::Internal(e.to_string())
     }
 }
@@ -113,7 +123,7 @@ pub(crate) async fn render_errors(
     };
     let status = response.status();
     let detail = match &page {
-        ErrorPage::Unreadable(reason) => Some(reason.clone()),
+        ErrorPage::Unreadable(reason) | ErrorPage::BadRequest(reason) => Some(reason.clone()),
         _ => None,
     };
     let (title, message, rescan) = match page {
@@ -127,6 +137,11 @@ pub(crate) async fn render_errors(
         ErrorPage::Unreadable(_) => (
             "Cannot read the book",
             "The book's file could not be read or parsed.",
+            false,
+        ),
+        ErrorPage::BadRequest(_) => (
+            "Invalid request",
+            "The request could not be carried out.",
             false,
         ),
         ErrorPage::Internal => (

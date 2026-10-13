@@ -386,6 +386,7 @@ pub(crate) mod tests {
             section_depth,
             part_size,
             max_part_size: 0,
+            ..ReaderConfig::default()
         }
     }
 

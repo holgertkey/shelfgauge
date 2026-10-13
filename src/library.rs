@@ -102,6 +102,20 @@ impl Library {
     pub fn content_dir(&self) -> PathBuf {
         self.data_dir().join("content")
     }
+
+    /// The user-data database (annotations, reading positions),
+    /// `.shelfgauge/userdata.sqlite`.
+    ///
+    /// Kept apart from the index: the index can be rebuilt by rescanning, user data
+    /// cannot.
+    pub fn userdata_path(&self) -> PathBuf {
+        self.data_dir().join("userdata.sqlite")
+    }
+
+    /// The Markdown export of annotations, `.shelfgauge/annotations/`.
+    pub fn annotations_dir(&self) -> PathBuf {
+        self.data_dir().join("annotations")
+    }
 }
 
 #[cfg(test)]
@@ -126,6 +140,8 @@ mod tests {
         assert_eq!(library.db_path(), data.join("library.db"));
         assert_eq!(library.covers_dir(), data.join("covers"));
         assert_eq!(library.content_dir(), data.join("content"));
+        assert_eq!(library.userdata_path(), data.join("userdata.sqlite"));
+        assert_eq!(library.annotations_dir(), data.join("annotations"));
     }
 
     #[test]

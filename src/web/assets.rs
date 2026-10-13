@@ -91,7 +91,14 @@ mod tests {
 
     #[test]
     fn layout_assets_are_embedded() {
-        for name in ["style.css", "app.js", "theme.js", "icon.svg"] {
+        for name in [
+            "style.css",
+            "app.js",
+            "theme.js",
+            "icon.svg",
+            "reader.css",
+            "reader.js",
+        ] {
             assert!(Assets::get(name).is_some(), "{name}");
             assert_eq!(version(name).unwrap().len(), 16);
         }

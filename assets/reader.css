@@ -1,0 +1,193 @@
+/* shelfgauge reader: sidebar tabs, bookmark and mark lists, highlights, the mark
+   popup. Loaded on read pages only. */
+
+.reader-tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin: 0 0 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.reader-tabs a {
+  padding: 0.3rem 0.6rem;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+}
+
+.reader-tabs a:hover {
+  text-decoration: none;
+  color: var(--fg);
+}
+
+.reader-tabs a.active {
+  color: var(--fg);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+
+/* Without reader.js all panels are shown one after another, with their titles;
+   reader.js marks the sidebar `.tabbed` once it handles the tabs. */
+.tabbed .tab-panel {
+  display: none;
+}
+
+.tabbed .tab-panel.active {
+  display: block;
+}
+
+.panel-title {
+  margin: 1rem 0 0.5rem;
+  font-size: 1rem;
+}
+
+.tabbed .panel-title {
+  display: none;
+}
+
+.tab-panel .hint {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.annotation-links {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.annotation-links li {
+  position: relative;
+  padding: 0.3rem 1.6rem 0.3rem 0.3rem;
+  border-radius: 4px;
+}
+
+.annotation-links li:hover {
+  background: var(--hover);
+}
+
+.annotation-links a {
+  color: var(--fg);
+}
+
+.annotation-links .note-preview {
+  display: block;
+  color: var(--muted);
+  font-size: 0.85rem;
+  white-space: pre-line;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-height: 2.6em;
+}
+
+.annotation-links .delete-form {
+  position: absolute;
+  top: 0.2rem;
+  right: 0.2rem;
+}
+
+.link-button {
+  padding: 0 0.35rem;
+  color: var(--muted);
+  font-size: 1.1rem;
+  line-height: 1.2;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  color: var(--error);
+  background: var(--sidebar-bg);
+}
+
+/* Highlights of saved marks: the CSS Custom Highlight API, or <mark> as a fallback. */
+::highlight(sg-mark) {
+  background-color: var(--mark-bg);
+}
+
+mark.sg-mark {
+  color: inherit;
+  background-color: var(--mark-bg);
+}
+
+:root {
+  --mark-bg: rgb(255 212 0 / 0.35);
+}
+
+.mark-popup {
+  position: absolute;
+  z-index: 30;
+  padding: 0.25rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.2);
+}
+
+.mark-popup.form {
+  width: min(22rem, calc(100vw - 2rem));
+  padding: 0.6rem;
+}
+
+.mark-popup p {
+  margin: 0 0 0.4rem;
+  font-size: 0.85rem;
+}
+
+.mark-popup textarea {
+  box-sizing: border-box;
+  width: 100%;
+  font: inherit;
+  color: var(--fg);
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.mark-popup .actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+}
+
+.mark-popup button,
+.reader-toast {
+  font: inherit;
+}
+
+.mark-popup button {
+  padding: 0.25rem 0.8rem;
+  color: var(--fg);
+  background: var(--sidebar-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.mark-popup button[type="submit"] {
+  color: #ffffff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.mark-popup button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.reader-toast {
+  position: fixed;
+  bottom: 1.5rem;
+  left: 50%;
+  z-index: 40;
+  padding: 0.5rem 1rem;
+  color: var(--bg);
+  background: var(--fg);
+  border-radius: var(--radius);
+  transform: translateX(-50%);
+}
+
+.reader-toast[hidden] {
+  display: none;
+}

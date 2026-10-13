@@ -56,7 +56,22 @@ part_size = 50000
 # Longest part in characters, in every mode: a longer part (e.g. a book without
 # chapters) is cut into equal pieces at block boundaries. 0 = no limit.
 max_part_size = 300000
+# Remember where you stopped reading each book ("Continue reading" on the book page).
+remember_position = true
+
+[annotations]
+# Longest text that can be marked, in characters (about 3-4 book pages).
+max_text_length = 10000
+# Longest note, in characters.
+max_note_length = 10000
+# Days to keep the marks of a book that was removed from the library, in case it
+# comes back (a moved folder, an unmounted drive); 0 = delete at once.
+removed_book_retention_days = 30
 "#;
+
+/// The largest accepted value of `annotations.max_text_length` and
+/// `annotations.max_note_length`.
+pub const MAX_ANNOTATION_LENGTH: u32 = 1_000_000;
 
 /// The complete configuration of a library.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,6 +85,8 @@ pub struct Config {
     pub library: LibraryConfig,
     /// The `[reader]` section.
     pub reader: ReaderConfig,
+    /// The `[annotations]` section.
+    pub annotations: AnnotationsConfig,
 }
 
 /// The `[server]` section: where and how the web server listens.
@@ -132,6 +149,8 @@ pub struct ReaderConfig {
     /// The longest part in characters, in every mode; longer parts are cut into equal
     /// pieces at block boundaries. 0 means no limit.
     pub max_part_size: u32,
+    /// Whether the reading position of each book is saved and offered on the book card.
+    pub remember_position: bool,
 }
 
 impl Default for ReaderConfig {
@@ -141,6 +160,33 @@ impl Default for ReaderConfig {
             section_depth: 1,
             part_size: 50_000,
             max_part_size: 300_000,
+            remember_position: true,
+        }
+    }
+}
+
+/// The `[annotations]` section: limits of marks and notes, and cleanup.
+///
+/// Lengths are in Unicode code points. They apply when an annotation is created or its
+/// note edited; lowering them never touches stored annotations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AnnotationsConfig {
+    /// The longest text that can be marked.
+    pub max_text_length: u32,
+    /// The longest note.
+    pub max_note_length: u32,
+    /// Days to keep the annotations of a book removed from the library; 0 deletes them
+    /// at the first cleanup.
+    pub removed_book_retention_days: u32,
+}
+
+impl Default for AnnotationsConfig {
+    fn default() -> Self {
+        Self {
+            max_text_length: 10_000,
+            max_note_length: 10_000,
+            removed_book_retention_days: 30,
         }
     }
 }
@@ -316,6 +362,23 @@ impl Config {
                 "must be greater than 0",
             ));
         }
+        for (key, value) in [
+            (
+                "annotations.max_text_length",
+                self.annotations.max_text_length,
+            ),
+            (
+                "annotations.max_note_length",
+                self.annotations.max_note_length,
+            ),
+        ] {
+            if !(1..=MAX_ANNOTATION_LENGTH).contains(&value) {
+                return Err(ConfigError::new(
+                    key,
+                    format_args!("must be between 1 and {MAX_ANNOTATION_LENGTH}"),
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -449,6 +512,14 @@ mod tests {
         );
         assert_eq!(invalid_key("[reader]\npart_size = 0\n"), "reader.part_size");
         assert_eq!(
+            invalid_key("[annotations]\nmax_text_length = 0\n"),
+            "annotations.max_text_length"
+        );
+        assert_eq!(
+            invalid_key("[annotations]\nmax_note_length = 1000001\n"),
+            "annotations.max_note_length"
+        );
+        assert_eq!(
             invalid_key("[server]\nallowed_hosts = [\"\"]\n"),
             "server.allowed_hosts"
         );
@@ -462,6 +533,21 @@ mod tests {
             "invalid config file config.toml: `server.port` must be between 1 and 65535 \
              (a fixed port is required)"
         );
+    }
+
+    #[test]
+    fn annotation_limits_accept_the_whole_range() {
+        let (config, _) = parse(
+            "[annotations]\nmax_text_length = 1\nmax_note_length = 1000000\n\
+             removed_book_retention_days = 0\n\n[reader]\nremember_position = false\n",
+        )
+        .unwrap();
+        assert_eq!(config.annotations.max_text_length, 1);
+        assert_eq!(config.annotations.max_note_length, 1_000_000);
+        assert_eq!(config.annotations.removed_book_retention_days, 0);
+        assert!(!config.reader.remember_position);
+        let err = parse("[annotations]\nremoved_book_retention_days = -1\n").unwrap_err();
+        assert!(matches!(err, Error::ConfigSyntax { .. }), "{err:?}");
     }
 
     #[test]

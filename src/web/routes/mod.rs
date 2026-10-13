@@ -15,6 +15,7 @@ use super::Urls;
 use crate::storage::books::{BookStatus, BookSummary};
 use crate::storage::folders::FolderPath;
 
+pub(crate) mod annotations;
 pub(crate) mod book;
 pub(crate) mod library;
 pub(crate) mod read;
@@ -41,6 +42,9 @@ pub(crate) struct Params {
     part: Option<String>,
     /// A block id to open (reading mode), e.g. `b12`.
     at: Option<String>,
+    /// `mark` when the page is opened from a bookmark or mark (reading mode): the
+    /// reading position is not saved for this page view.
+    from: Option<String>,
 }
 
 impl Params {

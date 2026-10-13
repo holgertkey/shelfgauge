@@ -1,10 +1,10 @@
-# shelfgauge v0.5.0
+# shelfgauge v0.6.0
 
 A single-binary tool that indexes a folder tree of ebooks — FB2 files, plain or inside
 `.zip` archives — into a local SQLite database and serves a browsable, searchable web
 library on `localhost`, with an in-browser reader.
 
-**Current version:** 0.5.0
+**Current version:** 0.6.0
 
 ## Status
 
@@ -36,6 +36,7 @@ cargo build --release
 ```sh
 shelfgauge [PATH]        # serve the library at PATH (default: current directory)
 shelfgauge scan [PATH]   # update the library index and exit
+shelfgauge annotations export [PATH]   # rewrite the Markdown export of bookmarks and marks
 ```
 
 Options: `--port <PORT>`, `--bind <ADDR>`, `--no-scan` (serve without scanning first),
@@ -64,8 +65,35 @@ scan keeps what it has indexed so far, and the next scan completes it.
   width is remembered per browser.
 - Themes: auto (system), light, dark, sepia, navy.
 - Keys: `/` or `s` search, `t` next theme, `m` sidebar mode, `←`/`→` previous/next part
-  while reading, `Esc` leave the search field.
+  and `b` bookmark while reading, `Esc` leave the search field.
 - **Rescan** (top bar) updates the index while the library stays usable.
+
+### Bookmarks, marks and the reading position
+
+- While reading, select text and choose **Mark** to keep it as a quote, with an optional
+  note. Press `b` (or the bookmark button in the top bar) to bookmark the place at the
+  top of the screen. Saved marks are highlighted in the text.
+- The reader's sidebar has three tabs: **Contents**, **Bookmarks** and **Marks**. A book
+  card lists its bookmarks and marks too, where notes can be edited and entries deleted.
+  A mark's text cannot be changed; a selection lies within one part of the book.
+- The reading position is saved as you read (after you stay at a place for a few
+  seconds; never in footnotes, and not while you look at a bookmark or mark). The book
+  card then offers **Continue reading** and shows how much you have read.
+- Bookmarks and marks belong to the book's content: they survive rescans, moves and
+  renames. If a book file is replaced (e.g. a corrected edition), they are moved to it
+  when it is opened and most of the quotes are found in it; quotes that are not found
+  are marked "place not found". Marks of a book removed from the library are deleted
+  after `annotations.removed_book_retention_days`, unless it comes back.
+- Everything is stored in `.shelfgauge/userdata.sqlite`. Unlike the rest of
+  `.shelfgauge/`, it cannot be rebuilt by rescanning: **back it up** (copy it while
+  shelfgauge is not running).
+- For each book with bookmarks or marks, a Markdown file is kept up to date in
+  `.shelfgauge/annotations/` (`<Authors> — <Title> (<key>).md`): bookmarks, then the
+  quotes by chapter with their notes and links back into the reader. The export is
+  **one way**: edits to these files are overwritten and never read back.
+  `shelfgauge annotations export [PATH]` rewrites all of them (e.g. after restoring
+  `userdata.sqlite` from a backup) and removes stale generated files; other files in the
+  folder are left alone.
 
 Books whose XML has unbalanced tags (e.g. a stray `</section>`) are repaired when they
 are parsed; books that cannot be read are listed with the reason on their card.
@@ -88,6 +116,10 @@ program with a message naming the key. `--port` and `--bind` override the file.
 | `reader.section_depth` | `1` | For `"section"`: split at sections down to this depth (1 = top level). Very short untitled parts (a copyright notice, an epigraph) join the next part. |
 | `reader.part_size` | `50000` | For `"size"`: approximate number of characters per part (cut between whole blocks). |
 | `reader.max_part_size` | `300000` | The longest part in characters, in every mode: a longer part (e.g. a book without chapters) is cut into equal pieces between whole blocks, titled "Title (1/3)", ... `0` disables the limit. |
+| `reader.remember_position` | `true` | Remember where you stopped reading each book: the book card offers "Continue reading" and shows the progress. `false` stops saving and hides both (saved positions are kept). |
+| `annotations.max_text_length` | `10000` | The longest text that can be marked, in characters (about 3–4 book pages); `1`–`1000000`. |
+| `annotations.max_note_length` | `10000` | The longest note, in characters; `1`–`1000000`. Lowering a limit never changes saved marks. |
+| `annotations.removed_book_retention_days` | `30` | Days to keep the bookmarks and marks of a book that was removed from the library, in case it comes back (a moved folder, an unmounted drive); `0` deletes them at the next scan. |
 
 ## Remote access
 
@@ -136,4 +168,4 @@ MIT — see [LICENSE](LICENSE).
 
 ---
 
-_shelfgauge v0.5.0 — MIT License_
+_shelfgauge v0.6.0 — MIT License_

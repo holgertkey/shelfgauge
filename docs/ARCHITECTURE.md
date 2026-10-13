@@ -1,8 +1,7 @@
 # shelfgauge — Architecture
 
 > Status: v1 implemented (scanner, storage, web server, library and reading mode,
-> hardening). Annotations are designed (planned for 0.6.0), not built yet. The V2
-> offline reader below is not.
+> hardening) and annotations (0.6.0). The V2 offline reader below is not.
 
 `shelfgauge` is a single-binary Rust app that indexes a directory tree of ebook files (FB2 in
 v1, plain files and `.zip` archives with any number of books inside) into a local SQLite DB
@@ -116,7 +115,10 @@ Key design points to keep in mind when implementing:
     links address a block (`?at=<block-id>`) and the server resolves the part. Cached
     `BookContent` carries a `parser_version`; bumping it invalidates the cache.
 
-## Annotations (planned for 0.6.0)
+## Annotations (0.6.0)
+
+Code: `src/annotations/` (`text`, `anchor`, `store`, `export`, `attach`),
+`src/web/routes/annotations.rs`, `assets/reader.js`/`reader.css`.
 
 - **One entity**, the annotation (UI: "Mark"), replaces bookmarks, notes and quotes: the
   **selected text is immutable** (it is the quote and the anchor's fingerprint), a
@@ -164,6 +166,33 @@ Key design points to keep in mind when implementing:
   write wins. The book card offers
   "Continue reading" / "Read from the start" and shows progress; an explicit `?at=`
   always wins. `[reader] remember_position` turns it off.
+- **Implementation notes.**
+  - Offsets count code points of a block's *rendered text*, which must equal the
+    browser's `textContent` of `id="b<n>"`: containers concatenate their children with
+    no separator, tables their cells, an image contributes only a non-blank caption
+    (`annotations::text::rendered_text`, pinned by a test that renders books and
+    compares). Selections are anchored in leaf blocks; quotes spanning blocks join them
+    with `\n`. The client only sends block ids and offsets (converting UTF-16 to code
+    points); the server derives `text`, `prefix`/`suffix` (32 code points) and the
+    section title, and checks the limits and that the selection lies within one part.
+  - The fingerprint search looks for `prefix + text + suffix` (or, for quotes of at
+    least 16 code points, the text alone) and takes the match nearest the old block; a
+    bookmark is found as a leaf block starting with its `suffix` (64 code points).
+  - `userdata.sqlite` is one connection behind a mutex, used on blocking threads; the
+    web handlers combine it with a pooled index connection. Removed-book cleanup runs
+    as a hook of `BackgroundScan` (and after `shelfgauge scan`) only after complete,
+    uncancelled scans; it also refreshes export files (renamed books, new orphans).
+    Export files are named `<Authors> — <Title> (<8 hex of xxh3(key)>).md` and are not
+    rewritten when unchanged.
+  - Verified: the CSS Custom Highlight API is Baseline 2025 (Chrome, Firefox, Safari);
+    without it, `reader.js` wraps text nodes in `<mark>` (offsets are unaffected). A
+    same-origin `fetch` with `keepalive` on `pagehide` is a normal POST and carries
+    `Origin` (Fetch standard, "append a request `Origin` header"; our
+    `Referrer-Policy: same-origin` does not null it), so it passes the Origin check.
+  - Write routes: `POST /book/{id}/annotations` (JSON), `/annotation/{id}/note` and
+    `/annotation/{id}/delete` (JSON for the reader, forms with a local `back` URL and
+    303 for the card), `/book/{id}/position` (JSON); request bodies are limited by
+    `web::write_body_limit` (derived from `max_note_length`).
 - Reader settings (font from system stacks, size, background, width, line height,
   alignment) are purely client-side (CSS custom properties + `localStorage`). The reader
   is not a separate crate.
@@ -183,8 +212,9 @@ v1 binds to `127.0.0.1` only, but is built to allow remote access later:
   `null` Origin is rejected.
 - If `bind` is not a loopback address and no authentication is configured, the program
   refuses to start.
-- Routes are split into a *read* group and an *admin* group (scan, settings), with an
-  auth middleware slot; the admin group may stay localhost-only.
+- Routes are split into a *read* group, an *admin* group (scan, settings) and a *user
+  writes* group (annotations, reading position), with an auth middleware slot; the admin
+  group may stay localhost-only, user writes need authentication for remote access.
 - All routes and URLs are built with a configurable `base_path` (reverse proxy on a
   subpath) through one helper (`web::Urls`); `base_path` is limited to unreserved URL
   characters so it is safe in router paths and links.

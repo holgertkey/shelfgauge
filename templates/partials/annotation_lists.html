@@ -1,0 +1,30 @@
+<div class="annotation-lists">
+<section class="tab-panel" id="tab-bookmarks" data-tab="bookmarks" aria-label="Bookmarks">
+  <h2 class="panel-title">Bookmarks</h2>
+  {%- if lists.bookmarks.is_empty() %}
+  <p class="hint">No bookmarks yet. Press <kbd>B</kbd> or the bookmark button to remember the place you are reading.</p>
+  {%- else %}
+  <ul class="annotation-links">
+    {%- for item in lists.bookmarks %}
+    <li><a href="{{ item.href }}" data-mark-link>{{ item.label }}</a>{% if item.lost %} <span class="badge" title="The book has changed; this place was not found in it.">place not found</span>{% endif %}
+      <form method="post" action="{{ item.delete_action }}" class="delete-form"><input type="hidden" name="back" value="{{ lists.back }}"><button type="submit" class="link-button" title="Delete this bookmark" aria-label="Delete">×</button></form></li>
+    {%- endfor %}
+  </ul>
+  {%- endif %}
+</section>
+<section class="tab-panel" id="tab-marks" data-tab="marks" aria-label="Marks">
+  <h2 class="panel-title">Marks</h2>
+  {%- if lists.marks.is_empty() %}
+  <p class="hint">No marks yet. Select text in the book and choose “Mark” to keep a quote, with a note if you like.</p>
+  {%- else %}
+  <ul class="annotation-links">
+    {%- for item in lists.marks %}
+    <li class="mark-item" data-id="{{ item.id }}" data-start-block="{{ item.start_block }}" data-start-offset="{{ item.start_offset }}" data-end-block="{{ item.end_block }}" data-end-offset="{{ item.end_offset }}" data-text="{{ item.text }}" data-prefix="{{ item.prefix }}" data-suffix="{{ item.suffix }}"{% if item.lost %} data-lost{% endif %}>
+      <a href="{{ item.href }}" data-mark-link>{{ item.label }}</a>{% if item.lost %} <span class="badge" title="The book has changed; this text was not found in it.">place not found</span>{% endif %}
+      {%- if !item.note.is_empty() && item.note != item.label %}<span class="note-preview">{{ item.note }}</span>{% endif %}
+      <form method="post" action="{{ item.delete_action }}" class="delete-form"><input type="hidden" name="back" value="{{ lists.back }}"><button type="submit" class="link-button" title="Delete this mark" aria-label="Delete">×</button></form></li>
+    {%- endfor %}
+  </ul>
+  {%- endif %}
+</section>
+</div>
