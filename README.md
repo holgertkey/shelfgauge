@@ -79,6 +79,10 @@ scan keeps what it has indexed so far, and the next scan completes it.
 - The reading position is saved as you read (after you stay at a place for a few
   seconds; never in footnotes, and not while you look at a bookmark or quote). The book
   card then offers **Continue reading** and shows how much you have read.
+- The library page lists the books you are **currently reading** (unfinished, most
+  recently read first) with a **Continue** link. The ✓ icon marks a book as finished;
+  **Clear list** empties the list but keeps where you stopped, and a book comes back
+  once you read it again.
 - Bookmarks and quotes belong to the book's content: they survive rescans, moves and
   renames. If a book file is replaced (e.g. a corrected edition), they are moved to it
   when it is opened and most of the quotes are found in it; quotes that are not found
@@ -112,6 +116,7 @@ program with a message naming the key. `--port` and `--bind` override the file.
 | `server.base_path` | `"/"` | URL prefix when served on a sub-path of a reverse proxy, e.g. `"/books"` (letters, digits, `-`, `.`, `_`, `~`, `/`). |
 | `scan.exclude` | `[]` | Gitignore-style patterns of paths not to index, in addition to `.shelfgauge/`. |
 | `library.page_size` | `100` | Entries per page of the author list, folders and search results. |
+| `library.reading_list_size` | `10` | Books shown under "Currently reading" on the library page (most recently read first); `0` hides the list. |
 | `reader.split` | `"section"` | How a book is split into parts: `"none"` (one part), `"section"` or `"size"`. |
 | `reader.section_depth` | `1` | For `"section"`: split at sections down to this depth (1 = top level). Very short untitled parts (a copyright notice, an epigraph) join the next part. |
 | `reader.part_size` | `50000` | For `"size"`: approximate number of characters per part (cut between whole blocks). |

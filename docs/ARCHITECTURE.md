@@ -167,6 +167,11 @@ Code: `src/annotations/` (`text`, `anchor`, `store`, `export`, `attach`),
   write wins. The book card offers
   "Continue reading" / "Read from the start" and shows progress; an explicit `?at=`
   always wins. `[reader] remember_position` turns it off.
+- **Currently reading** (library page): the unfinished books with a position, most
+  recently read first, up to `library.reading_list_size`, only books whose content key
+  is live in the index. "Mark as finished" sets the progress to 100 %; "Clear list"
+  sets `reading_positions.dismissed_at` (userdata schema v2) and keeps the positions;
+  the next saved position (reading again, not re-attaching) clears it.
 - **Implementation notes.**
   - Offsets count code points of a block's *rendered text*, which must equal the
     browser's `textContent` of `id="b<n>"`: containers concatenate their children with

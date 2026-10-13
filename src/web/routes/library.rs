@@ -23,6 +23,8 @@ struct HomePage {
     root: String,
     books: u64,
     authors: u64,
+    /// "Currently reading".
+    reading: Vec<super::annotations::ReadingItem>,
 }
 
 /// `GET /`: the library overview.
@@ -41,11 +43,13 @@ pub(crate) async fn home(
             ))
         })
         .await?;
+    let reading = state.user_db(super::annotations::reading_list).await?;
     render(&HomePage {
         layout: Layout::new(&state, "Library", sidebar),
         root: state.library().root().display().to_string(),
         books,
         authors,
+        reading,
     })
 }
 

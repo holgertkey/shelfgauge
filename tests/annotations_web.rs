@@ -978,3 +978,116 @@ async fn export_all_rewrites_files_and_removes_only_marked_ones() {
     );
     assert_eq!(lib.export_files(), expected);
 }
+
+#[tokio::test]
+async fn currently_reading_list() {
+    let lib = TestLibrary::new();
+    for name in ["a", "b", "c"] {
+        lib.write(
+            &format!("{name}.fb2"),
+            &book(&format!("Book {name}"), "Writer", 2, false, &[]),
+        );
+    }
+    lib.write("gone.fb2", &book("Book gone", "Writer", 2, false, &[]));
+    lib.scan();
+    let ids: Vec<i64> = ["a", "b", "c", "gone"]
+        .iter()
+        .map(|n| lib.id_of(&format!("{n}.fb2")))
+        .collect();
+    let server = lib.server(|c| c.library.reading_list_size = 2);
+    let home = server.ok("/").await;
+    assert!(!home.contains("Currently reading"), "no positions, no list");
+
+    // Positions through the route, then made older or newer in the store.
+    let p = server.block_of(ids[0], &para(1, 2)).await;
+    for (i, at) in ids.iter().zip([10, 30, 20, 40]) {
+        let reply = server
+            .json(
+                &format!("/book/{i}/position"),
+                serde_json::json!({"block": p}),
+            )
+            .await;
+        assert_eq!(reply.status, StatusCode::NO_CONTENT);
+        lib.userdata
+            .lock()
+            .execute(
+                "UPDATE reading_positions SET updated_at = ?2 WHERE book_key = ?1",
+                rusqlite::params![lib.key_of(*i), at],
+            )
+            .unwrap();
+    }
+    std::fs::remove_file(lib.path("gone.fb2")).unwrap();
+    lib.scan_only(); // Removed from the index (its position is not cleaned up yet).
+
+    let home = server.ok("/").await;
+    assert!(home.contains("Currently reading"), "{home}");
+    let at = |title: &str| home.find(&format!(">{title}</a>"));
+    // Most recent first, limited to 2; the removed book is not listed.
+    assert!(at("Book b").unwrap() < at("Book c").unwrap(), "{home}");
+    assert!(at("Book a").is_none() && at("Book gone").is_none());
+    assert!(home.contains(&format!(
+        "href=\"/book/{}/read?at={p}\">Continue</a>",
+        ids[1]
+    )));
+    assert!(
+        home.contains("read 1") && home.contains("1970-01-01"),
+        "{home}"
+    );
+
+    // Mark as finished: off the list, "finished" on the card.
+    let reply = server
+        .form(&format!("/book/{}/finished", ids[1]), &[])
+        .await;
+    assert_eq!(reply.status, StatusCode::SEE_OTHER);
+    assert_eq!(reply.location(), "/");
+    let home = server.ok("/").await;
+    assert!(
+        !home.contains(">Book b</a>") && home.contains(">Book a</a>"),
+        "{home}"
+    );
+    assert!(
+        server
+            .ok(&format!("/book/{}", ids[1]))
+            .await
+            .contains("finished")
+    );
+
+    // Clear the list: the positions stay on the cards.
+    let reply = server.form("/reading/clear", &[]).await;
+    assert_eq!(reply.status, StatusCode::SEE_OTHER);
+    assert!(!server.ok("/").await.contains("Currently reading"));
+    let card = server.ok(&format!("/book/{}", ids[2])).await;
+    assert!(card.contains("Continue reading"), "{card}");
+    // Reading again puts the book back.
+    let p2 = server.block_of(ids[2], &para(2, 1)).await;
+    server
+        .json(
+            &format!("/book/{}/position", ids[2]),
+            serde_json::json!({"block": p2}),
+        )
+        .await;
+    assert!(server.ok("/").await.contains(">Book c</a>"));
+
+    // Writes need the Origin check.
+    for uri in [
+        format!("/book/{}/finished", ids[2]),
+        "/reading/clear".to_owned(),
+    ] {
+        let reply = server
+            .post(
+                &uri,
+                "application/x-www-form-urlencoded",
+                String::new(),
+                None,
+            )
+            .await;
+        assert_eq!(reply.status, StatusCode::FORBIDDEN, "{uri}");
+    }
+    assert!(server.ok("/").await.contains(">Book c</a>"));
+
+    // Turned off: by size 0 or by not remembering positions.
+    let none = lib.server(|c| c.library.reading_list_size = 0);
+    assert!(!none.ok("/").await.contains("Currently reading"));
+    let off = lib.server(|c| c.reader.remember_position = false);
+    assert!(!off.ok("/").await.contains("Currently reading"));
+}

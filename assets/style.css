@@ -811,6 +811,77 @@ button.small.primary {
   display: none;
 }
 
+/* ---------- "Currently reading" on the library page ---------- */
+
+.reading-list {
+  margin: 1.5rem 0;
+}
+
+.reading-list .section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.reading-list h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.15rem;
+}
+
+.text-button {
+  padding: 0;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.text-button:hover {
+  text-decoration: underline;
+}
+
+.reading-list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--border);
+}
+
+.reading-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.reading-book {
+  flex: 1;
+  min-width: 0;
+}
+
+.reading-book .title {
+  font-weight: 600;
+}
+
+.reading-meta {
+  font-size: 0.85rem;
+}
+
+.reading-list .icon-button {
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.reading-list li:hover .icon-button,
+.reading-list .icon-button:focus-visible {
+  opacity: 1;
+}
+
 /* ---------- Reading mode ---------- */
 
 .toc-book {

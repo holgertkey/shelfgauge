@@ -44,6 +44,8 @@ exclude = []
 [library]
 # Number of entries per sidebar/list page.
 page_size = 100
+# Books shown under "Currently reading" on the library page; 0 = no list.
+reading_list_size = 10
 
 [reader]
 # How a book is split into parts for reading: "none", "section" or "size".
@@ -128,11 +130,16 @@ pub struct ScanConfig {
 pub struct LibraryConfig {
     /// Number of entries per sidebar/list page.
     pub page_size: u32,
+    /// Books shown under "Currently reading" on the library page; 0 hides the list.
+    pub reading_list_size: u32,
 }
 
 impl Default for LibraryConfig {
     fn default() -> Self {
-        Self { page_size: 100 }
+        Self {
+            page_size: 100,
+            reading_list_size: 10,
+        }
     }
 }
 

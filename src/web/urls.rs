@@ -204,6 +204,16 @@ impl Urls {
         ))
     }
 
+    /// Marks a book as finished, taking it off the "Currently reading" list (`POST`).
+    pub fn finished(&self, id: i64) -> String {
+        self.path(&format!("/book/{id}/finished"))
+    }
+
+    /// Clears the "Currently reading" list (`POST`).
+    pub fn clear_reading(&self) -> String {
+        self.path("/reading/clear")
+    }
+
     /// Saves a book's reading position (`POST`, JSON).
     pub fn position(&self, id: i64) -> String {
         self.path(&format!("/book/{id}/position"))

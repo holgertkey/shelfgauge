@@ -91,6 +91,7 @@ struct Inner {
     pool: ReadPool,
     scan: Arc<BackgroundScan>,
     page_size: u32,
+    reading_list_size: u32,
     reader: ReaderConfig,
     annotations: AnnotationsConfig,
     userdata: Arc<UserData>,
@@ -135,6 +136,7 @@ impl AppState {
             pool,
             scan,
             page_size: config.library.page_size,
+            reading_list_size: config.library.reading_list_size,
             reader: config.reader.clone(),
             registry: Registry::with_builtin_formats(),
             recent: Mutex::new(VecDeque::new()),
@@ -183,6 +185,11 @@ impl AppState {
     /// The background scan.
     pub fn scan(&self) -> &BackgroundScan {
         &self.0.scan
+    }
+
+    /// Books on the "Currently reading" list (`library.reading_list_size`).
+    pub fn reading_list_size(&self) -> u32 {
+        self.0.reading_list_size
     }
 
     /// Entries per list page (`library.page_size`).
@@ -357,6 +364,14 @@ pub fn router(state: AppState) -> Router {
         .route(
             &urls.path("/book/{id}/position"),
             post(routes::annotations::position),
+        )
+        .route(
+            &urls.path("/book/{id}/finished"),
+            post(routes::annotations::finished),
+        )
+        .route(
+            &urls.path("/reading/clear"),
+            post(routes::annotations::clear_reading),
         )
         .route_layer(auth())
         .layer(DefaultBodyLimit::max(write_body_limit(state.annotations())));

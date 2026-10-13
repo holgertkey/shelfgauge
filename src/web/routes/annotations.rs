@@ -518,6 +518,84 @@ pub(crate) async fn position(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// `POST /book/{id}/finished` (form): marks the book as finished, which takes it off
+/// the "Currently reading" list; back to the library page.
+pub(crate) async fn finished(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Redirect, AppError> {
+    let id = parse_id(&id)?;
+    state
+        .user_db(move |state, index| {
+            let (_, snapshot) = readable_book(index, id)?;
+            store::mark_finished(&state.userdata().lock(), &snapshot.key, now())?;
+            Ok(())
+        })
+        .await?;
+    Ok(Redirect::to(&state.urls().home()))
+}
+
+/// `POST /reading/clear` (form): empties the "Currently reading" list (the positions
+/// are kept); back to the library page.
+pub(crate) async fn clear_reading(State(state): State<AppState>) -> Result<Redirect, AppError> {
+    state
+        .user_db(move |state, _| {
+            store::dismiss_all(&state.userdata().lock(), now())?;
+            Ok(())
+        })
+        .await?;
+    Ok(Redirect::to(&state.urls().home()))
+}
+
+/// A book on the "Currently reading" list.
+pub(crate) struct ReadingItem {
+    pub(crate) title: String,
+    pub(crate) authors: String,
+    pub(crate) card_href: String,
+    pub(crate) continue_href: String,
+    pub(crate) finished_action: String,
+    pub(crate) progress: String,
+    pub(crate) date: String,
+}
+
+/// The "Currently reading" list: up to `reading_list_size` books with a live position
+/// in a book that is in the library (by its content key), most recently read first.
+pub(crate) fn reading_list(
+    state: &AppState,
+    index: &Connection,
+) -> Result<Vec<ReadingItem>, AppError> {
+    let limit = state.reading_list_size() as usize;
+    if limit == 0 || !state.reader().remember_position {
+        return Ok(Vec::new());
+    }
+    let positions = store::reading_list(&state.userdata().lock())?;
+    let urls = state.urls();
+    let mut items = Vec::new();
+    for position in positions {
+        let Some(book) = crate::storage::books::live_books_by_key(index, &position.book.key)?
+            .into_iter()
+            .next()
+            .and_then(|id| book_by_id(index, id).transpose())
+            .transpose()?
+        else {
+            continue; // Removed, or replaced and not re-attached yet.
+        };
+        items.push(ReadingItem {
+            title: book.title.clone(),
+            authors: attach::authors(&book),
+            card_href: urls.book(book.id),
+            continue_href: urls.read_at(book.id, position.block),
+            finished_action: urls.finished(book.id),
+            progress: progress_label(position.progress),
+            date: super::date(position.updated_at),
+        });
+        if items.len() == limit {
+            break;
+        }
+    }
+    Ok(items)
+}
+
 /// The reader's bookmark and mark lists (an HTML fragment, also included in the read
 /// page).
 #[derive(Template)]

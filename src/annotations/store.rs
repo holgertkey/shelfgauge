@@ -22,7 +22,7 @@ use crate::storage::{StorageError, migrations, open_wal};
 
 /// Schema migrations of the user-data database; index `i` upgrades version `i` to
 /// `i + 1`. Append only: user data cannot be rebuilt.
-const MIGRATIONS: &[&str] = &[V1];
+const MIGRATIONS: &[&str] = &[V1, V2];
 
 /// Version 1: annotations and reading positions.
 ///
@@ -67,6 +67,12 @@ CREATE TABLE reading_positions (
     deleted_at     INTEGER,
     deleted_reason TEXT CHECK (deleted_reason IN ('book_removed'))
 );
+"#;
+
+/// Version 2: `reading_positions.dismissed_at`, set when a book is removed from the
+/// "Currently reading" list; the next saved position clears it.
+const V2: &str = r#"
+ALTER TABLE reading_positions ADD COLUMN dismissed_at INTEGER;
 "#;
 
 /// The schema version this build creates and understands.
@@ -416,7 +422,8 @@ pub struct ReadingPosition {
     pub updated_at: i64,
 }
 
-/// Saves a reading position; the latest `updated_at` wins.
+/// Saves a reading position; the latest `updated_at` wins. A saved position puts the
+/// book back on the "Currently reading" list.
 pub fn save_position(conn: &Connection, position: &ReadingPosition) -> Result<(), StorageError> {
     conn.execute(
         "INSERT INTO reading_positions
@@ -427,7 +434,8 @@ pub fn save_position(conn: &Connection, position: &ReadingPosition) -> Result<()
              book_id = excluded.book_id, block = excluded.block, offset = 0,
              suffix = excluded.suffix, progress = excluded.progress,
              book_title = excluded.book_title, book_authors = excluded.book_authors,
-             updated_at = excluded.updated_at, deleted_at = NULL, deleted_reason = NULL
+             updated_at = excluded.updated_at, deleted_at = NULL, deleted_reason = NULL,
+             dismissed_at = NULL
          WHERE excluded.updated_at >= reading_positions.updated_at
             OR reading_positions.deleted_at IS NOT NULL",
         params![
@@ -452,22 +460,24 @@ pub fn position(conn: &Connection, key: &[u8]) -> Result<Option<ReadingPosition>
                     updated_at
                FROM reading_positions WHERE book_key = ?1 AND deleted_at IS NULL",
             [key],
-            |row| {
-                Ok(ReadingPosition {
-                    book: BookSnapshot {
-                        key: row.get(0)?,
-                        id: row.get(1)?,
-                        title: row.get(2)?,
-                        authors: row.get(3)?,
-                    },
-                    block: block(row.get(4)?),
-                    suffix: row.get(5)?,
-                    progress: row.get(6)?,
-                    updated_at: row.get(7)?,
-                })
-            },
+            position_row,
         )
         .optional()?)
+}
+
+fn position_row(row: &Row<'_>) -> rusqlite::Result<ReadingPosition> {
+    Ok(ReadingPosition {
+        book: BookSnapshot {
+            key: row.get(0)?,
+            id: row.get(1)?,
+            title: row.get(2)?,
+            authors: row.get(3)?,
+        },
+        block: block(row.get(4)?),
+        suffix: row.get(5)?,
+        progress: row.get(6)?,
+        updated_at: row.get(7)?,
+    })
 }
 
 /// Moves a group's reading position to another book (re-attaching), unless that book
@@ -482,6 +492,11 @@ pub fn move_position(
     let Some(old) = position(conn, from)? else {
         return Ok(());
     };
+    let dismissed: Option<i64> = conn.query_row(
+        "SELECT dismissed_at FROM reading_positions WHERE book_key = ?1",
+        [from],
+        |row| row.get(0),
+    )?;
     conn.execute("DELETE FROM reading_positions WHERE book_key = ?1", [from])?;
     save_position(
         conn,
@@ -492,7 +507,46 @@ pub fn move_position(
             progress,
             updated_at: old.updated_at,
         },
-    )
+    )?;
+    // Moving is not reading: a dismissed book stays off the list.
+    conn.execute(
+        "UPDATE reading_positions SET dismissed_at = ?2 WHERE book_key = ?1",
+        params![to.key, dismissed],
+    )?;
+    Ok(())
+}
+
+/// The "Currently reading" list: live positions of unfinished books not dismissed from
+/// the list, most recently read first.
+pub fn reading_list(conn: &Connection) -> Result<Vec<ReadingPosition>, StorageError> {
+    let mut stmt = conn.prepare(
+        "SELECT book_key, book_id, book_title, book_authors, block, suffix, progress,
+                updated_at
+           FROM reading_positions
+          WHERE deleted_at IS NULL AND dismissed_at IS NULL AND progress < 1000
+          ORDER BY updated_at DESC, book_key",
+    )?;
+    let rows = stmt.query_map([], position_row)?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// Removes every book from the "Currently reading" list; the positions are kept.
+pub fn dismiss_all(conn: &Connection, now: i64) -> Result<u64, StorageError> {
+    Ok(conn.execute(
+        "UPDATE reading_positions SET dismissed_at = ?1
+          WHERE dismissed_at IS NULL AND deleted_at IS NULL",
+        [now],
+    )? as u64)
+}
+
+/// Marks a book as finished (progress 1000, which takes it off the "Currently
+/// reading" list); its position is kept. Returns whether the book had a position.
+pub fn mark_finished(conn: &Connection, key: &[u8], now: i64) -> Result<bool, StorageError> {
+    Ok(conn.execute(
+        "UPDATE reading_positions SET progress = 1000, updated_at = ?2
+          WHERE book_key = ?1 AND deleted_at IS NULL",
+        params![key, now],
+    )? > 0)
 }
 
 #[cfg(test)]
@@ -655,6 +709,59 @@ mod tests {
             (moved.block, moved.progress, moved.updated_at),
             (b(6), 300, 20)
         );
+    }
+
+    #[test]
+    fn reading_list_dismiss_and_finish() {
+        let data = UserData::open_in_memory().unwrap();
+        let conn = data.lock();
+        save_position(&conn, &position_at(b"a", 5, 10)).unwrap();
+        save_position(&conn, &position_at(b"b", 5, 30)).unwrap();
+        save_position(&conn, &position_at(b"c", 5, 20)).unwrap();
+        let keys = |conn: &Connection| -> Vec<Vec<u8>> {
+            reading_list(conn)
+                .unwrap()
+                .into_iter()
+                .map(|p| p.book.key)
+                .collect()
+        };
+        assert_eq!(keys(&conn), [b"b".to_vec(), b"c".to_vec(), b"a".to_vec()]);
+
+        assert!(mark_finished(&conn, b"c", 40).unwrap());
+        assert!(!mark_finished(&conn, b"x", 40).unwrap());
+        assert_eq!(position(&conn, b"c").unwrap().unwrap().progress, 1000);
+        assert_eq!(keys(&conn), [b"b".to_vec(), b"a".to_vec()]);
+
+        assert_eq!(dismiss_all(&conn, 50).unwrap(), 3);
+        assert!(keys(&conn).is_empty());
+        assert!(
+            position(&conn, b"a").unwrap().is_some(),
+            "positions are kept"
+        );
+        // Reading again puts a book back.
+        save_position(&conn, &position_at(b"a", 6, 60)).unwrap();
+        assert_eq!(keys(&conn), [b"a".to_vec()]);
+        // Re-attaching is not reading: a dismissed book stays off the list.
+        move_position(&conn, b"b", &snapshot(b"moved"), b(2), 100).unwrap();
+        assert_eq!(keys(&conn), [b"a".to_vec()]);
+        // A deleted (removed book) position is not listed.
+        remove_group(&conn, b"a", 70).unwrap();
+        assert!(keys(&conn).is_empty());
+    }
+
+    #[test]
+    fn version_1_positions_get_dismissed_at() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations::apply(&mut conn, &MIGRATIONS[..1]).unwrap();
+        conn.execute(
+            "INSERT INTO reading_positions (book_key, book_id, block, suffix, progress,
+                 book_title, book_authors, updated_at)
+             VALUES (x'01', 1, 3, 's', 10, 'T', 'A', 5)",
+            [],
+        )
+        .unwrap();
+        migrations::apply(&mut conn, MIGRATIONS).unwrap();
+        assert_eq!(reading_list(&conn).unwrap().len(), 1);
     }
 
     #[test]

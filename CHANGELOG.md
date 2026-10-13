@@ -24,6 +24,10 @@ Build numbers (`+NNN`) do not get their own sections.
   in notes, never for a page opened from a bookmark or mark link, `from=mark`); the book
   card offers **Continue reading** / **Read from the start** and shows the progress.
   `reader.remember_position` turns it off.
+- **Currently reading** on the library page: unfinished books, most recently read
+  first, with progress and a **Continue** link; each can be marked as finished, and
+  **Clear list** empties the list without forgetting where you stopped (a book comes
+  back when you read it again). Its length is `library.reading_list_size` (10).
 - Annotations are stored in `.shelfgauge/userdata.sqlite` (separate from the index,
   own migrations, UUIDs, soft deletes) and belong to the book's content, so they survive
   rescans, moves and renames. When a book file is replaced or moved between a plain file

@@ -6,6 +6,30 @@
 <p>Browse the library by <a href="{{ layout.urls.authors("", 1) }}">author</a> or by
 <a href="{{ layout.urls.folders() }}">folder</a> in the sidebar, or search by title,
 author, series or annotation in the top bar.</p>
+{%- if !reading.is_empty() %}
+<section class="reading-list">
+  <div class="section-head">
+    <h2>Currently reading</h2>
+    <form method="post" action="{{ layout.urls.clear_reading() }}">
+      <button type="submit" class="text-button" title="Remove all books from this list (where you stopped is kept)">Clear list</button>
+    </form>
+  </div>
+  <ul>
+    {%- for item in reading %}
+    <li>
+      <div class="reading-book">
+        <a class="title" href="{{ item.card_href }}">{{ item.title }}</a>
+        {%- if !item.authors.is_empty() %} <span class="muted">· {{ item.authors }}</span>{% endif %}
+        <div class="reading-meta muted">{{ item.progress }} · {{ item.date }} · <a href="{{ item.continue_href }}">Continue</a></div>
+      </div>
+      <form method="post" action="{{ item.finished_action }}">
+        <button type="submit" class="icon-button" title="Mark as finished" aria-label="Mark as finished"><svg class="icon" aria-hidden="true"><use href="#i-done"></use></svg></button>
+      </form>
+    </li>
+    {%- endfor %}
+  </ul>
+</section>
+{%- endif %}
 {%- if books == 0 %}
 <p class="note">No books yet. shelfgauge indexes FB2 books (also inside .zip archives)
 below this folder; use <strong>Rescan</strong> after adding books.</p>
