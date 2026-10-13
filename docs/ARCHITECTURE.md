@@ -1,7 +1,8 @@
 # shelfgauge — Architecture
 
 > Status: v1 implemented (scanner, storage, web server, library and reading mode,
-> hardening). The V2 offline reader below is not.
+> hardening). Annotations are designed (planned for 0.6.0), not built yet. The V2
+> offline reader below is not.
 
 `shelfgauge` is a single-binary Rust app that indexes a directory tree of ebook files (FB2 in
 v1, plain files and `.zip` archives with any number of books inside) into a local SQLite DB
@@ -115,6 +116,35 @@ Key design points to keep in mind when implementing:
     links address a block (`?at=<block-id>`) and the server resolves the part. Cached
     `BookContent` carries a `parser_version`; bumping it invalidates the cache.
 
+## Annotations (planned for 0.6.0)
+
+- **One entity**, the annotation (UI: "Mark"), replaces bookmarks, notes and quotes: the
+  **selected text is immutable** (it is the quote and the anchor's fingerprint), a
+  separate **note** is editable and optional (bookmark name / note body). An annotation
+  with no selection is a plain place bookmark and needs a note. No `kind` field.
+- **The server owns annotations.** They live in a separate SQLite file,
+  `.shelfgauge/userdata.sqlite` (own migrations), not in the index DB: the index can be
+  rebuilt by rescanning, user data cannot, and the scanner's single writer stays alone.
+- **Anchors**: book content key (the same identity as the content cache: plain file hash,
+  zip entry size + CRC32), block range with code point offsets into each block's
+  rendered text, plus the selected text with a short prefix/suffix as fingerprint. A book
+  is matched by content key, so annotations survive rescans and moves that keep the
+  content; when the content changes they are kept as orphans, never deleted. The stored
+  `book_id` is only a hint. A selection lies within one part.
+- Ids are UUIDs and deletion is soft (`deleted_at`), so the V2 offline reader can sync
+  into this table later.
+- **UI**: `reader.js`/`reader.css` load only on read pages; selecting text offers "Mark";
+  saved annotations are highlighted on the client. The reader sidebar has tabs Contents |
+  Marks; the book card lists marks in a `<details>` block with plain-form edit/delete.
+  Lists are server-rendered and work without JS. Writes are a separate route group
+  behind the Origin check.
+- **Export**: one Markdown file per book in `.shelfgauge/annotations/`, regenerated
+  atomically from the DB after every change, **one way only** (edits to the file are not
+  read back): quotes grouped by section, notes, and `?at=b<n>` links.
+- Reader settings (font from system stacks, size, background, width, line height,
+  alignment) are purely client-side (CSS custom properties + `localStorage`). The reader
+  is not a separate crate.
+
 ## Security
 
 v1 binds to `127.0.0.1` only, but is built to allow remote access later:
@@ -147,12 +177,11 @@ v1 binds to `127.0.0.1` only, but is built to allow remote access later:
 ## V2 (deferred — do not build in v1)
 
 Offline-first reader: `/reader/<token>` reading links (with revocation), Service Worker +
-Cache Storage so a tab keeps working without the server, reading position / bookmarks /
-quotes in IndexedDB, and one-directional additive backup sync client → server (server
-shows them read-only). Depends on the fixed port, since browser storage is per origin, and
-on a secure context (localhost or HTTPS). Anchors combine the block ID with a short text
-fingerprint so they can be re-resolved when a book file is replaced. Sync details are
-decided in V2.
+Cache Storage so a tab keeps working without the server, reading position and offline
+annotations in IndexedDB (same anchor model as above), synced into the server-owned
+annotations when the server is reachable. Depends on the fixed port, since browser
+storage is per origin, and on a secure context (localhost or HTTPS). Sync conflict rules
+and per-user data are decided in V2.
 
 ## Planned tech stack
 
