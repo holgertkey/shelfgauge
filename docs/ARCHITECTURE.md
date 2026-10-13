@@ -155,6 +155,15 @@ Key design points to keep in mind when implementing:
   links.
   `shelfgauge annotations export` rewrites all files; generated files carry a marker
   comment and only marked files are ever removed.
+- **Reading position** (separate from bookmarks, never in the lists): one server-side
+  row per book in `userdata.sqlite` (topmost visible block + fingerprint, progress),
+  same re-attaching and cleanup rules. Saved by `reader.js` after scrolling stops, on
+  part change and on leaving the page, never inside notes bodies and only after a dwell
+  time (stray jumps do not overwrite it); a page view opened from a bookmark or mark
+  link (`from=mark`) never saves it until the reader moves on with prev/next; last
+  write wins. The book card offers
+  "Continue reading" / "Read from the start" and shows progress; an explicit `?at=`
+  always wins. `[reader] remember_position` turns it off.
 - Reader settings (font from system stacks, size, background, width, line height,
   alignment) are purely client-side (CSS custom properties + `localStorage`). The reader
   is not a separate crate.
