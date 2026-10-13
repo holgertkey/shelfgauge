@@ -129,8 +129,16 @@ Key design points to keep in mind when implementing:
   zip entry size + CRC32), block range with code point offsets into each block's
   rendered text, plus the selected text with a short prefix/suffix as fingerprint. A book
   is matched by content key, so annotations survive rescans and moves that keep the
-  content; when the content changes they are kept as orphans, never deleted. The stored
-  `book_id` is only a hint. A selection lies within one part.
+  content; when the content changes they are kept as orphans, never deleted, and are
+  re-attached lazily when a matching book (same `book_id` hint, or same title and
+  authors) is opened and at least 80 % of their texts are found in it; the rest are
+  marked "place not found". Annotations of a book removed from the library are
+  soft-deleted by a cleanup step after every complete, uncancelled scan (unless a book
+  with the same title and authors exists), restored if the book comes back, and purged
+  after `removed_book_retention_days` (default 30). There is no orphan management UI.
+  The stored `book_id` is only a hint. A selection lies within one part; text and note lengths are
+  limited by `[annotations]` in the config (`max_text_length`, `max_note_length`,
+  10000 characters by default).
 - Ids are UUIDs and deletion is soft (`deleted_at`), so the V2 offline reader can sync
   into this table later.
 - **UI**: `reader.js`/`reader.css` load only on read pages; selecting text offers "Mark";
@@ -141,6 +149,8 @@ Key design points to keep in mind when implementing:
 - **Export**: one Markdown file per book in `.shelfgauge/annotations/`, regenerated
   atomically from the DB after every change, **one way only** (edits to the file are not
   read back): quotes grouped by section, notes, and `?at=b<n>` links.
+  `shelfgauge annotations export` rewrites all files; generated files carry a marker
+  comment and only marked files are ever removed.
 - Reader settings (font from system stacks, size, background, width, line height,
   alignment) are purely client-side (CSS custom properties + `localStorage`). The reader
   is not a separate crate.
