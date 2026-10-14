@@ -407,9 +407,14 @@ mark.sg-mark {
   font-variant-numeric: tabular-nums;
 }
 
-/* Room for the bars around the text. */
+/* At the top of the page the top bar is shown over the content (it is fixed in focus
+   mode): keep its height free, so the page starts as it does outside focus mode. */
+:root.reading-focus .main {
+  padding-top: calc(var(--topbar-height) + 1.5rem);
+}
+
+/* Room for the status line below the text. */
 :root.reading-focus:not([data-rstatus="off"]) .main {
-  padding-top: 2.5rem;
   padding-bottom: 3.5rem;
 }
 
