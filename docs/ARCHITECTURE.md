@@ -201,7 +201,9 @@ Code: `src/annotations/` (`text`, `anchor`, `store`, `export`, `attach`),
     `web::write_body_limit` (derived from `max_note_length`).
 - Reader settings (font family from system stacks, size, line height, column width,
   alignment; the background is the color theme) and a focus mode (no sidebar, top bar
-  shown on scroll up) are purely client-side: whitelisted values in `localStorage`,
+  shown on scroll up, a running head and a status line with the chapter and the
+  progress) are purely client-side (the server only adds the part's progress bounds,
+  `data-progress-start`/`-end`, to the page): whitelisted values in `localStorage`,
   applied by `theme.js` before the first paint as `data-` attributes on `<html>` that
   `reader.css` maps to CSS custom properties. They affect only the book text on read
   pages and keep the block at the top of the screen in place. The reader is not a

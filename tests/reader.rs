@@ -671,6 +671,7 @@ async fn reader_settings_panel_is_on_read_pages_only() {
             assert!(read.body.contains(&radio), "{radio} missing");
         }
     }
+    assert!(read.body.contains("name=\"status\" value=\"on\""));
     for theme in THEMES {
         let radio = format!("name=\"theme\" value=\"{theme}\"");
         assert!(read.body.contains(&radio), "{radio} missing");
@@ -726,6 +727,10 @@ async fn reader_settings_assets_agree_on_the_values() {
             assert!(reader_css.contains(&preset), "{preset} missing");
         }
     }
+    // The running head and status line: on by default.
+    assert!(theme_js.contains("status: [\"on\", \"off\"],"));
+    assert!(theme_js.contains("status: \"rstatus\","));
+    assert!(reader_css.contains(":root[data-rstatus=\"off\"] {"));
     // Sizes: 8 steps, 3 (18px, the old size) is the default.
     assert!(theme_js.contains("size: [\"3\", \"0\", \"1\", \"2\", \"4\", \"5\", \"6\", \"7\"],"));
     for step in ["0", "1", "2", "4", "5", "6", "7"] {
@@ -756,4 +761,68 @@ async fn reader_settings_assets_agree_on_the_values() {
     // Focus mode is styled in reader.css only, so it never touches library pages.
     assert!(reader_css.contains(":root.reading-focus .sidebar"));
     assert!(!style_css.contains("reading-focus"));
+}
+
+/// The value of attribute `name` in the first tag that has it.
+fn attribute(body: &str, name: &str) -> Option<u16> {
+    let start = body.find(&format!(" {name}=\""))? + name.len() + 3;
+    body[start..].split('"').next()?.parse().ok()
+}
+
+#[tokio::test]
+async fn read_pages_carry_the_running_head_and_progress() {
+    let lib = TestLibrary::new();
+    let id = lib.id_of("full.fb2");
+    let server = lib.server(
+        "/",
+        ReaderConfig {
+            split: SplitMode::Section,
+            ..ReaderConfig::default()
+        },
+    );
+    let parts = server.parts(&format!("/book/{id}/read")).await;
+    assert!(parts.len() > 2, "several parts");
+    for part in &parts {
+        assert!(
+            part.body
+                .contains("<div class=\"running-head\" aria-hidden=\"true\">")
+        );
+        assert!(part.body.contains("<span class=\"status-chapter\">"));
+        assert!(
+            part.body.contains("The Lighthouse Keeper · "),
+            "authors · title in the running head"
+        );
+    }
+    // Progress per part: from 0 to 1000 without gaps; the notes part has none.
+    let (main, notes): (Vec<_>, Vec<_>) = parts
+        .iter()
+        .partition(|p| attribute(&p.body, "data-progress-start").is_some());
+    assert_eq!(notes.len(), 1, "only the notes part has no progress");
+    assert!(
+        notes[0]
+            .body
+            .contains("<span class=\"status-progress\"></span>")
+    );
+    let ranges: Vec<(u16, u16)> = main
+        .iter()
+        .map(|p| {
+            (
+                attribute(&p.body, "data-progress-start").unwrap(),
+                attribute(&p.body, "data-progress-end").unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(ranges.first().unwrap().0, 0, "{ranges:?}");
+    assert_eq!(ranges.last().unwrap().1, 1000, "{ranges:?}");
+    for pair in ranges.windows(2) {
+        assert!(pair[0].0 <= pair[0].1, "{ranges:?}");
+        assert_eq!(pair[0].1, pair[1].0, "contiguous: {ranges:?}");
+    }
+    // The server-rendered label is the progress at the start of the part.
+    let second = main[1];
+    let start = attribute(&second.body, "data-progress-start").unwrap();
+    assert!(second.body.contains(&format!(
+        "<span class=\"status-progress\">{} %</span>",
+        start / 10
+    )));
 }

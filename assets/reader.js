@@ -139,8 +139,8 @@
     return { start, end };
   }
 
-  // The top of the readable area: below the top bar, or the window's top while focus
-  // mode hides the bar (its box may still be sliding away).
+  // The top of the readable area: below the top bar, or below the running head while
+  // focus mode hides the bar (its box may still be sliding away).
   function topLimit() {
     const root = document.documentElement;
     const top = document.querySelector(".topbar");
@@ -148,7 +148,8 @@
       !top ||
       (root.classList.contains("reading-focus") && !root.classList.contains("topbar-peek"))
     ) {
-      return 4;
+      const head = document.querySelector(".running-head");
+      return (head ? Math.max(head.getBoundingClientRect().bottom, 0) : 0) + 4;
     }
     return Math.max(top.getBoundingClientRect().bottom, 0) + 4;
   }
@@ -797,6 +798,7 @@
         settings.save(current);
       });
       sync();
+      updateStatus();
     }
 
     function stepSize(delta) {
@@ -818,6 +820,7 @@
       // Toggled from the open panel: the top bar it hangs from stays.
       peek(panelOpen());
       sync();
+      updateStatus();
     }
 
     if (focusButton) {
@@ -838,6 +841,8 @@
           applyTheme(input.value);
         } else if (input.name === "focus") {
           setFocus(input.checked);
+        } else if (input.type === "checkbox") {
+          update(input.name, input.checked ? "on" : "off");
         } else if (input.name in settings.OPTIONS) {
           update(input.name, input.value);
         }
@@ -849,6 +854,7 @@
         } else if (event.target.closest(".settings-reset")) {
           keepPlace(() => settings.save({}));
           sync();
+          updateStatus();
         }
       });
       panel.addEventListener("toggle", (event) => {
@@ -951,6 +957,99 @@
     });
   }
 
+  // ---------- Status line ----------
+
+  // Focus mode's status line: the current chapter (the last title above the block at
+  // the top of the screen) and the reading progress. The server gives the progress at
+  // the start of this part and of the next one; in between it grows with the main
+  // text (notes excluded) above that block, so it matches the book card's figure.
+  let updateStatus = () => {};
+
+  function setupStatus() {
+    const line = document.querySelector(".status-line");
+    if (!line) {
+      return;
+    }
+    const chapter = line.querySelector(".status-chapter");
+    const progress = line.querySelector(".status-progress");
+    const start = Number(article.dataset.progressStart);
+    const end = Number(article.dataset.progressEnd);
+    const hasProgress = "progressStart" in article.dataset && end >= start;
+    const titles = Array.from(text.querySelectorAll(".title"));
+    let before = null;
+    let total = 0;
+    let frame = 0;
+
+    // Characters of the main text before each leaf block of the part (built lazily).
+    function counts() {
+      if (!before) {
+        before = new Map();
+        for (const leaf of leaves()) {
+          if (!leaf.closest(".notes")) {
+            before.set(leaf, total);
+            total += leaf.textContent.length;
+          }
+        }
+      }
+      return before;
+    }
+
+    function titleText(title) {
+      const lines = Array.from(title.querySelectorAll("p"), (p) => p.textContent.trim());
+      return (lines.length ? lines.filter(Boolean).join(". ") : title.textContent.trim());
+    }
+
+    function render() {
+      frame = 0;
+      if (!document.documentElement.classList.contains("reading-focus")) {
+        return;
+      }
+      const block = topBlock();
+      if (!block) {
+        return;
+      }
+      let current = null;
+      for (const title of titles) {
+        const above =
+          title === block ||
+          title.contains(block) ||
+          title.compareDocumentPosition(block) & Node.DOCUMENT_POSITION_FOLLOWING;
+        if (!above) {
+          break;
+        }
+        current = title;
+      }
+      if (current) {
+        chapter.textContent = titleText(current);
+      }
+      if (hasProgress) {
+        const map = counts();
+        const atEnd =
+          window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2;
+        let value = null;
+        if (atEnd) {
+          value = end;
+        } else if (map.has(block) && total > 0) {
+          value = start + ((end - start) * map.get(block)) / total;
+        }
+        if (value !== null) {
+          progress.textContent = `${Math.min(Math.floor(value / 10), 100)} %`;
+        }
+      }
+    }
+
+    updateStatus = render;
+    const schedule = () => {
+      if (!frame) {
+        frame = requestAnimationFrame(render);
+      }
+    };
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    render();
+  }
+
+  setupStatus();
   setupSettings();
   setupSidebar();
   setupMarks();

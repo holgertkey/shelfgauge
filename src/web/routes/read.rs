@@ -8,11 +8,13 @@ use axum::response::{IntoResponse, Redirect, Response};
 
 use super::annotations::{Lists, book_annotations};
 use super::{Params, parse_id, render};
+use crate::annotations::attach;
+use crate::annotations::text::BookText;
 use crate::cache::covers;
 use crate::format::model::BlockId;
 use crate::format::run_with_parser_stack;
 use crate::render::html::{ReaderLinks, render_part, render_toc};
-use crate::render::split::{part_of, split};
+use crate::render::split::{Part, part_of, split};
 use crate::storage::books::{BookDetails, BookStatus, book_by_id};
 use crate::web::layout::{Layout, SidebarView, page_number};
 use crate::web::{AppError, AppState, Urls};
@@ -34,6 +36,33 @@ impl ReaderLinks for Links<'_> {
     }
 }
 
+/// The reading progress (per mille of the main text) at the start of a part and at the
+/// start of the next one (1000 for the last part of the main text); the reader
+/// interpolates between them. `None` for a part that starts in the notes.
+struct PartProgress {
+    start: u16,
+    end: u16,
+}
+
+impl PartProgress {
+    fn of(text: &BookText, parts: &[Part], index: usize) -> Option<Self> {
+        let start = text.progress(parts.get(index)?.start)?;
+        let end = parts
+            .get(index + 1)
+            .and_then(|next| text.progress(next.start))
+            .unwrap_or(1000);
+        Some(Self {
+            start,
+            end: end.max(start),
+        })
+    }
+
+    /// The progress at the start of the part, as shown before the reader updates it.
+    fn label(&self) -> String {
+        format!("{} %", self.start / 10)
+    }
+}
+
 /// A neighbouring part.
 struct PartLink {
     href: String,
@@ -45,6 +74,10 @@ struct PartLink {
 struct ReadPage {
     layout: Layout,
     book_title: String,
+    /// The authors, comma-separated (the focus mode's running head).
+    book_authors: String,
+    /// The reading progress over this part (the focus mode's status line).
+    progress: Option<PartProgress>,
     card_href: String,
     part_title: String,
     label: String,
@@ -153,9 +186,12 @@ fn page(state: &AppState, book: &BookDetails, params: &Params) -> Result<Outcome
     } else {
         book.title.clone()
     };
+    let progress = PartProgress::of(&BookText::new(&content), &parts, index);
     Ok(Outcome::Page(Box::new(ReadPage {
         layout: Layout::new(state, title, SidebarView::default()),
         book_title: book.title.clone(),
+        book_authors: attach::authors(book),
+        progress,
         card_href: urls.book(book.id),
         label: format!("Part {} of {count}", index + 1),
         part_title,

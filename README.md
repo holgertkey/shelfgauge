@@ -69,8 +69,10 @@ scan keeps what it has indexed so far, and the next scan completes it.
   and alignment of the book text. Settings are kept per browser and apply at once,
   keeping your place in the text; **Defaults** resets them.
 - **Focus mode** (`f`, or the button next to **Aa**) hides the sidebar and the top bar;
-  the top bar comes back when you scroll up or move the mouse to the top edge. `Esc` or
-  `f` leaves it, and it stays on for the next book until you do.
+  the top bar comes back when you scroll up or move the mouse to the top edge. A thin
+  running head shows the author and title, and a status line the current chapter and
+  how much of the book you have read (both can be turned off in **Aa**). `Esc` or `f`
+  leaves it, and it stays on for the next book until you do.
 - Keys: `/` or `s` search, `t` next theme, `m` sidebar mode, `Esc` leave the search
   field; while reading, `←`/`→` previous/next part, `b` bookmark, `f` focus mode, `-`/`+`
   text size (`0` resets it).

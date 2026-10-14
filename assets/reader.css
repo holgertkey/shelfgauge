@@ -326,6 +326,104 @@ mark.sg-mark {
   scroll-margin-top: 1rem;
 }
 
+/* Running head (authors · title) and status line (chapter, progress): thin, muted
+   bars aligned with the text column, only in focus mode; `data-rstatus="off"` turns
+   them off. They sit under the sliding top bar. */
+.running-head,
+.status-line {
+  display: none;
+}
+
+:root[data-rstatus="off"] {
+  --reader-status: none;
+}
+
+:root.reading-focus .running-head,
+:root.reading-focus .status-line {
+  display: var(--reader-status, block);
+  position: fixed;
+  right: 0;
+  left: 0;
+  z-index: 15;
+  padding: 0 2rem;
+  /* Dimmer than --muted; only the text, the background stays opaque. */
+  color: color-mix(in srgb, var(--muted) 80%, var(--bg));
+  font-size: 0.75rem;
+  line-height: 1.75rem;
+  background: var(--bg);
+  pointer-events: none;
+}
+
+/* A short fade towards the text instead of a border. */
+.running-head::after,
+.status-line::before {
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 0.75rem;
+  content: "";
+}
+
+:root.reading-focus .running-head {
+  top: 0;
+}
+
+.running-head::after {
+  top: 100%;
+  background: linear-gradient(var(--bg), transparent);
+}
+
+:root.reading-focus .status-line {
+  bottom: 0;
+}
+
+.status-line::before {
+  bottom: 100%;
+  background: linear-gradient(transparent, var(--bg));
+}
+
+.running-head .bar,
+.status-line .bar {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  max-width: var(--reader-width, 40rem);
+  margin: 0 auto;
+  white-space: nowrap;
+}
+
+.running-head .bar {
+  justify-content: center;
+}
+
+.running-title,
+.status-chapter {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-progress {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Room for the bars around the text. */
+:root.reading-focus:not([data-rstatus="off"]) .main {
+  padding-top: 2.5rem;
+  padding-bottom: 3.5rem;
+}
+
+:root.reading-focus:not([data-rstatus="off"]) .text [id] {
+  scroll-margin-top: 2.5rem;
+}
+
+@media (max-width: 48rem) {
+  :root.reading-focus .running-head,
+  :root.reading-focus .status-line {
+    padding: 0 1rem;
+  }
+}
+
 .focus-button[aria-pressed="true"] {
   color: var(--accent);
 }
@@ -498,6 +596,12 @@ mark.sg-mark {
   gap: 0.5rem;
   padding-top: 0.5rem;
   border-top: 1px solid var(--border);
+}
+
+.settings-foot .toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
 }
 
 .focus-toggle {

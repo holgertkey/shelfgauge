@@ -20,7 +20,9 @@ Build numbers (`+NNN`) do not get their own sections.
   the page is drawn, and a change keeps the place at the top of the screen.
 - Focus mode (`f` or a top-bar button): hides the sidebar and the top bar, which slides
   back on scroll up or at the top edge of the window; `Esc`, `f` or the sidebar button
-  leave it. It is remembered across books.
+  leave it. It is remembered across books. A thin running head shows the authors and
+  title, a status line the current chapter and the reading progress in the whole book
+  (the book card's figure, updated while scrolling); a checkbox in **Aa** turns them off.
 - A `black` theme (true black, for OLED screens).
 
 ### Fixed

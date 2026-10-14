@@ -14,6 +14,8 @@ const shelfgaugeReader = (() => {
     leading: ["normal", "tight", "loose"],
     width: ["medium", "narrow", "wide", "full"],
     align: ["left", "justify"],
+    // Focus mode's running head and status line.
+    status: ["on", "off"],
   };
   const ATTRS = {
     font: "rfont",
@@ -21,6 +23,7 @@ const shelfgaugeReader = (() => {
     leading: "rleading",
     width: "rwidth",
     align: "ralign",
+    status: "rstatus",
   };
   const root = document.documentElement;
 
