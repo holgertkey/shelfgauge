@@ -205,10 +205,13 @@ Code: `src/annotations/` (`text`, `anchor`, `store`, `export`, `attach`),
 - Reader settings (font family from system stacks, size, line height, column width,
   alignment; the background is the color theme) and a focus mode (no sidebar, top bar
   shown on scroll up, a running head and a status line with the chapter and the
-  progress) are purely client-side (the server only adds the part's progress bounds,
-  `data-progress-start`/`-end`, to the page): whitelisted values in `localStorage`,
-  applied by `theme.js` before the first paint as `data-` attributes on `<html>` that
-  `reader.css` maps to CSS custom properties. They affect only the book text on read
+  progress, and a track over the whole book with chapter and bookmark ticks that jumps
+  on click) are purely client-side; the server only adds positions as shares of the
+  main text in ten-thousandths (`BookText::share_before`: the part's bounds, chapter
+  ticks, `data-progress` on bookmark list items) and resolves `?progress=` back to a
+  block (`BookText::block_at_share`) with the `?at=` redirect. Settings are
+  whitelisted values in `localStorage`, applied by `theme.js` before the first paint as
+  `data-` attributes on `<html>` that `reader.css` maps to CSS custom properties. They affect only the book text on read
   pages and keep the block at the top of the screen in place. The reader is not a
   separate crate.
 

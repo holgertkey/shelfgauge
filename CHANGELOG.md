@@ -23,6 +23,10 @@ Build numbers (`+NNN`) do not get their own sections.
   leave it. It is remembered across books. A thin running head shows the authors and
   title, a status line the current chapter and the reading progress in the whole book
   (the book card's figure, updated while scrolling); a checkbox in **Aa** turns them off.
+  A thin line in the status line maps the whole book: faint chapter ticks, bookmark
+  ticks and the current position; hovering shows the percentage and chapter, a click
+  (a second tap on touch screens) jumps there, and Back returns. Reading mode accepts
+  `?progress=` (ten-thousandths of the main text) for such jumps.
 - A `black` theme (true black, for OLED screens).
 
 ### Fixed

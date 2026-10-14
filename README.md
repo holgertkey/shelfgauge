@@ -71,7 +71,10 @@ scan keeps what it has indexed so far, and the next scan completes it.
 - **Focus mode** (`f`, or the button next to **Aa**) hides the sidebar and the top bar;
   the top bar comes back when you scroll up or move the mouse to the top edge. A thin
   running head shows the author and title, and a status line the current chapter and
-  how much of the book you have read (both can be turned off in **Aa**). `Esc` or `f`
+  how much of the book you have read (both can be turned off in **Aa**). Between them a
+  thin line maps the whole book: ticks for chapters and bookmarks, and a dot for where
+  you are. Pointing at the line shows the place (percentage and chapter); a click goes
+  there (on a touch screen, tap twice), and Back returns. `Esc` or `f`
   leaves it, and it stays on for the next book until you do.
 - Keys: `/` or `s` search, `t` next theme, `m` sidebar mode, `Esc` leave the search
   field; while reading, `←`/`→` previous/next part, `b` bookmark, `f` focus mode, `-`/`+`

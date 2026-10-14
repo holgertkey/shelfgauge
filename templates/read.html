@@ -43,6 +43,11 @@
 </div></div>
 <div class="status-line" aria-hidden="true"><div class="bar">
   <span class="status-chapter">{{ part_title }}</span>
+  {#- The track: chapter ticks from the server; reader.js places them and adds the
+      bookmarks, the read part and the current position, and handles clicks. #}
+  <div class="track" data-href="{{ read_href }}" hidden>
+    {%- for chapter in chapters %}<i class="tick chapter" data-at="{{ chapter.at }}" data-title="{{ chapter.title }}"></i>{% endfor -%}
+  </div>
   <span class="status-progress">{% if let Some(progress) = progress %}{{ progress.label() }}{% endif %}</span>
 </div></div>
 {% include "partials/reader_settings.html" %}

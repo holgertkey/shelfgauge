@@ -43,6 +43,9 @@ pub(crate) struct ListItem {
     pub(crate) suffix: String,
     pub(crate) note_action: String,
     pub(crate) delete_action: String,
+    /// Where it starts, in ten-thousandths of the main text (bookmarks in the reader:
+    /// the ticks on the status line); `None` when unknown or in the notes.
+    pub(crate) progress: Option<u64>,
 }
 
 /// A book's bookmarks and marks, in book order.
@@ -54,7 +57,14 @@ pub(crate) struct Lists {
 }
 
 impl Lists {
-    pub(crate) fn new(urls: &Urls, book_id: i64, annotations: &[Annotation], back: String) -> Self {
+    /// The lists; with the book's `text`, items carry their [`ListItem::progress`].
+    pub(crate) fn new(
+        urls: &Urls,
+        book_id: i64,
+        annotations: &[Annotation],
+        back: String,
+        text: Option<&BookText>,
+    ) -> Self {
         let item = |a: &Annotation| ListItem {
             id: a.id.clone(),
             href: urls.read_mark(book_id, a.anchor.start_block),
@@ -71,6 +81,9 @@ impl Lists {
             suffix: a.quote.suffix.clone(),
             note_action: urls.annotation_note(&a.id),
             delete_action: urls.annotation_delete(&a.id),
+            progress: text
+                .filter(|_| !a.anchor_lost)
+                .and_then(|text| text.share_before(a.anchor.start_block, 10_000)),
         };
         Self {
             bookmarks: annotations
@@ -610,15 +623,18 @@ pub(crate) async fn lists(
     Path(id): Path<String>,
 ) -> Result<Response, AppError> {
     let id = parse_id(&id)?;
-    let annotations = state
+    let (annotations, text) = state
         .user_db(move |state, index| {
-            let (_, snapshot) = readable_book(index, id)?;
-            Ok(store::for_book(&state.userdata().lock(), &snapshot.key)?)
+            let (book, snapshot) = readable_book(index, id)?;
+            let annotations = store::for_book(&state.userdata().lock(), &snapshot.key)?;
+            // Without the content (e.g. a missing file) the items carry no progress.
+            let text = state.content(&book).ok().map(|c| BookText::new(&c));
+            Ok((annotations, text))
         })
         .await?;
     let urls = state.urls();
     let fragment = ListsFragment {
-        lists: Lists::new(urls, id, &annotations, urls.read(id, 1)),
+        lists: Lists::new(urls, id, &annotations, urls.read(id, 1), text.as_ref()),
     };
     Ok((
         [(header::CACHE_CONTROL, "no-store")],

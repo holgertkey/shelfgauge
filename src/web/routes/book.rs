@@ -115,6 +115,7 @@ pub(crate) async fn card(
                 book.id,
                 &a.annotations,
                 format!("{}#annotations", urls.book(book.id)),
+                None,
             )
         });
     render(&BookPage {

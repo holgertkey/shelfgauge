@@ -7,7 +7,7 @@
   {%- else %}
   <ul class="annotation-links">
     {%- for item in lists.bookmarks %}
-    <li><a href="{{ item.href }}" data-mark-link>{{ item.label }}</a>{% if item.lost %} <span class="badge" title="The book has changed; this place was not found in it.">place not found</span>{% endif %}
+    <li{% if let Some(progress) = item.progress %} data-progress="{{ progress }}"{% endif %}><a href="{{ item.href }}" data-mark-link>{{ item.label }}</a>{% if item.lost %} <span class="badge" title="The book has changed; this place was not found in it.">place not found</span>{% endif %}
       <form method="post" action="{{ item.delete_action }}" class="delete-form"><input type="hidden" name="back" value="{{ lists.back }}"><button type="submit" class="link-button" title="Delete this bookmark" aria-label="Delete">×</button></form></li>
     {%- endfor %}
   </ul>

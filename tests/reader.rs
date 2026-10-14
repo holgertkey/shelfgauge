@@ -221,6 +221,10 @@ impl Server {
         }
     }
 
+    async fn get_owned(&self, uri: String) -> Reply {
+        self.get(&uri).await
+    }
+
     async fn ok(&self, uri: &str) -> Reply {
         let reply = self.get(uri).await;
         assert_eq!(reply.status, StatusCode::OK, "{uri}: {}", reply.body);
@@ -793,7 +797,8 @@ async fn read_pages_carry_the_running_head_and_progress() {
             "authors · title in the running head"
         );
     }
-    // Progress per part: from 0 to 1000 without gaps; the notes part has none.
+    // Progress per part, in ten-thousandths: from 0 to 10 000 without gaps; the notes
+    // part has none.
     let (main, notes): (Vec<_>, Vec<_>) = parts
         .iter()
         .partition(|p| attribute(&p.body, "data-progress-start").is_some());
@@ -813,7 +818,7 @@ async fn read_pages_carry_the_running_head_and_progress() {
         })
         .collect();
     assert_eq!(ranges.first().unwrap().0, 0, "{ranges:?}");
-    assert_eq!(ranges.last().unwrap().1, 1000, "{ranges:?}");
+    assert_eq!(ranges.last().unwrap().1, 10_000, "{ranges:?}");
     for pair in ranges.windows(2) {
         assert!(pair[0].0 <= pair[0].1, "{ranges:?}");
         assert_eq!(pair[0].1, pair[1].0, "contiguous: {ranges:?}");
@@ -823,6 +828,103 @@ async fn read_pages_carry_the_running_head_and_progress() {
     let start = attribute(&second.body, "data-progress-start").unwrap();
     assert!(second.body.contains(&format!(
         "<span class=\"status-progress\">{} %</span>",
-        start / 10
+        start / 100
     )));
+}
+
+/// All values of attribute `name`, in document order.
+fn attributes(body: &str, name: &str) -> Vec<String> {
+    body.split(&format!(" {name}=\""))
+        .skip(1)
+        .map(|rest| rest.split('"').next().unwrap().to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn the_track_has_chapter_ticks_and_progress_links_open_the_place() {
+    let lib = TestLibrary::new();
+    let id = lib.id_of("chapters.fb2");
+    let server = lib.server("/", whole());
+    let read = server.ok(&format!("/book/{id}/read")).await;
+    assert!(read.body.contains(&format!(
+        "<div class=\"track\" data-href=\"/book/{id}/read\" hidden>"
+    )));
+    // Three chapters of equal length: ticks at their starts, in order.
+    let titles = attributes(&read.body, "data-title");
+    assert_eq!(titles, ["Chapter 1", "Chapter 2", "Chapter 3"]);
+    let at: Vec<u64> = attributes(&read.body, "data-at")
+        .iter()
+        .map(|a| a.parse().unwrap())
+        .collect();
+    assert_eq!(at.len(), 3);
+    assert_eq!(at[0], 0);
+    assert!(
+        at[1] > 3000 && at[1] < 3400 && at[2] > 6500 && at[2] < 6800,
+        "{at:?}"
+    );
+
+    // `?progress=` opens the main-text block at that share: a chapter's start opens its
+    // title, the end the last paragraph.
+    let location = |reply: Reply| {
+        assert_eq!(reply.status, StatusCode::SEE_OTHER);
+        reply.header(header::LOCATION).to_owned()
+    };
+    let open = |share: u64| server.get_owned(format!("/book/{id}/read?progress={share}"));
+    assert_eq!(location(open(0).await), format!("/book/{id}/read#b1"));
+    let chapter_two = location(open(at[1]).await);
+    let block = chapter_two.rsplit('#').next().unwrap().to_owned();
+    assert!(
+        read.body
+            .contains(&format!("<p id=\"{block}\" class=\"title-line\">Chapter 2")),
+        "{block}"
+    );
+    let last = *read.block_ids().last().unwrap();
+    assert_eq!(
+        location(open(10_000).await),
+        format!("/book/{id}/read#b{last}")
+    );
+    // Split into parts: the redirect names the part.
+    let parts = lib.server(
+        "/",
+        ReaderConfig {
+            split: SplitMode::Section,
+            ..ReaderConfig::default()
+        },
+    );
+    let reply = parts
+        .get(&format!("/book/{id}/read?progress={}", at[2]))
+        .await;
+    let target = location(reply);
+    assert!(
+        target.starts_with(&format!("/book/{id}/read?part=3#b")),
+        "{target}"
+    );
+    for bad in ["10001", "-1", "abc", "", "1.5"] {
+        let reply = server.get(&format!("/book/{id}/read?progress={bad}")).await;
+        assert_eq!(reply.status, StatusCode::NOT_FOUND, "{bad}");
+    }
+}
+
+#[tokio::test]
+async fn progress_links_never_open_the_notes() {
+    let lib = TestLibrary::new();
+    let id = lib.id_of("full.fb2");
+    let server = lib.server(
+        "/",
+        ReaderConfig {
+            split: SplitMode::Section,
+            ..ReaderConfig::default()
+        },
+    );
+    let parts = server.parts(&format!("/book/{id}/read")).await;
+    let notes = parts
+        .iter()
+        .position(|p| attribute(&p.body, "data-progress-start").is_none())
+        .unwrap();
+    let reply = server.get(&format!("/book/{id}/read?progress=10000")).await;
+    let location = reply.header(header::LOCATION);
+    assert!(
+        !location.contains(&format!("part={}#", notes + 1)),
+        "the end of the main text, not the notes: {location}"
+    );
 }

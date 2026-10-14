@@ -11,7 +11,7 @@ use super::{Params, parse_id, render};
 use crate::annotations::attach;
 use crate::annotations::text::BookText;
 use crate::cache::covers;
-use crate::format::model::BlockId;
+use crate::format::model::{BlockId, BodyKind, BookContent, Section};
 use crate::format::run_with_parser_stack;
 use crate::render::html::{ReaderLinks, render_part, render_toc};
 use crate::render::split::{Part, part_of, split};
@@ -36,21 +36,28 @@ impl ReaderLinks for Links<'_> {
     }
 }
 
-/// The reading progress (per mille of the main text) at the start of a part and at the
-/// start of the next one (1000 for the last part of the main text); the reader
+/// Positions in the book are shares of the main text in units of `1 / SCALE` (the
+/// status line's track, `?progress=`).
+const SCALE: u64 = 10_000;
+
+/// Chapter ticks: titled sections down to this depth (1 = top level).
+const CHAPTER_DEPTH: u32 = 2;
+
+/// The reading progress (in `1 / SCALE` of the main text) at the start of a part and at
+/// the start of the next one (`SCALE` for the last part of the main text); the reader
 /// interpolates between them. `None` for a part that starts in the notes.
 struct PartProgress {
-    start: u16,
-    end: u16,
+    start: u64,
+    end: u64,
 }
 
 impl PartProgress {
     fn of(text: &BookText, parts: &[Part], index: usize) -> Option<Self> {
-        let start = text.progress(parts.get(index)?.start)?;
+        let start = text.share_before(parts.get(index)?.start, SCALE)?;
         let end = parts
             .get(index + 1)
-            .and_then(|next| text.progress(next.start))
-            .unwrap_or(1000);
+            .and_then(|next| text.share_before(next.start, SCALE))
+            .unwrap_or(SCALE);
         Some(Self {
             start,
             end: end.max(start),
@@ -59,8 +66,40 @@ impl PartProgress {
 
     /// The progress at the start of the part, as shown before the reader updates it.
     fn label(&self) -> String {
-        format!("{} %", self.start / 10)
+        format!("{} %", self.start * 100 / SCALE)
     }
+}
+
+/// A chapter tick on the status line's track.
+struct ChapterTick {
+    /// Where the chapter starts, in `1 / SCALE` of the main text.
+    at: u64,
+    title: String,
+}
+
+/// The titled sections of the main bodies down to [`CHAPTER_DEPTH`], in book order.
+fn chapter_ticks(content: &BookContent, text: &BookText) -> Vec<ChapterTick> {
+    fn walk(section: &Section, depth: u32, text: &BookText, ticks: &mut Vec<ChapterTick>) {
+        if depth > CHAPTER_DEPTH {
+            return;
+        }
+        if depth > 0
+            && let (Some(title), Some(first)) = (section.title_text(), section.first_block_id())
+            && let Some(at) = text.share_before(first, SCALE)
+        {
+            ticks.push(ChapterTick { at, title });
+        }
+        for child in &section.children {
+            walk(child, depth + 1, text, ticks);
+        }
+    }
+    let mut ticks = Vec::new();
+    for body in content.bodies() {
+        if body.kind != BodyKind::Notes {
+            walk(&body.section, 0, text, &mut ticks);
+        }
+    }
+    ticks
 }
 
 /// A neighbouring part.
@@ -78,6 +117,10 @@ struct ReadPage {
     book_authors: String,
     /// The reading progress over this part (the focus mode's status line).
     progress: Option<PartProgress>,
+    /// The chapters on the status line's track.
+    chapters: Vec<ChapterTick>,
+    /// The book's read URL; the track adds `?progress=` to it.
+    read_href: String,
     card_href: String,
     part_title: String,
     label: String,
@@ -145,6 +188,19 @@ fn page(state: &AppState, book: &BookDetails, params: &Params) -> Result<Outcome
         book: book.id,
         version: book.updated_at,
     };
+    if let Some(progress) = &params.progress {
+        // A place on the status line's track: the main-text block at that share.
+        let share: u64 = progress
+            .parse()
+            .ok()
+            .filter(|&share| share <= SCALE)
+            .ok_or(AppError::NotFound)?;
+        let block = BookText::new(&content)
+            .block_at_share(share, SCALE)
+            .ok_or(AppError::NotFound)?;
+        let part = part_of(&parts, block).ok_or(AppError::NotFound)?;
+        return Ok(Outcome::Redirect(links.block(part, block)));
+    }
     if let Some(at) = &params.at {
         let block: BlockId = at.parse().map_err(|_| AppError::NotFound)?;
         let part = part_of(&parts, block).ok_or(AppError::NotFound)?;
@@ -186,12 +242,15 @@ fn page(state: &AppState, book: &BookDetails, params: &Params) -> Result<Outcome
     } else {
         book.title.clone()
     };
-    let progress = PartProgress::of(&BookText::new(&content), &parts, index);
+    let text = BookText::new(&content);
+    let progress = PartProgress::of(&text, &parts, index);
     Ok(Outcome::Page(Box::new(ReadPage {
         layout: Layout::new(state, title, SidebarView::default()),
         book_title: book.title.clone(),
         book_authors: attach::authors(book),
         progress,
+        chapters: chapter_ticks(&content, &text),
+        read_href: urls.read(book.id, 1),
         card_href: urls.book(book.id),
         label: format!("Part {} of {count}", index + 1),
         part_title,
@@ -199,7 +258,7 @@ fn page(state: &AppState, book: &BookDetails, params: &Params) -> Result<Outcome
         toc: render_toc(&content, &parts, index, &links),
         prev: index.checked_sub(1).and_then(neighbour),
         next: neighbour(index + 1),
-        lists: Lists::new(urls, book.id, &annotations, current),
+        lists: Lists::new(urls, book.id, &annotations, current, Some(&text)),
         annotations_href: urls.annotations(book.id),
         position_href: if state.reader().remember_position {
             urls.position(book.id)

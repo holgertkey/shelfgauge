@@ -42,6 +42,8 @@ pub(crate) struct Params {
     part: Option<String>,
     /// A block id to open (reading mode), e.g. `b12`.
     at: Option<String>,
+    /// A place to open (reading mode): a share of the main text in ten-thousandths.
+    progress: Option<String>,
     /// `mark` when the page is opened from a bookmark or mark (reading mode): the
     /// reading position is not saved for this page view.
     from: Option<String>,

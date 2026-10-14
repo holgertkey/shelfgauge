@@ -261,6 +261,7 @@
     }
     showTab(storageGet(TAB_KEY) || "toc");
     highlight();
+    drawBookmarks();
   }
 
   function setupSidebar() {
@@ -961,9 +962,18 @@
 
   // Focus mode's status line: the current chapter (the last title above the block at
   // the top of the screen) and the reading progress. The server gives the progress at
-  // the start of this part and of the next one; in between it grows with the main
-  // text (notes excluded) above that block, so it matches the book card's figure.
+  // the start of this part and of the next one (in ten-thousandths of the main text);
+  // in between it grows with the main text (notes excluded) above that block, so it
+  // matches the book card's figure.
+  //
+  // The track between them shows the whole book: chapter ticks (from the server),
+  // bookmark ticks (from the Bookmarks list, so they follow its changes), the read part
+  // and the current position. A click jumps to that place: within this part by
+  // scrolling to the block (a fragment link, so Back returns), elsewhere through
+  // `?progress=`. On a touch screen the first tap only shows the place.
+  const SCALE = 10000;
   let updateStatus = () => {};
+  let drawBookmarks = () => {};
 
   function setupStatus() {
     const line = document.querySelector(".status-line");
@@ -976,9 +986,12 @@
     const end = Number(article.dataset.progressEnd);
     const hasProgress = "progressStart" in article.dataset && end >= start;
     const titles = Array.from(text.querySelectorAll(".title"));
+    const track = line.querySelector(".track");
     let before = null;
     let total = 0;
     let frame = 0;
+    let fill = null;
+    let point = null;
 
     // Characters of the main text before each leaf block of the part (built lazily).
     function counts() {
@@ -1033,11 +1046,152 @@
           value = start + ((end - start) * map.get(block)) / total;
         }
         if (value !== null) {
-          progress.textContent = `${Math.min(Math.floor(value / 10), 100)} %`;
+          progress.textContent = `${Math.min(Math.floor(value / 100), 100)} %`;
+          if (point) {
+            point.hidden = false;
+            place(point, value);
+            fill.style.width = `${value / 100}%`;
+          }
         }
       }
     }
 
+    // CSSOM, not a style attribute: allowed by the CSP.
+    function place(el, at) {
+      el.style.left = `${Math.min(Math.max(at, 0), SCALE) / 100}%`;
+    }
+
+    function mark(className) {
+      const el = document.createElement("i");
+      el.className = className;
+      track.append(el);
+      return el;
+    }
+
+    // The main-text block at `share` of this part's range (the last one starting at
+    // or before it).
+    function blockAt(share) {
+      const map = counts();
+      const target = ((share - start) / (end - start)) * total;
+      let found = null;
+      for (const [leaf, chars] of map) {
+        if (chars > target) {
+          break;
+        }
+        found = leaf;
+      }
+      return found;
+    }
+
+    function jump(share) {
+      const here = hasProgress && end > start && share >= start && (share < end || end === SCALE);
+      const block = here && blockAt(share);
+      if (!block) {
+        window.location.href = `${track.dataset.href}?progress=${share}`;
+      } else if (window.location.hash === `#${block.id}`) {
+        block.scrollIntoView();
+      } else {
+        window.location.hash = block.id;
+      }
+    }
+
+    function setupTrack() {
+      track.hidden = false;
+      const chapters = Array.from(track.querySelectorAll(".tick.chapter"));
+      for (const tick of chapters) {
+        place(tick, Number(tick.dataset.at));
+      }
+      fill = mark("fill");
+      point = mark("point");
+      point.hidden = true;
+      const ghost = mark("ghost");
+      const tip = mark("tip");
+      ghost.hidden = true;
+      tip.hidden = true;
+
+      drawBookmarks = () => {
+        for (const tick of track.querySelectorAll(".tick.bookmark")) {
+          tick.remove();
+        }
+        for (const item of document.querySelectorAll("#tab-bookmarks li[data-progress]")) {
+          place(mark("tick bookmark"), Number(item.dataset.progress));
+        }
+      };
+      drawBookmarks();
+
+      const shareAt = (event) => {
+        const rect = track.getBoundingClientRect();
+        const x = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1);
+        return Math.round(x * SCALE);
+      };
+      const chapterAt = (share) => {
+        let title = "";
+        for (const tick of chapters) {
+          if (Number(tick.dataset.at) > share) {
+            break;
+          }
+          title = tick.dataset.title;
+        }
+        return title;
+      };
+      const show = (share) => {
+        ghost.hidden = false;
+        place(ghost, share);
+        const title = chapterAt(share);
+        tip.textContent = `${Math.floor(share / 100)} %${title ? ` · ${title}` : ""}`;
+        tip.hidden = false;
+        // Keep the tip within the track's width (centered on the place otherwise).
+        const width = track.getBoundingClientRect().width;
+        const half = tip.getBoundingClientRect().width / 2;
+        const x = Math.min(Math.max((share / SCALE) * width, half), Math.max(width - half, half));
+        tip.style.left = `${x}px`;
+      };
+      const hide = () => {
+        ghost.hidden = true;
+        tip.hidden = true;
+      };
+
+      let pointerType = "mouse";
+      let armed = null;
+      track.addEventListener("pointerdown", (event) => {
+        pointerType = event.pointerType;
+      });
+      track.addEventListener("pointermove", (event) => {
+        if (event.pointerType === "mouse") {
+          show(shareAt(event));
+        }
+      });
+      track.addEventListener("pointerleave", (event) => {
+        if (event.pointerType === "mouse") {
+          hide();
+        }
+      });
+      track.addEventListener("click", (event) => {
+        let share = shareAt(event);
+        if (pointerType !== "mouse") {
+          // Touch: the first tap shows the place, a second one near it goes there.
+          if (armed === null || Math.abs(share - armed) > 300) {
+            armed = share;
+            show(share);
+            return;
+          }
+          share = armed;
+        }
+        armed = null;
+        hide();
+        jump(share);
+      });
+      document.addEventListener("pointerdown", (event) => {
+        if (armed !== null && !track.contains(event.target)) {
+          armed = null;
+          hide();
+        }
+      });
+    }
+
+    if (track) {
+      setupTrack();
+    }
     updateStatus = render;
     const schedule = () => {
       if (!frame) {

@@ -353,6 +353,34 @@ impl BookText {
         Some(((before * 1000) / self.main_total).min(999) as u16)
     }
 
+    /// The share of the main text (notes excluded) before block `id`, in units of
+    /// `1 / scale`: like [`progress`](Self::progress) but finer and without its
+    /// rounding rules (`scale` at the end of the main text is never reached by a
+    /// block). `None` for a block in a notes body or an unknown block.
+    pub fn share_before(&self, id: BlockId, scale: u64) -> Option<u64> {
+        let info = self.info(id)?;
+        if info.notes {
+            return None;
+        }
+        // A container counts from its first leaf.
+        let leaf = self.leaves.iter().find(|&&leaf| leaf >= id)?;
+        let before = *self.main_before.get(leaf)?;
+        Some((before * scale).checked_div(self.main_total).unwrap_or(0))
+    }
+
+    /// The main-text leaf block at `share / scale` of the main text: the last one that
+    /// starts at or before that point (the first for 0, the last for `scale` or more).
+    /// `None` if the book has no main text.
+    pub fn block_at_share(&self, share: u64, scale: u64) -> Option<BlockId> {
+        // Rounded up: the inverse of `share_before`, which rounds down.
+        let position = (share.min(scale) * self.main_total).div_ceil(scale.max(1));
+        self.leaves
+            .iter()
+            .rev()
+            .copied()
+            .find(|leaf| self.main_before.get(leaf).is_some_and(|&b| b <= position))
+    }
+
     /// The last leaf block of the main text.
     pub fn last_main_block(&self) -> Option<BlockId> {
         self.last_main
@@ -483,6 +511,41 @@ mod tests {
             "containers are not anchors"
         );
         assert_eq!(text.text(b(11)), None);
+    }
+
+    #[test]
+    fn shares_of_the_main_text_and_back() {
+        let text = BookText::new(&book());
+        // Main leaves and the code points before them: b1 0, b3 4, b4 9, b5 12, b6 24,
+        // b7 29, b8 32; 37 in all.
+        assert_eq!(text.share_before(b(1), 10_000), Some(0));
+        assert_eq!(
+            text.share_before(b(2), 37),
+            Some(4),
+            "a container: its first leaf"
+        );
+        assert_eq!(text.share_before(b(6), 37), Some(24));
+        assert_eq!(text.share_before(b(6), 10_000), Some(24 * 10_000 / 37));
+        assert_eq!(text.share_before(b(10), 10_000), None, "notes");
+        assert_eq!(text.share_before(b(11), 10_000), None, "unknown");
+        assert_eq!(text.block_at_share(0, 37), Some(b(1)));
+        assert_eq!(text.block_at_share(23, 37), Some(b(5)));
+        assert_eq!(text.block_at_share(24, 37), Some(b(6)));
+        assert_eq!(
+            text.block_at_share(37, 37),
+            Some(b(8)),
+            "the end: last main leaf"
+        );
+        assert_eq!(text.block_at_share(99, 37), Some(b(8)), "never the notes");
+        // A share and back gives the same block.
+        for n in [1, 3, 4, 5, 6, 7, 8] {
+            let share = text.share_before(b(n), 10_000).unwrap();
+            assert_eq!(text.block_at_share(share, 10_000), Some(b(n)), "b{n}");
+        }
+        assert_eq!(
+            BookText::new(&BookContent::default()).block_at_share(5, 10),
+            None
+        );
     }
 
     #[test]

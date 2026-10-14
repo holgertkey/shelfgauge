@@ -1091,3 +1091,33 @@ async fn currently_reading_list() {
     let off = lib.server(|c| c.reader.remember_position = false);
     assert!(!off.ok("/").await.contains("Currently reading"));
 }
+
+#[tokio::test]
+async fn bookmarks_carry_their_place_for_the_status_line() {
+    let lib = TestLibrary::new();
+    lib.write("book.fb2", &book("The Book", "Writer", 3, false, &[]));
+    lib.scan();
+    let id = lib.id_of("book.fb2");
+    let server = lib.server(|_| {});
+    let early = server.block_of(id, &para(1, 1)).await;
+    let late = server.block_of(id, &para(3, 2)).await;
+    server.bookmark(id, &late).await;
+    server.bookmark(id, &early).await;
+
+    let places = |body: &str| -> Vec<u64> {
+        body.split(" data-progress=\"")
+            .skip(1)
+            .map(|rest| rest.split('"').next().unwrap().parse().unwrap())
+            .collect()
+    };
+    // In the reader's list (book order) and in the fragment it refreshes from.
+    let read = server.ok(&format!("/book/{id}/read")).await;
+    let in_reader = places(&read);
+    assert_eq!(in_reader.len(), 2, "{read}");
+    assert!(in_reader[0] < 2000 && in_reader[1] > 6000, "{in_reader:?}");
+    let fragment = server.ok(&format!("/book/{id}/annotations")).await;
+    assert_eq!(places(&fragment), in_reader);
+    // The book card has no status line: no places there.
+    let card = server.ok(&format!("/book/{id}")).await;
+    assert!(places(&card).is_empty());
+}
