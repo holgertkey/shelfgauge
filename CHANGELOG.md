@@ -8,6 +8,25 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-14
+
+### Added
+
+- Reader settings: an **Aa** panel in the reader's top bar sets the font (sans or a
+  serif system font stack with Cyrillic-capable faces first; no bundled fonts), text
+  size (14–28px; keys `-`, `+`, `0`), line spacing, column width (up to the full
+  window) and alignment (left or justified) of the book text, and shows the color themes
+  as swatches; **Defaults** resets them. Settings are kept per browser, applied before
+  the page is drawn, and a change keeps the place at the top of the screen.
+- Focus mode (`f` or a top-bar button): hides the sidebar and the top bar, which slides
+  back on scroll up or at the top edge of the window; `Esc`, `f` or the sidebar button
+  leave it. It is remembered across books.
+- A `black` theme (true black, for OLED screens).
+
+### Fixed
+
+- Top-bar buttons that need JavaScript (e.g. the bookmark button) are hidden without it.
+
 ## [0.6.0] - 2026-10-13
 
 ### Added

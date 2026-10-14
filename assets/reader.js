@@ -139,10 +139,23 @@
     return { start, end };
   }
 
+  // The top of the readable area: below the top bar, or the window's top while focus
+  // mode hides the bar (its box may still be sliding away).
+  function topLimit() {
+    const root = document.documentElement;
+    const top = document.querySelector(".topbar");
+    if (
+      !top ||
+      (root.classList.contains("reading-focus") && !root.classList.contains("topbar-peek"))
+    ) {
+      return 4;
+    }
+    return Math.max(top.getBoundingClientRect().bottom, 0) + 4;
+  }
+
   // The topmost leaf block that is (at least partly) visible below the top bar.
   function topBlock() {
-    const top = document.querySelector(".topbar");
-    const limit = (top ? top.getBoundingClientRect().bottom : 0) + 4;
+    const limit = topLimit();
     const all = leaves();
     // Blocks are in document order, so their bottoms grow: binary search for the
     // first one below the limit.
@@ -710,6 +723,235 @@
     }
   }
 
+  // ---------- Reader settings and focus mode ----------
+
+  // Runs `change` (which reflows the text) and scrolls back to the same place: the
+  // block at the top of the screen, at the same share of its height (or at the same
+  // distance below the top bar when it starts below it).
+  function keepPlace(change) {
+    const block = topBlock();
+    let share = null;
+    let offset = 0;
+    if (block) {
+      const limit = topLimit();
+      const rect = block.getBoundingClientRect();
+      if (rect.top < limit && rect.height > 0) {
+        share = (limit - rect.top) / rect.height;
+      } else {
+        offset = rect.top - limit;
+      }
+    }
+    change();
+    if (block) {
+      const rect = block.getBoundingClientRect();
+      const target = share === null ? rect.top - offset : rect.top + share * rect.height;
+      window.scrollBy({ top: target - topLimit(), behavior: "instant" });
+    }
+  }
+
+  function setupSettings() {
+    // `shelfgaugeReader` comes from theme.js (a global of a classic script).
+    if (typeof shelfgaugeReader === "undefined") {
+      return;
+    }
+    const settings = shelfgaugeReader;
+    const root = document.documentElement;
+    const panel = document.getElementById("reader-settings");
+    const form = panel && panel.querySelector("form");
+    const settingsButton = document.querySelector(".settings-button");
+    const focusButton = document.querySelector(".focus-button");
+    const sizes = settings.OPTIONS.size.map(Number).sort((a, b) => a - b);
+    const defaultSize = Number(settings.OPTIONS.size[0]);
+    let closedAt = 0;
+    let peekByMouse = false;
+
+    const focused = () => root.classList.contains("reading-focus");
+    const panelOpen = () => Boolean(panel) && panel.matches(":popover-open");
+
+    function sync() {
+      if (focusButton) {
+        focusButton.setAttribute("aria-pressed", String(focused()));
+      }
+      if (!form) {
+        return;
+      }
+      const current = settings.current();
+      current.theme = root.dataset.theme || "";
+      for (const [name, value] of Object.entries(current)) {
+        for (const input of form.querySelectorAll(`input[name="${name}"]`)) {
+          input.checked = input.value === value;
+        }
+      }
+      form.elements.focus.checked = focused();
+      const size = Number(current.size);
+      form.querySelector('[data-step="-1"]').disabled = size === sizes[0];
+      form.querySelector('[data-step="1"]').disabled = size === sizes[sizes.length - 1];
+      form.querySelector(".size-value").textContent =
+        `${Math.round(parseFloat(getComputedStyle(text).fontSize))}px`;
+    }
+
+    function update(name, value) {
+      keepPlace(() => {
+        const current = settings.current();
+        current[name] = value;
+        settings.save(current);
+      });
+      sync();
+    }
+
+    function stepSize(delta) {
+      const index = sizes.indexOf(Number(settings.current().size)) + delta;
+      if (index >= 0 && index < sizes.length) {
+        update("size", String(sizes[index]));
+      }
+    }
+
+    function peek(on) {
+      root.classList.toggle("topbar-peek", on);
+      if (!on) {
+        peekByMouse = false;
+      }
+    }
+
+    function setFocus(on) {
+      keepPlace(() => settings.setFocus(on));
+      // Toggled from the open panel: the top bar it hangs from stays.
+      peek(panelOpen());
+      sync();
+    }
+
+    if (focusButton) {
+      focusButton.hidden = false;
+      focusButton.addEventListener("click", () => setFocus(!focused()));
+    }
+    // The panel needs the Popover API; without it (the panel would show inline) only
+    // the keys work.
+    if (panel && !("showPopover" in panel)) {
+      panel.remove();
+    } else if (form && settingsButton) {
+      settingsButton.hidden = false;
+      form.addEventListener("submit", (event) => event.preventDefault());
+      form.addEventListener("change", (event) => {
+        const input = event.target;
+        if (input.name === "theme") {
+          // app.js: remembers it and updates the top-bar select.
+          applyTheme(input.value);
+        } else if (input.name === "focus") {
+          setFocus(input.checked);
+        } else if (input.name in settings.OPTIONS) {
+          update(input.name, input.value);
+        }
+      });
+      form.addEventListener("click", (event) => {
+        const step = event.target.closest("[data-step]");
+        if (step) {
+          stepSize(Number(step.dataset.step));
+        } else if (event.target.closest(".settings-reset")) {
+          keepPlace(() => settings.save({}));
+          sync();
+        }
+      });
+      panel.addEventListener("toggle", (event) => {
+        if (event.newState === "open") {
+          sync();
+        } else {
+          closedAt = Date.now();
+        }
+        // Keep the top bar (and the button the panel hangs from) in focus mode.
+        peek(event.newState === "open");
+      });
+      document.addEventListener("shelfgauge:theme", sync);
+    }
+    sync();
+
+    // In focus mode the sidebar toggle leaves focus mode; it goes on to show the
+    // sidebar only when the sidebar is hidden (app.js handles that click).
+    document.addEventListener("click", (event) => {
+      if (!focused() || !event.target.closest(".sidebar-toggle")) {
+        return;
+      }
+      setFocus(false);
+      const toggle = document.querySelector(".sidebar-toggle");
+      if (toggle.getAttribute("aria-expanded") === "true") {
+        event.stopPropagation();
+      }
+    }, true);
+
+    // Focus mode: the top bar comes back on scroll up and at the top edge.
+    let lastY = window.scrollY;
+    window.addEventListener("scroll", () => {
+      const y = window.scrollY;
+      const delta = y - lastY;
+      if (!focused() || panelOpen() || (Math.abs(delta) < 8 && y > 0)) {
+        return;
+      }
+      lastY = y;
+      peek(delta < 0 || y <= 0);
+    }, { passive: true });
+    document.addEventListener("mousemove", (event) => {
+      if (!focused() || panelOpen()) {
+        return;
+      }
+      if (event.clientY <= 6) {
+        peek(true);
+        peekByMouse = true;
+      } else if (peekByMouse) {
+        const top = document.querySelector(".topbar");
+        if (top && event.clientY > top.getBoundingClientRect().bottom + 48) {
+          peek(false);
+        }
+      }
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) {
+        return;
+      }
+      const target = event.target;
+      const typing =
+        target instanceof HTMLInputElement && !["radio", "checkbox"].includes(target.type)
+        || target instanceof HTMLTextAreaElement
+        || target instanceof HTMLSelectElement
+        || (target instanceof HTMLElement && target.isContentEditable);
+      if (typing) {
+        return;
+      }
+      switch (event.key) {
+        case "Escape":
+          // An open panel or mark popup closes first (the panel may already have
+          // closed itself on this key).
+          if (
+            focused() &&
+            !panelOpen() &&
+            Date.now() - closedAt > 100 &&
+            !document.querySelector(".mark-popup")
+          ) {
+            setFocus(false);
+          }
+          break;
+        case "f":
+          event.preventDefault();
+          setFocus(!focused());
+          break;
+        case "-":
+          event.preventDefault();
+          stepSize(-1);
+          break;
+        case "=":
+        case "+":
+          event.preventDefault();
+          stepSize(1);
+          break;
+        case "0":
+          event.preventDefault();
+          update("size", String(defaultSize));
+          break;
+        default:
+      }
+    });
+  }
+
+  setupSettings();
   setupSidebar();
   setupMarks();
   setupBookmarks();

@@ -1,10 +1,10 @@
-# shelfgauge v0.6.0
+# shelfgauge v0.7.0
 
 A single-binary tool that indexes a folder tree of ebooks — FB2 files, plain or inside
 `.zip` archives — into a local SQLite database and serves a browsable, searchable web
 library on `localhost`, with an in-browser reader.
 
-**Current version:** 0.6.0
+**Current version:** 0.7.0
 
 ## Status
 
@@ -63,9 +63,17 @@ scan keeps what it has indexed so far, and the next scan completes it.
 - The border between the sidebar and the main area can be dragged (or moved with `←`/`→`
   when focused) to resize the sidebar; double-click restores the default width. The
   width is remembered per browser.
-- Themes: auto (system), light, dark, sepia, navy.
-- Keys: `/` or `s` search, `t` next theme, `m` sidebar mode, `←`/`→` previous/next part
-  and `b` bookmark while reading, `Esc` leave the search field.
+- Themes: auto (system), light, dark, sepia, navy, black.
+- While reading, the **Aa** button (top bar) sets the theme, the font (sans or serif,
+  from the fonts installed on your system), the text size, line spacing, column width
+  and alignment of the book text. Settings are kept per browser and apply at once,
+  keeping your place in the text; **Defaults** resets them.
+- **Focus mode** (`f`, or the button next to **Aa**) hides the sidebar and the top bar;
+  the top bar comes back when you scroll up or move the mouse to the top edge. `Esc` or
+  `f` leaves it, and it stays on for the next book until you do.
+- Keys: `/` or `s` search, `t` next theme, `m` sidebar mode, `Esc` leave the search
+  field; while reading, `←`/`→` previous/next part, `b` bookmark, `f` focus mode, `-`/`+`
+  text size (`0` resets it).
 - **Rescan** (top bar) updates the index while the library stays usable.
 
 ### Bookmarks, quotes and the reading position
@@ -173,4 +181,4 @@ MIT — see [LICENSE](LICENSE).
 
 ---
 
-_shelfgauge v0.6.0 — MIT License_
+_shelfgauge v0.7.0 — MIT License_

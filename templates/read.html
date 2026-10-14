@@ -7,6 +7,12 @@
   <button type="button" class="icon-button bookmark-button" title="Bookmark the place at the top of the page (b)" aria-label="Bookmark this place" hidden>
     <svg class="icon" aria-hidden="true"><use href="#i-bookmark"></use></svg>
   </button>
+  <button type="button" class="icon-button focus-button" title="Focus mode (f)" aria-label="Focus mode" aria-pressed="false" hidden>
+    <svg class="icon" aria-hidden="true"><use href="#i-focus"></use></svg>
+  </button>
+  <button type="button" class="icon-button settings-button" popovertarget="reader-settings" title="Reading settings" aria-label="Reading settings" hidden>
+    <span class="aa" aria-hidden="true">Aa</span>
+  </button>
 {%- endblock %}
 {% block sidebar %}
 <p class="toc-book"><a href="{{ card_href }}">‹ {{ book_title }}</a></p>
@@ -30,4 +36,5 @@
   <div class="text">{{ html|safe }}</div>
   {% include "partials/reader_nav.html" %}
 </article>
+{% include "partials/reader_settings.html" %}
 {% endblock %}

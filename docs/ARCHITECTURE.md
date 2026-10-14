@@ -199,9 +199,13 @@ Code: `src/annotations/` (`text`, `anchor`, `store`, `export`, `attach`),
     `/annotation/{id}/delete` (JSON for the reader, forms with a local `back` URL and
     303 for the card), `/book/{id}/position` (JSON); request bodies are limited by
     `web::write_body_limit` (derived from `max_note_length`).
-- Reader settings (font from system stacks, size, background, width, line height,
-  alignment) are purely client-side (CSS custom properties + `localStorage`). The reader
-  is not a separate crate.
+- Reader settings (font family from system stacks, size, line height, column width,
+  alignment; the background is the color theme) and a focus mode (no sidebar, top bar
+  shown on scroll up) are purely client-side: whitelisted values in `localStorage`,
+  applied by `theme.js` before the first paint as `data-` attributes on `<html>` that
+  `reader.css` maps to CSS custom properties. They affect only the book text on read
+  pages and keep the block at the top of the screen in place. The reader is not a
+  separate crate.
 
 ## Security
 

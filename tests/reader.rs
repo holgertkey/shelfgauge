@@ -635,3 +635,125 @@ async fn long_parts_are_limited() {
     );
     assert_eq!(unlimited.parts(&format!("/book/{id}/read")).await.len(), 1);
 }
+
+/// The reader settings: name, allowed values (default first) and the `data-` attribute
+/// that theme.js sets on `<html>`.
+const READER_SETTINGS: [(&str, &[&str], &str); 4] = [
+    ("font", &["sans", "serif"], "rfont"),
+    ("leading", &["normal", "tight", "loose"], "rleading"),
+    ("width", &["medium", "narrow", "wide", "full"], "rwidth"),
+    ("align", &["left", "justify"], "ralign"),
+];
+
+const THEMES: [&str; 6] = ["", "light", "sepia", "dark", "navy", "black"];
+
+#[tokio::test]
+async fn reader_settings_panel_is_on_read_pages_only() {
+    let lib = TestLibrary::new();
+    let id = lib.id_of("full.fb2");
+    let server = lib.server("/", whole());
+    let read = server.ok(&format!("/book/{id}/read")).await;
+    for part in [
+        "class=\"icon-button focus-button\"",
+        "aria-pressed=\"false\" hidden>",
+        "popovertarget=\"reader-settings\"",
+        "<div id=\"reader-settings\" class=\"reader-settings\" popover",
+        "name=\"focus\"",
+        "data-step=\"-1\"",
+        "data-step=\"1\"",
+        "class=\"settings-reset\"",
+    ] {
+        assert!(read.body.contains(part), "{part} missing");
+    }
+    for (name, values, _) in READER_SETTINGS {
+        for value in values {
+            let radio = format!("name=\"{name}\" value=\"{value}\"");
+            assert!(read.body.contains(&radio), "{radio} missing");
+        }
+    }
+    for theme in THEMES {
+        let radio = format!("name=\"theme\" value=\"{theme}\"");
+        assert!(read.body.contains(&radio), "{radio} missing");
+    }
+    // Neither the panel nor the reader assets on library pages.
+    for uri in ["/".to_owned(), format!("/book/{id}")] {
+        let page = server.ok(&uri).await;
+        for part in ["reader-settings", "focus-button", "reader.css", "reader.js"] {
+            assert!(!page.body.contains(part), "{part} on {uri}");
+        }
+        // The CSP stays the same: no inline styles or scripts.
+        assert_eq!(
+            page.header(header::CONTENT_SECURITY_POLICY),
+            read.header(header::CONTENT_SECURITY_POLICY)
+        );
+    }
+    let csp = read.header(header::CONTENT_SECURITY_POLICY);
+    assert!(csp.starts_with("default-src 'self';"), "{csp}");
+    assert!(!csp.contains("unsafe-inline"), "{csp}");
+}
+
+#[tokio::test]
+async fn reader_settings_assets_agree_on_the_values() {
+    let lib = TestLibrary::new();
+    let server = lib.server("/", whole());
+    let theme_js = server.ok("/assets/theme.js").await.body;
+    let reader_css = server.ok("/assets/reader.css").await.body;
+    // Windows checkouts may embed CRLF line endings.
+    let style_css = server
+        .ok("/assets/style.css")
+        .await
+        .body
+        .replace("\r\n", "\n");
+    let app_js = server.ok("/assets/app.js").await.body;
+
+    // theme.js whitelists exactly the panel's values, the default first; reader.css has
+    // a preset for every value but the default (which is the stylesheet's own value).
+    for (name, values, attr) in READER_SETTINGS {
+        let list = values
+            .iter()
+            .map(|v| format!("\"{v}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let whitelist = format!("{name}: [{list}],");
+        assert!(theme_js.contains(&whitelist), "{whitelist} missing");
+        assert!(theme_js.contains(&format!("{name}: \"{attr}\",")), "{attr}");
+        assert!(
+            !reader_css.contains(&format!("[data-{attr}=\"{}\"]", values[0])),
+            "no preset for the default {name}"
+        );
+        for value in &values[1..] {
+            let preset = format!(":root[data-{attr}=\"{value}\"] {{");
+            assert!(reader_css.contains(&preset), "{preset} missing");
+        }
+    }
+    // Sizes: 8 steps, 3 (18px, the old size) is the default.
+    assert!(theme_js.contains("size: [\"3\", \"0\", \"1\", \"2\", \"4\", \"5\", \"6\", \"7\"],"));
+    for step in ["0", "1", "2", "4", "5", "6", "7"] {
+        assert!(reader_css.contains(&format!(":root[data-rsize=\"{step}\"] {{")));
+    }
+    // The base rules consume the properties, with the old values as defaults.
+    for rule in [
+        "max-width: var(--reader-width, 40rem);",
+        "font-family: var(--reader-font, inherit);",
+        "font-size: var(--reader-size, 1.125rem);",
+        "line-height: var(--reader-leading, 1.65);",
+        "text-align: var(--reader-align, start);",
+    ] {
+        assert!(style_css.contains(rule), "{rule} missing");
+    }
+    // Every theme of the panel exists (light is the plain `:root` palette).
+    for theme in &THEMES[1..] {
+        assert!(
+            app_js.contains(&format!("\"{theme}\"")),
+            "{theme} in THEMES"
+        );
+        if *theme != "light" {
+            assert!(style_css.contains(&format!(":root[data-theme=\"{theme}\"] {{")));
+        }
+    }
+    // Buttons that need JavaScript stay hidden without it.
+    assert!(style_css.contains(".icon-button[hidden] {\n  display: none;"));
+    // Focus mode is styled in reader.css only, so it never touches library pages.
+    assert!(reader_css.contains(":root.reading-focus .sidebar"));
+    assert!(!style_css.contains("reading-focus"));
+}

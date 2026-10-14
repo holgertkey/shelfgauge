@@ -1,0 +1,46 @@
+<div id="reader-settings" class="reader-settings" popover aria-label="Reading settings">
+<form class="settings-form">
+  <fieldset class="setting swatches">
+    <legend>Theme</legend>
+    <label class="swatch swatch-auto" title="Auto"><input type="radio" name="theme" value=""><span>Auto</span></label>
+    <label class="swatch swatch-light" title="Light"><input type="radio" name="theme" value="light"><span>Light</span></label>
+    <label class="swatch swatch-sepia" title="Sepia"><input type="radio" name="theme" value="sepia"><span>Sepia</span></label>
+    <label class="swatch swatch-dark" title="Dark"><input type="radio" name="theme" value="dark"><span>Dark</span></label>
+    <label class="swatch swatch-navy" title="Navy"><input type="radio" name="theme" value="navy"><span>Navy</span></label>
+    <label class="swatch swatch-black" title="Black"><input type="radio" name="theme" value="black"><span>Black</span></label>
+  </fieldset>
+  <fieldset class="setting">
+    <legend>Font</legend>
+    <label><input type="radio" name="font" value="sans"><span class="font-sans">Sans</span></label>
+    <label><input type="radio" name="font" value="serif"><span class="font-serif">Serif</span></label>
+  </fieldset>
+  <fieldset class="setting size">
+    <legend>Size</legend>
+    <button type="button" data-step="-1" title="Smaller (-)" aria-label="Smaller">A−</button>
+    <output class="size-value" aria-live="polite"></output>
+    <button type="button" data-step="1" title="Larger (+)" aria-label="Larger">A+</button>
+  </fieldset>
+  <fieldset class="setting">
+    <legend>Line spacing</legend>
+    <label><input type="radio" name="leading" value="tight"><span>Tight</span></label>
+    <label><input type="radio" name="leading" value="normal"><span>Normal</span></label>
+    <label><input type="radio" name="leading" value="loose"><span>Loose</span></label>
+  </fieldset>
+  <fieldset class="setting">
+    <legend>Width</legend>
+    <label><input type="radio" name="width" value="narrow"><span>Narrow</span></label>
+    <label><input type="radio" name="width" value="medium"><span>Medium</span></label>
+    <label><input type="radio" name="width" value="wide"><span>Wide</span></label>
+    <label><input type="radio" name="width" value="full"><span>Full</span></label>
+  </fieldset>
+  <fieldset class="setting">
+    <legend>Alignment</legend>
+    <label><input type="radio" name="align" value="left"><span>Left</span></label>
+    <label><input type="radio" name="align" value="justify"><span>Justify</span></label>
+  </fieldset>
+  <div class="settings-foot">
+    <label class="focus-toggle"><input type="checkbox" name="focus"> Focus mode <kbd>f</kbd></label>
+    <button type="button" class="settings-reset">Defaults</button>
+  </div>
+</form>
+</div>

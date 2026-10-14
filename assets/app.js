@@ -4,7 +4,7 @@
 // respected. Fetched fragments are our own server-rendered HTML.
 "use strict";
 
-const THEMES = ["", "light", "dark", "sepia", "navy"];
+const THEMES = ["", "light", "dark", "sepia", "navy", "black"];
 const THEME_KEY = "shelfgauge-theme";
 const SIDEBAR_KEY = "shelfgauge-sidebar-hidden";
 const SCROLL_KEY = "shelfgauge-sidebar-scroll";
@@ -55,6 +55,8 @@ function applyTheme(theme) {
   if (select) {
     select.value = theme;
   }
+  // The reader's settings panel shows the theme too.
+  document.dispatchEvent(new CustomEvent("shelfgauge:theme", { detail: theme || "" }));
 }
 
 function setupTheme() {
