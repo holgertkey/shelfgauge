@@ -319,11 +319,18 @@ independent features.
 
 **DRM** (applies once EPUB or another DRM-capable format is added): DRM-free books,
 including purchased ones with a watermark, are ordinary books and watermarks are never
-removed; EPUB font obfuscation is supported. DRM-encrypted books (Adobe ADEPT, Readium
-LCP, FairPlay, Kindle) are never decrypted: the parser detects them (EPUB:
-`META-INF/encryption.xml` with algorithms other than font obfuscation, `rights.xml`,
-`license.lcpl`), indexes the readable metadata and gives them a separate "Protected by
-DRM" status — not a parse error, never opened in the reader, never published.
+removed; EPUB font obfuscation is not DRM (embedded fonts are not used anyway).
+DRM-encrypted books (Adobe ADEPT, Readium LCP, FairPlay, Kindle) are never decrypted:
+the parser detects them (EPUB: `META-INF/encryption.xml` with algorithms other than font
+obfuscation, `rights.xml`, `license.lcpl`), indexes the readable metadata and gives them
+a separate "Protected by DRM" status — not a parse error, never opened in the reader,
+never published.
+
+**Order of new formats**: EPUB (0.8.0) comes before the hub. The hub turns `BookContent`
+into a versioned wire format, so the model must be extended for EPUB (lists, `pre`,
+rules, sections from the navigation document and headings, inline EPUB3 footnotes)
+while a change still costs only a `PARSER_VERSION` bump. FB2 block numbering stays
+unchanged (its golden test must not change). TXT any time; MOBI/AZW3 later or never.
 
 ## Planned tech stack
 
