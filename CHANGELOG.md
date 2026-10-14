@@ -28,6 +28,12 @@ Build numbers (`+NNN`) do not get their own sections.
 ### Fixed
 
 - Top-bar buttons that need JavaScript (e.g. the bookmark button) are hidden without it.
+- A long chapter cut by `reader.max_part_size` no longer ends in a tiny extra piece
+  (e.g. "Chapter (3/3)" holding a single line): it is cut into as few pieces as the limit
+  allows, of about equal size. In `split = "size"`, a part shorter than a quarter of
+  `part_size` (the end of a body, or the rest before a very large block) joins its
+  neighbour. Links with `?part=N` may point to a different part; block links (`?at=`),
+  bookmarks, quotes and the reading position are not affected.
 
 ## [0.6.0] - 2026-10-13
 

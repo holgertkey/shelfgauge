@@ -101,7 +101,10 @@ Key design points to keep in mind when implementing:
     of a section (a poem or cite is never split); `section` cuts at sections up to
     `section_depth`, merges title-only parts and small untitled parts (front matter)
     into the next one and never splits a notes body per note. In every mode a part
-    longer than `max_part_size` characters is cut into equal pieces ("Title (1/3)").
+    longer than `max_part_size` characters is cut into equal pieces ("Title (1/3)"):
+    as few as the limit allows, each cut at the block boundary nearest to an equal
+    share, so no short remainder is left; in `size` mode a part shorter than a quarter
+    of `part_size` joins its neighbour.
     `?at=b<n>` redirects to the part URL with `#b<n>`.
   - Content comes from `.shelfgauge/content/` (keyed by the indexed content identity:
     a plain file's hash, a zip entry's size + CRC32), else the book is read, verified

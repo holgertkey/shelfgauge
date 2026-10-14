@@ -609,12 +609,12 @@ async fn long_parts_are_limited() {
     let parts = server.parts(&format!("/book/{id}/read")).await;
     assert_eq!(
         parts.len(),
-        4,
-        "about 60 000 characters, at most 20 000 per part"
+        3,
+        "about 59 900 characters, at most 20 000 per part: three pieces, no short fourth"
     );
-    assert!(parts[0].body.contains("Part 1 of 4"));
+    assert!(parts[0].body.contains("Part 1 of 3"));
     assert!(
-        parts[1].body.contains("Part 1 (2/4)"),
+        parts[1].body.contains("Part 1 (2/3)"),
         "pieces are numbered"
     );
     let rendered: Vec<u32> = parts.iter().flat_map(Reply::block_ids).collect();
@@ -623,7 +623,7 @@ async fn long_parts_are_limited() {
     let reply = server.get(&format!("/book/{id}/read?at=b{last}")).await;
     assert_eq!(
         reply.header(header::LOCATION),
-        format!("/book/{id}/read?part=4#b{last}")
+        format!("/book/{id}/read?part=3#b{last}")
     );
 
     let unlimited = lib.server(

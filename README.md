@@ -129,8 +129,8 @@ program with a message naming the key. `--port` and `--bind` override the file.
 | `library.reading_list_size` | `10` | Books shown under "Currently reading" on the library page (most recently read first); `0` hides the list. |
 | `reader.split` | `"section"` | How a book is split into parts: `"none"` (one part), `"section"` or `"size"`. |
 | `reader.section_depth` | `1` | For `"section"`: split at sections down to this depth (1 = top level). Very short untitled parts (a copyright notice, an epigraph) join the next part. |
-| `reader.part_size` | `50000` | For `"size"`: approximate number of characters per part (cut between whole blocks). |
-| `reader.max_part_size` | `300000` | The longest part in characters, in every mode: a longer part (e.g. a book without chapters) is cut into equal pieces between whole blocks, titled "Title (1/3)", ... `0` disables the limit. |
+| `reader.part_size` | `50000` | For `"size"`: approximate number of characters per part (cut between whole blocks; a short rest joins the previous part). |
+| `reader.max_part_size` | `300000` | The longest part in characters, in every mode: a longer part (e.g. a book without chapters) is cut into as few equal pieces as the limit allows, between whole blocks, titled "Title (1/3)", ... `0` disables the limit. |
 | `reader.remember_position` | `true` | Remember where you stopped reading each book: the book card offers "Continue reading" and shows the progress. `false` stops saving and hides both (saved positions are kept). |
 | `annotations.max_text_length` | `10000` | The longest text that can be saved as a quote, in characters (about 3–4 book pages); `1`–`1000000`. |
 | `annotations.max_note_length` | `10000` | The longest note, in characters; `1`–`1000000`. Lowering a limit never changes saved quotes. |

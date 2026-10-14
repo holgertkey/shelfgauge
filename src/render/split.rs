@@ -16,7 +16,9 @@
 //!   section starts in it and it has less than [`SMALL_PART_CHARS`] characters of text
 //!   (front matter such as a copyright notice or an epigraph).
 //! - [`SplitMode::Size`]: a part is cut before a unit that would make it longer than
-//!   `part_size` characters; a single larger unit is a part of its own.
+//!   `part_size` characters; a single larger unit is a part of its own. A part shorter
+//!   than a quarter of `part_size` (the end of a body, or the rest before a large unit)
+//!   joins the previous part of the same body (the next one if it is the first).
 //!
 //! In every mode a part also starts at each body, and a notes body is never split by
 //! sections (a notes body has one section per note), only by size in
@@ -24,7 +26,10 @@
 //!
 //! Finally, in every mode, a part longer than `max_part_size` characters (unless 0) is
 //! cut into pieces of about equal size, titled "Title (1/3)", "Title (2/3)", ... (a book
-//! without chapters would otherwise be one huge page).
+//! without chapters would otherwise be one huge page): as few pieces as the limit
+//! allows, each cut at the unit boundary nearest to its share of the text, so there is
+//! no short remainder. A piece shorter than a quarter of the average still joins its
+//! shorter neighbour (possible next to a unit larger than the limit).
 
 use crate::config::{ReaderConfig, SplitMode};
 use crate::format::model::{Block, BlockId, BlockKind, BodyKind, BookContent, Section};
@@ -34,6 +39,10 @@ const IMAGE_CHARS: usize = 500;
 
 /// Untitled parts with less text than this are merged into the next part.
 pub const SMALL_PART_CHARS: usize = 1000;
+
+/// A piece or a part by size shorter than `1 / SHORT_SHARE` of its target size joins a
+/// neighbour.
+const SHORT_SHARE: usize = 4;
 
 /// One part of a book.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,8 +153,12 @@ pub fn split(content: &BookContent, config: &ReaderConfig) -> Vec<Part> {
         size += unit.chars;
     }
 
-    if config.split == SplitMode::Section {
-        cuts = absorb_small_parts(&units, &cuts);
+    match config.split {
+        SplitMode::Section => cuts = absorb_small_parts(&units, &cuts),
+        SplitMode::Size => {
+            cuts = absorb_short_parts(&units, &cuts, config.part_size as usize / SHORT_SHARE);
+        }
+        SplitMode::None => {}
     }
 
     let mut parts = Vec::with_capacity(cuts.len());
@@ -194,27 +207,101 @@ fn part_title(units: &[Unit], start: usize, end: usize, n: usize) -> String {
 }
 
 /// Cuts `units` into pieces of at most `limit` characters (0: no limit) with about the
-/// same size each; returns `(from, to)` index ranges. A single unit larger than the
-/// limit is a piece of its own.
+/// same size each; returns `(from, to)` index ranges.
+///
+/// There are as few pieces as the limit allows, and each cut is the unit boundary
+/// nearest to an equal share of the text among those that keep the piece within the
+/// limit and leave a rest that still fits into the remaining pieces. (Cutting greedily
+/// at the average size left every piece a bit short, and the shortfall became an
+/// extra, tiny last piece.) A single unit larger than the limit is a piece of its own;
+/// a piece far shorter than the average (next to such a unit) joins its shorter
+/// neighbour.
 fn pieces(units: &[Unit], limit: usize) -> Vec<(usize, usize)> {
     let total: usize = units.iter().map(|u| u.chars).sum();
     if limit == 0 || total <= limit {
         return vec![(0, units.len())];
     }
-    // Aim at equal pieces: 650 000 characters with a limit of 300 000 give three
-    // pieces of about 217 000, not 300 000 + 300 000 + 50 000.
-    let target = total.div_ceil(total.div_ceil(limit));
-    let mut result = Vec::new();
-    let (mut from, mut size) = (0, 0);
-    for (i, unit) in units.iter().enumerate() {
-        if size > 0 && size + unit.chars > target {
-            result.push((from, i));
-            (from, size) = (i, 0);
-        }
-        size += unit.chars;
+    let len = units.len();
+    // `prefix[i]`: the characters before unit `i`.
+    let prefix: Vec<usize> = std::iter::once(0)
+        .chain(units.iter().scan(0, |sum, unit| {
+            *sum += unit.chars;
+            Some(*sum)
+        }))
+        .collect();
+    let size = |from: usize, to: usize| prefix[to] - prefix[from];
+    // The end of the longest piece from `i` within the limit (at least one unit).
+    let reach = |i: usize| {
+        let end = prefix.partition_point(|&p| p <= prefix[i] + limit) - 1;
+        end.max(i + 1)
+    };
+    // `need[i]`: the fewest pieces for `units[i..]` (filling each piece is optimal).
+    let mut need = vec![0; len + 1];
+    for i in (0..len).rev() {
+        need[i] = 1 + need[reach(i)];
     }
-    result.push((from, units.len()));
-    result
+    let count = need[0];
+    let mut bounds = vec![0];
+    for k in 1..count {
+        let from = *bounds.last().expect("starts with 0");
+        // Feasible cuts: within the limit, and the rest fits into `count - k` pieces
+        // (`need` never grows to the right, so they form a range).
+        let hi = reach(from);
+        let lo = (from + 1..=hi)
+            .find(|&b| need[b] <= count - k)
+            .expect("the farthest cut always leaves a rest that fits");
+        let ideal = total * k / count;
+        let after = prefix[..=hi].partition_point(|&p| p < ideal).clamp(lo, hi);
+        let cut =
+            if after > lo && ideal.abs_diff(prefix[after - 1]) <= prefix[after].abs_diff(ideal) {
+                after - 1
+            } else {
+                after
+            };
+        bounds.push(cut);
+    }
+    bounds.push(len);
+    // Join pieces far shorter than the average to their shorter neighbour.
+    let short = total / count / SHORT_SHARE;
+    while bounds.len() > 2 {
+        let Some(n) = (0..bounds.len() - 1).find(|&n| size(bounds[n], bounds[n + 1]) < short)
+        else {
+            break;
+        };
+        let join_previous = n + 2 == bounds.len()
+            || (n > 0 && size(bounds[n - 1], bounds[n]) <= size(bounds[n + 1], bounds[n + 2]));
+        bounds.remove(if join_previous { n } else { n + 1 });
+    }
+    bounds.windows(2).map(|w| (w[0], w[1])).collect()
+}
+
+/// [`SplitMode::Size`]: joins every part with fewer than `min` characters to the
+/// previous part of the same body, or to the next one when it is the body's first.
+fn absorb_short_parts(units: &[Unit], cuts: &[usize], min: usize) -> Vec<usize> {
+    let mut cuts = cuts.to_vec();
+    loop {
+        let drop = (0..cuts.len()).find_map(|n| {
+            let start = cuts[n];
+            let end = cuts.get(n + 1).copied().unwrap_or(units.len());
+            if units[start..end].iter().map(|u| u.chars).sum::<usize>() >= min {
+                return None;
+            }
+            let body = units[start].body;
+            if n > 0 && units[cuts[n - 1]].body == body {
+                Some(n)
+            } else if end < units.len() && units[end].body == body {
+                Some(n + 1)
+            } else {
+                None
+            }
+        });
+        match drop {
+            Some(n) => {
+                cuts.remove(n);
+            }
+            None => return cuts,
+        }
+    }
 }
 
 /// Drops every cut that would end a part made only of section titles, or an untitled
@@ -591,17 +678,18 @@ pub(crate) mod tests {
         for split_mode in [SplitMode::None, SplitMode::Section, SplitMode::Size] {
             let parts = split(&content, &limited(split_mode, 3000));
             assert_valid(&content, &parts);
-            // 10 000 characters, at most 3 000 per part, equal pieces of up to 2 500.
+            // 10 004 characters, at most 3 000 per part: four pieces (not five), cut at
+            // the paragraph boundaries nearest to 2 501, 5 002 and 7 503.
             let sizes: Vec<usize> = parts.iter().map(|p| part_chars(&content, p)).collect();
             assert!(
                 sizes.iter().all(|&n| n <= 3000),
                 "{split_mode:?}: {sizes:?}"
             );
             // The first piece also holds the title "Flat".
-            assert_eq!(sizes, [2004, 2000, 2000, 2000, 2000], "{split_mode:?}");
+            assert_eq!(sizes, [2004, 3000, 2000, 3000], "{split_mode:?}");
             let titles: Vec<&str> = parts.iter().map(|p| p.title.as_str()).collect();
-            assert_eq!(titles[0], "Flat (1/5)", "{split_mode:?}");
-            assert_eq!(titles[4], "Flat (5/5)");
+            assert_eq!(titles[0], "Flat (1/4)", "{split_mode:?}");
+            assert_eq!(titles[3], "Flat (4/4)");
         }
     }
 
@@ -628,11 +716,118 @@ pub(crate) mod tests {
         let content = flat_book();
         let parts = split(&content, &limited(SplitMode::Section, 10));
         assert_valid(&content, &parts);
-        assert_eq!(
-            parts.len(),
-            11,
-            "the title and each paragraph alone, none cut"
-        );
+        // Each paragraph alone, none cut; the short title joins the first one.
+        assert_eq!(parts.len(), 10);
+        assert_eq!(part_chars(&content, &parts[0]), 1004);
+        assert!(parts[1..].iter().all(|p| part_chars(&content, p) == 1000));
+    }
+
+    /// An untitled main body with one paragraph per size.
+    fn sized_book(sizes: &[usize]) -> BookContent {
+        let paragraphs = sizes
+            .iter()
+            .enumerate()
+            .map(|(i, &n)| {
+                let text = format!("{i}:");
+                p(&format!("{text}{}", "x".repeat(n - text.len())))
+            })
+            .collect();
+        BookContent::new(
+            vec![Body::main(section("", paragraphs, vec![]))],
+            Default::default(),
+        )
+    }
+
+    fn sizes(content: &BookContent, parts: &[Part]) -> Vec<usize> {
+        parts.iter().map(|p| part_chars(content, p)).collect()
+    }
+
+    #[test]
+    fn pieces_leave_no_short_remainder() {
+        // Regression: 301 000 characters with a limit of 300 000 were cut greedily at
+        // 150 500 into 150 000 + 150 000 + 1 000.
+        let content = sized_book(&[1000; 301]);
+        let parts = split(&content, &limited(SplitMode::None, 300_000));
+        assert_valid(&content, &parts);
+        assert_eq!(sizes(&content, &parts), [150_000, 151_000]);
+        assert_eq!(parts[1].title, "Part 1 (2/2)");
+    }
+
+    #[test]
+    fn pieces_are_as_few_as_the_limit_allows_and_never_short() {
+        // Paragraph sizes from a fixed pseudo-random sequence (no `rand` dependency).
+        let mut seed = 0x2545_f491_u64;
+        let mut next = |max: u64| {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            (seed >> 33) % max
+        };
+        for round in 0..200 {
+            let count = 1 + next(400) as usize;
+            let sizes_in: Vec<usize> = (0..count).map(|_| 10 + next(2000) as usize).collect();
+            let total: usize = sizes_in.iter().sum();
+            let limit = 2100 + next(60_000) as usize;
+            let content = sized_book(&sizes_in);
+            let parts = split(&content, &limited(SplitMode::None, limit as u32));
+            assert_valid(&content, &parts);
+            let got = sizes(&content, &parts);
+            // Units are at most 2 010 characters, so the limit can always be kept.
+            assert!(
+                got.iter().all(|&n| n <= limit),
+                "round {round}: {got:?} > {limit}"
+            );
+            // As few pieces as filling each one up to the limit gives.
+            let mut least = 0;
+            let mut fill = 0;
+            for &n in &sizes_in {
+                if fill == 0 || fill + n > limit {
+                    least += 1;
+                    fill = 0;
+                }
+                fill += n;
+            }
+            let least = if total <= limit { 1 } else { least };
+            assert_eq!(got.len(), least, "round {round}: {got:?}");
+            let average = total / got.len();
+            assert!(
+                got.len() == 1 || got.iter().all(|&n| n >= average / 4),
+                "round {round}: a short piece in {got:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_short_piece_next_to_a_huge_unit_joins_a_neighbour() {
+        // 990 | 20 | 990 with a limit of 1 000: the 20 joins the shorter neighbour (the
+        // first), slightly over the limit, rather than being a page of its own.
+        let content = sized_book(&[990, 20, 990]);
+        let parts = split(&content, &limited(SplitMode::None, 1000));
+        assert_valid(&content, &parts);
+        assert_eq!(sizes(&content, &parts), [1010, 990]);
+        // A unit larger than the limit stays one piece; small neighbours join it.
+        let content = sized_book(&[100, 5000, 100]);
+        let parts = split(&content, &limited(SplitMode::None, 1000));
+        assert_valid(&content, &parts);
+        assert_eq!(sizes(&content, &parts), [5200]);
+    }
+
+    #[test]
+    fn size_mode_joins_short_parts() {
+        // A short end of the body joins the previous part.
+        let content = sized_book(&[1000, 1000, 1000, 1000, 200]);
+        let parts = split(&content, &config(SplitMode::Size, 1, 2000));
+        assert_valid(&content, &parts);
+        assert_eq!(sizes(&content, &parts), [2000, 2200]);
+        // A short rest before a unit larger than `part_size` joins the previous part.
+        let content = sized_book(&[1000, 900, 100, 5000, 1000]);
+        let parts = split(&content, &config(SplitMode::Size, 1, 2000));
+        assert_valid(&content, &parts);
+        assert_eq!(sizes(&content, &parts), [2000, 5000, 1000]);
+        // A short first part joins the next one; a short whole body stays alone.
+        let content = sized_book(&[100, 5000]);
+        let parts = split(&content, &config(SplitMode::Size, 1, 2000));
+        assert_eq!(sizes(&content, &parts), [5100]);
+        let content = sized_book(&[100]);
+        assert_eq!(split(&content, &config(SplitMode::Size, 1, 2000)).len(), 1);
     }
 
     #[test]
