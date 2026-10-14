@@ -1,7 +1,8 @@
 # shelfgauge — Architecture
 
 > Status: v1 implemented (scanner, storage, web server, library and reading mode,
-> hardening) and annotations (0.6.0). The V2 offline reader below is not.
+> hardening), annotations (0.6.0) and reader settings (0.7.0). The V2 hub below is
+> designed, not built.
 
 `shelfgauge` is a single-binary Rust app that indexes a directory tree of ebook files (FB2 in
 v1, plain files and `.zip` archives with any number of books inside) into a local SQLite DB
@@ -147,7 +148,7 @@ Code: `src/annotations/` (`text`, `anchor`, `store`, `export`, `attach`),
   The stored `book_id` is only a hint. A selection lies within one part; text and note lengths are
   limited by `[annotations]` in the config (`max_text_length`, `max_note_length`,
   10000 characters by default).
-- Ids are UUIDs and deletion is soft (`deleted_at`), so the V2 offline reader can sync
+- Ids are UUIDs and deletion is soft (`deleted_at`), so the V2 hub (below) can sync
   into this table later.
 - **UI**: `reader.js`/`reader.css` load only on read pages; selecting text offers "Quote";
   saved annotations are highlighted on the client; a bookmark is one action (button or
@@ -245,14 +246,84 @@ v1 binds to `127.0.0.1` only, but is built to allow remote access later:
 - No built-in TLS: remote access goes through a reverse proxy with HTTPS or a private
   network (Tailscale / WireGuard / SSH tunnel).
 
-## V2 (deferred — do not build in v1)
+## V2: hub — books on mobile devices (designed, not built)
 
-Offline-first reader: `/reader/<token>` reading links (with revocation), Service Worker +
-Cache Storage so a tab keeps working without the server, reading position and offline
-annotations in IndexedDB (same anchor model as above), synced into the server-owned
-annotations when the server is reachable. Depends on the fixed port, since browser
-storage is per origin, and on a secure context (localhost or HTTPS). Sync conflict rules
-and per-user data are decided in V2.
+Agreed 2026-10-14. A user opens a book on a phone (or any other device) in a browser and
+reads it even when the computer with the library is off, with annotations and the
+reading position shared with the local instance. It replaces the earlier plan of a
+local offline reader with `/reader/<token>` links. Remote access to the instance itself
+(Tailscale / reverse proxy + built-in login) and an OPDS catalog are separate,
+independent features.
+
+- **Zero-knowledge hub**: `shelfgauge hub --data <dir>`, a subcommand of the same binary
+  (axum + SQLite + a blob directory, HTTPS through a reverse proxy). It stores only
+  ciphertext and never gets a key. Self-hosted first; the protocol is ready for a public
+  hub, which is decided later.
+- **Roles**: the *instance* (local shelfgauge, owns the library and `userdata.sqlite`),
+  the *hub*, and *devices* (browsers running the hub's reader app). Several instances may
+  share one account; books are matched by content key and the shelf shows each book's
+  library (`[hub] instance_name`).
+- **Accounts are anonymous** (no email). Authentication and encryption are separate:
+  a revocable *device token* authorizes API calls and binds them to the account; the
+  *account key* (32 bytes, only on clients: `userdata.sqlite`, never `config.toml`;
+  IndexedDB on devices) encrypts the shelf and user-data records; a *book key* per
+  publication encrypts its blobs. A *recovery code* (account id + account key + a
+  recovery secret, whose hash is all the hub keeps) restores access; without it and
+  without any paired client the hub data is lost (the books are not).
+- **Pairing**: the instance shows a QR code `https://<hub>/pair#<pairing secret>.<account
+  key>`; the fragment never reaches the server, the reader app sends only the one-time
+  secret and gets a device token. Device list with revocation in the instance's UI.
+- **Personal links**: "Open on phone" on the book card publishes the book and shows a QR
+  code for `https://<hub>/r/<publication-id>`. The link carries no key and opens only on
+  devices paired with the account (the book key comes from the shelf record). This keeps
+  the hub from becoming a file-sharing service and keeps purchased books with their
+  watermarks on the buyer's devices. DRM-protected books are never published (they
+  cannot be read at all, see below).
+- **Publication = structured data, never HTML**: an encrypted manifest (format version,
+  metadata, content key, TOC, part ranges, shares for the progress track, image list),
+  one blob per part (the part's `BookContent` blocks) and one per image (whitelisted
+  types, shown through `blob:` URLs). Each blob is compressed, padded to the next size of
+  a geometric sequence with ratio 9/8 (hides the size fingerprint of well-known books)
+  and encrypted with AES-256-GCM (random nonce; associated data = publication id + blob
+  path + format version). Block ids do not depend on the split, so annotations made on a
+  device anchor exactly like local ones; a changed book is a new publication.
+- **Rendering on the device runs the same Rust code in WASM** (`render` and
+  `annotations::text`): blob data is untrusted, so trusted code turns it into escaped
+  HTML exactly as the server does, under a strict CSP (`script-src 'self'
+  'wasm-unsafe-eval'`, no inline code). This requires a workspace with a core crate
+  (format model, split, render, annotation text; no filesystem, SQLite or Tokio) that
+  builds for `wasm32` (`wasm-bindgen --target web`, no Node). The reader app is plain
+  JS + WASM, reusing `reader.css`/`theme.js`.
+- **Sync**: the hub keeps per-account records `(id, kind, seq, ciphertext)` of kinds
+  `shelf_item`, `annotation` (id = annotation UUID) and `position` (id = HMAC(account
+  key, content key)); clients pull since a `seq` cursor and merge: annotations
+  accumulate, the newest `updated_at` wins per id, deletions are tombstones; positions:
+  last write wins. Only books on the shelf are synced: publishing pushes their existing
+  data, unpublishing deletes the publication and its records on the hub (local data
+  stays). Records for books an instance does not have are kept as orphans (annotation
+  rules above). Devices work offline (Service Worker + Cache Storage, changes queued in
+  IndexedDB).
+- **Lifetime and quotas** are hub settings: `publication_expiry_days` (days without
+  opens, `0` = never, the self-hosted default; the shelf item stays and the book can be
+  republished) and per-account limits on bytes, publications and devices (unlimited by
+  default on a self-hosted hub).
+- **Abuse and compatibility**: uploads only from registered accounts, rate limits,
+  takedown by publication id (`shelfgauge hub takedown <id>`; the operator cannot see
+  content but can delete it). The manifest format is versioned; `/api/info` advertises
+  the supported range and an instance refuses to publish a format the hub cannot read.
+- **Known limits**: web end-to-end encryption protects against a leaked hub database,
+  not against a malicious operator serving a key-stealing reader (mitigation: open
+  source, self-hosting); a revoked device keeps the account key until the key is rotated
+  (re-encrypting all records on a trusted client); copies already cached on a device
+  cannot be retracted.
+
+**DRM** (applies once EPUB or another DRM-capable format is added): DRM-free books,
+including purchased ones with a watermark, are ordinary books and watermarks are never
+removed; EPUB font obfuscation is supported. DRM-encrypted books (Adobe ADEPT, Readium
+LCP, FairPlay, Kindle) are never decrypted: the parser detects them (EPUB:
+`META-INF/encryption.xml` with algorithms other than font obfuscation, `rights.xml`,
+`license.lcpl`), indexes the readable metadata and gives them a separate "Protected by
+DRM" status — not a parse error, never opened in the reader, never published.
 
 ## Planned tech stack
 
@@ -273,5 +344,5 @@ and per-user data are decided in V2.
 
 ## Out of scope for v1
 
-The V2 reader (above), deduplication across the library, RAR/other archive formats, nested
+The V2 hub (above), deduplication across the library, RAR/other archive formats, nested
 archives, multi-root libraries.
