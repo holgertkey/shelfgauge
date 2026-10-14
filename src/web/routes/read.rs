@@ -138,6 +138,25 @@ struct ReadPage {
     max_note: u32,
 }
 
+/// The book's language as an HTML `lang` value: a BCP 47 tag such as `ru` or `en-GB`
+/// (`_` is accepted for `-`); anything else (`Русский`, `ru, en`) is dropped.
+///
+/// Browsers hyphenate and reader views pick a voice by it, so a wrong value is worse
+/// than none.
+fn html_lang(language: Option<&str>) -> Option<String> {
+    let tag = language?.trim().replace('_', "-");
+    let mut subtags = tag.split('-');
+    let primary = subtags.next()?;
+    let valid = (2..=3).contains(&primary.len())
+        && primary.bytes().all(|b| b.is_ascii_alphabetic())
+        && subtags
+            .all(|s| (1..=8).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric()));
+    valid.then(|| {
+        let rest = &tag[primary.len()..];
+        format!("{}{rest}", primary.to_ascii_lowercase())
+    })
+}
+
 /// What a read request results in.
 enum Outcome {
     /// The part to show.
@@ -245,7 +264,8 @@ fn page(state: &AppState, book: &BookDetails, params: &Params) -> Result<Outcome
     let text = BookText::new(&content);
     let progress = PartProgress::of(&text, &parts, index);
     Ok(Outcome::Page(Box::new(ReadPage {
-        layout: Layout::new(state, title, SidebarView::default()),
+        layout: Layout::new(state, title, SidebarView::default())
+            .with_lang(html_lang(book.language.as_deref())),
         book_title: book.title.clone(),
         book_authors: attach::authors(book),
         progress,
@@ -299,4 +319,35 @@ pub(crate) async fn image(
         &headers,
         data,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::html_lang;
+
+    #[test]
+    fn book_languages_become_html_lang_tags() {
+        for (language, expected) in [
+            ("ru", Some("ru")),
+            (" RU ", Some("ru")),
+            ("en-GB", Some("en-GB")),
+            ("en_US", Some("en-US")),
+            ("rus", Some("rus")),
+            ("sr-Latn-RS", Some("sr-Latn-RS")),
+            ("", None),
+            ("r", None),
+            ("Русский", None),
+            ("russian", None),
+            ("ru, en", None),
+            ("ru-", None),
+            ("ru\"><script>", None),
+        ] {
+            assert_eq!(
+                html_lang(Some(language)).as_deref(),
+                expected,
+                "{language:?}"
+            );
+        }
+        assert_eq!(html_lang(None), None);
+    }
 }

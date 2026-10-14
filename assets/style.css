@@ -1057,14 +1057,14 @@ button.small.primary {
 }
 
 .text .epigraph p,
-.text .text-author,
+.text .attribution,
 .text .date,
 .text .poem p,
 .text .stanza p {
   text-indent: 0;
 }
 
-.text .text-author {
+.text .attribution {
   font-style: italic;
   text-align: right;
 }

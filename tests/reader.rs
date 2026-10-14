@@ -928,3 +928,61 @@ async fn progress_links_never_open_the_notes() {
         "the end of the main text, not the notes: {location}"
     );
 }
+
+#[tokio::test]
+async fn read_pages_name_the_book_for_reader_views() {
+    let lib = TestLibrary::new();
+    // No author and a language that is not a tag.
+    lib.write(
+        "anonymous.fb2",
+        br#"<?xml version="1.0" encoding="UTF-8"?>
+<FictionBook><description><title-info><book-title>Anonymous</book-title><lang>Russian, English</lang>
+</title-info></description><body><section><p>Text</p></section></body></FictionBook>"#,
+    );
+    lib.scan();
+    let server = lib.server("/", whole());
+
+    let page = server
+        .ok(&format!("/book/{}/read", lib.id_of("full.fb2")))
+        .await
+        .body;
+    // The book's language for the text, English for the UI around it.
+    assert!(page.contains("<html lang=\"ru\""), "{page}");
+    assert!(page.contains("<header class=\"topbar\" lang=\"en\">"));
+    assert!(page.contains("id=\"reader-settings\""));
+    assert!(page.contains("popover aria-label=\"Reading settings\" lang=\"en\">"));
+    // Title and authors as metadata, so reader views do not guess them from the page.
+    assert!(page.contains("<meta property=\"og:title\" content=\"Старый маяк\">"));
+    assert!(page.contains(
+        "<meta name=\"author\" content=\"Сидоров Иван Петрович, The Lighthouse Keeper\">"
+    ));
+    // An epigraph's author is no byline: no class in the text mentions `author`.
+    let text = page.split("<div class=\"text\">").nth(1).unwrap();
+    assert!(
+        text.contains("class=\"attribution\">Unknown sailor</p>"),
+        "{text}"
+    );
+    assert!(!text.contains("author"), "{text}");
+
+    let anonymous = server
+        .ok(&format!("/book/{}/read", lib.id_of("anonymous.fb2")))
+        .await
+        .body;
+    assert!(
+        anonymous.contains("<html lang=\"en\""),
+        "invalid language dropped"
+    );
+    assert!(anonymous.contains("<meta property=\"og:title\" content=\"Anonymous\">"));
+    assert!(
+        !anonymous.contains("<meta name=\"author\""),
+        "no empty author"
+    );
+
+    // Library pages stay English.
+    let card = server
+        .ok(&format!("/book/{}", lib.id_of("full.fb2")))
+        .await
+        .body;
+    assert!(card.contains("<html lang=\"en\""));
+    assert!(!card.contains("og:title"));
+}

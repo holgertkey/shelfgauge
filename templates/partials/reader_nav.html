@@ -1,5 +1,5 @@
 <nav class="reader-nav" aria-label="Parts">
   {%- if let Some(prev) = prev %}<a href="{{ prev.href }}" rel="prev" title="{{ prev.title }} (←)">‹ {{ prev.title }}</a>{% else %}<span></span>{% endif %}
-  <span class="muted">{{ label }}</span>
+  <span class="muted" lang="en">{{ label }}</span>
   {%- if let Some(next) = next %}<a href="{{ next.href }}" rel="next" title="{{ next.title }} (→)">{{ next.title }} ›</a>{% else %}<span></span>{% endif %}
 </nav>

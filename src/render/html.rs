@@ -220,7 +220,9 @@ impl Renderer<'_> {
             BlockKind::Paragraph(inlines) => self.text_block("p", id, class, inlines),
             BlockKind::Subtitle(inlines) => self.text_block("p", id, "subtitle", inlines),
             BlockKind::Verse(inlines) => self.text_block("p", id, "verse", inlines),
-            BlockKind::TextAuthor(inlines) => self.text_block("p", id, "text-author", inlines),
+            // Not `text-author`: reader views take a class with `author` for the byline
+            // and cut the line out of the text.
+            BlockKind::TextAuthor(inlines) => self.text_block("p", id, "attribution", inlines),
             BlockKind::Date(text) => {
                 self.open("p", id, "date");
                 escape_into(text, &mut self.out);

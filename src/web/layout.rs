@@ -121,6 +121,8 @@ pub(crate) struct Layout {
     pub(crate) scan: ScanStatus,
     /// The sidebar.
     pub(crate) sidebar: SidebarView,
+    /// The language of the page's main content (`<html lang>`).
+    pub(crate) lang: String,
 }
 
 impl Layout {
@@ -132,6 +134,7 @@ impl Layout {
             query: String::new(),
             scan: ScanStatus::of(state),
             sidebar,
+            lang: "en".to_owned(),
         }
     }
 
@@ -143,6 +146,14 @@ impl Layout {
     /// Sets the text of the search field.
     pub(crate) fn with_query(mut self, query: &str) -> Self {
         self.query = query.to_owned();
+        self
+    }
+
+    /// Sets the page language; `None` keeps English (the language of the UI).
+    pub(crate) fn with_lang(mut self, lang: Option<String>) -> Self {
+        if let Some(lang) = lang {
+            self.lang = lang;
+        }
         self
     }
 }

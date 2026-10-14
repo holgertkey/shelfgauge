@@ -8,6 +8,16 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+### Fixed
+
+- Browser reader views (Firefox Reader View and the like) no longer take an epigraph's
+  or a poem's author line for the book's author and cut it out of the text: the
+  reading page names the title and authors in `<meta>` tags, and the line's class no
+  longer contains `author`.
+- Reading pages carry the book's language (`<html lang>`, from the FB2 `<lang>` when it
+  is a valid tag), so the browser hyphenates the text and reader views read it aloud in
+  the right language; the UI around the text stays marked as English.
+
 ## [0.7.0] - 2026-10-14
 
 ### Added

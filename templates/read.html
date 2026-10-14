@@ -2,6 +2,12 @@
 {% block head %}
 <link rel="stylesheet" href="{{ layout.urls.asset("reader.css") }}">
 <script src="{{ layout.urls.asset("reader.js") }}" defer></script>
+{#- For reader views (Firefox Reader View and the like): without them they take an
+    epigraph's author for the byline and the tab title for the title. #}
+<meta property="og:title" content="{{ book_title }}">
+{%- if !book_authors.is_empty() %}
+<meta name="author" content="{{ book_authors }}">
+{%- endif %}
 {%- endblock %}
 {% block topbar %}
   <button type="button" class="icon-button bookmark-button" title="Bookmark the place at the top of the page (b)" aria-label="Bookmark this place" hidden>
@@ -16,7 +22,7 @@
 {%- endblock %}
 {% block sidebar %}
 <p class="toc-book"><a href="{{ card_href }}">‹ {{ book_title }}</a></p>
-<nav class="reader-tabs" aria-label="Sidebar">
+<nav class="reader-tabs" aria-label="Sidebar" lang="en">
   <a href="#tab-toc" data-tab="toc">Contents</a>
   <a href="#tab-bookmarks" data-tab="bookmarks">Bookmarks</a>
   <a href="#tab-marks" data-tab="marks">Quotes</a>
