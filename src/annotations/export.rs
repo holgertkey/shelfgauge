@@ -229,10 +229,9 @@ fn sanitize(name: &str) -> String {
 /// marks grouped by section, each a quote with its note and a link to the reader.
 /// Quotes and notes are plain text paragraphs, not Markdown block quotes.
 pub fn render(book: &ExportBook, annotations: &[Annotation], base_url: &str) -> String {
-    // `from=mark` (bookmarks) or `from=quote`: see `Urls::read_mark` and `read_quote`.
-    let link = |block: BlockId, from: &str| {
+    let link = |block: BlockId| {
         format!(
-            "{}/book/{}/read?at={block}&from={from}",
+            "{}/book/{}/read?at={block}&from=mark",
             base_url.trim_end_matches('/'),
             book.id
         )
@@ -259,7 +258,7 @@ pub fn render(book: &ExportBook, annotations: &[Annotation], base_url: &str) -> 
                 out,
                 "- [{}]({})",
                 inline(&bookmark.label()).replace(']', "\\]"),
-                link(bookmark.anchor.start_block, "mark")
+                link(bookmark.anchor.start_block)
             );
         }
         out.push('\n');
@@ -284,11 +283,7 @@ pub fn render(book: &ExportBook, annotations: &[Annotation], base_url: &str) -> 
             } else {
                 "open"
             };
-            let _ = writeln!(
-                out,
-                "[{place}]({})\n",
-                link(mark.anchor.start_block, "quote")
-            );
+            let _ = writeln!(out, "[{place}]({})\n", link(mark.anchor.start_block));
         }
     }
     let trimmed = out.trim_end().len();
@@ -351,7 +346,7 @@ mod tests {
             ),
             "{md}"
         );
-        assert!(md.contains("### Chapter 1\n\nFirst line\nsecond line\n\nMy note\n\n[open](http://127.0.0.1:8742/book/12/read?at=b40&from=quote)"), "{md}");
+        assert!(md.contains("### Chapter 1\n\nFirst line\nsecond line\n\nMy note\n\n[open](http://127.0.0.1:8742/book/12/read?at=b40&from=mark)"), "{md}");
         assert!(
             md.contains("### Chapter 2\n\nElsewhere\n\n[place not found]("),
             "{md}"

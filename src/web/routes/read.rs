@@ -224,12 +224,11 @@ fn page(state: &AppState, book: &BookDetails, params: &Params) -> Result<Outcome
     if let Some(at) = &params.at {
         let block: BlockId = at.parse().map_err(|_| AppError::NotFound)?;
         let part = part_of(&parts, block).ok_or(AppError::NotFound)?;
-        // `from=mark` and `from=quote` survive the redirect: that page view must not
-        // move the position (nor highlight the block, for a quote).
-        let url = match params.from.as_deref() {
-            Some("mark") => format!("{}#{block}", urls.read_from_mark(book.id, part + 1)),
-            Some("quote") => format!("{}#{block}", urls.read_from_quote(book.id, part + 1)),
-            _ => links.block(part, block),
+        // `from=mark` survives the redirect: that page view must not move the position.
+        let url = if params.from.as_deref() == Some("mark") {
+            format!("{}#{block}", urls.read_from_mark(book.id, part + 1))
+        } else {
+            links.block(part, block)
         };
         return Ok(Outcome::Redirect(url));
     }

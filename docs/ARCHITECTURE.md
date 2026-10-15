@@ -263,10 +263,10 @@ Code: `src/annotations/` (`text`, `anchor`, `store`, `export`, `attach`),
   same re-attaching and cleanup rules. Saved by `reader.js` after scrolling stops, on
   part change and on leaving the page, never inside notes bodies and only after a dwell
   time (stray jumps do not overwrite it); a page view opened from a bookmark or quote
-  link (`from=mark`, `from=quote`) never saves it until the reader moves on with
-  prev/next; last write wins. A deep link highlights its target block, except for a
-  quote (the quote itself is highlighted) and a place picked on the status line's track
-  (`from=track`, only a rough place). The book card offers
+  link (`from=mark`) never saves it until the reader moves on with prev/next; last
+  write wins. A deep link highlights its target block; for a bookmark, a quote or a
+  place picked on the status line's track (`from=track`) the highlight only flashes
+  and fades. The book card offers
   "Continue reading" / "Read from the start" and shows progress; an explicit `?at=`
   always wins. `[reader] remember_position` turns it off.
 - **Currently reading** (library page): the unfinished books with a position, most

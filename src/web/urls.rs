@@ -166,22 +166,6 @@ impl Urls {
         self.path(&format!("/book/{id}/read?at={block}&from=mark"))
     }
 
-    /// Reading mode at a quote: like [`read_mark`](Self::read_mark), with `from=quote`
-    /// so that the block is not highlighted either (the quote itself is).
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use shelfgauge::format::model::BlockId;
-    /// use shelfgauge::web::Urls;
-    ///
-    /// let b = BlockId::new(5).unwrap();
-    /// assert_eq!(Urls::new("/").read_quote(3, b), "/book/3/read?at=b5&from=quote");
-    /// ```
-    pub fn read_quote(&self, id: i64, block: crate::format::model::BlockId) -> String {
-        self.path(&format!("/book/{id}/read?at={block}&from=quote"))
-    }
-
     /// Reading mode: 1-based `part`, opened from a bookmark or mark (`from=mark`).
     ///
     /// # Examples
@@ -209,19 +193,6 @@ impl Urls {
     /// ```
     pub fn read_from_track(&self, id: i64, part: usize) -> String {
         self.read_from(id, part, "track")
-    }
-
-    /// Reading mode: 1-based `part`, opened from a quote (`from=quote`).
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use shelfgauge::web::Urls;
-    ///
-    /// assert_eq!(Urls::new("/").read_from_quote(3, 2), "/book/3/read?part=2&from=quote");
-    /// ```
-    pub fn read_from_quote(&self, id: i64, part: usize) -> String {
-        self.read_from(id, part, "quote")
     }
 
     fn read_from(&self, id: i64, part: usize, from: &str) -> String {

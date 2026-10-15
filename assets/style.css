@@ -996,10 +996,17 @@ button.small.primary {
   transition: background 2s;
 }
 
-/* No highlight for a place picked on the status line's track (it is only rough) or
-   opened from a quote (the quote itself is highlighted). */
-.text.quiet-target :target {
+/* A place reached from the status line's track, a bookmark or a quote only flashes:
+   the highlight fades out. */
+.text.flash-target :target {
   background: none;
+  animation: target-flash 2s ease-out;
+}
+
+@keyframes target-flash {
+  from {
+    background: var(--active-bg);
+  }
 }
 
 .text p {

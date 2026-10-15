@@ -67,11 +67,7 @@ impl Lists {
     ) -> Self {
         let item = |a: &Annotation| ListItem {
             id: a.id.clone(),
-            href: if a.is_bookmark() {
-                urls.read_mark(book_id, a.anchor.start_block)
-            } else {
-                urls.read_quote(book_id, a.anchor.start_block)
-            },
+            href: urls.read_mark(book_id, a.anchor.start_block),
             label: a.label(),
             note: a.note().unwrap_or("").to_owned(),
             text: a.quote.text.clone(),

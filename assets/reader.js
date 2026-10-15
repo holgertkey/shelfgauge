@@ -622,10 +622,10 @@
 
   // ---------- Reading position ----------
 
-  // A page opened from a bookmark or quote (`from=mark`, `from=quote`) never saves
-  // the position; prev/next links do not carry it, so reading on resumes saving.
+  // A page opened from a bookmark or quote (`from=mark`) never saves the position;
+  // prev/next links do not carry it, so reading on resumes saving.
   const openedFrom = new URLSearchParams(window.location.search).get("from");
-  let suspended = openedFrom === "mark" || openedFrom === "quote";
+  let suspended = openedFrom === "mark";
   let candidate = null;
   let since = 0;
   let lastSaved = null;
@@ -973,9 +973,8 @@
   // and the current position. A click jumps to that place: within this part by
   // scrolling to the block (a fragment link, so Back returns), elsewhere through
   // `?progress=`. On a touch screen the first tap only shows the place. The block
-  // reached from the track is not highlighted as a `:target` (the place is rough), nor
-  // the one opened from a quote (the quote is); other fragment links keep their
-  // highlight.
+  // reached from the track, a bookmark or a quote only flashes as a `:target` (the
+  // highlight fades); other fragment links keep their highlight.
   const SCALE = 10000;
   let updateStatus = () => {};
   let drawBookmarks = () => {};
@@ -997,8 +996,8 @@
     let frame = 0;
     let fill = null;
     let point = null;
-    // The block id shown without the `:target` highlight (track or quote).
-    let quiet = null;
+    // The block id whose `:target` highlight fades (track, bookmark or quote).
+    let flashed = null;
 
     // Characters of the main text before each leaf block of the part (built lazily).
     function counts() {
@@ -1098,28 +1097,28 @@
       } else if (window.location.hash === `#${block.id}`) {
         block.scrollIntoView();
       } else {
-        quietTarget(block.id);
+        flashTarget(block.id);
         window.location.hash = block.id;
       }
     }
 
     // Opened through `?progress=` (the server redirects with `from=track`) or from a
-    // quote.
-    function setupQuietTarget() {
-      if (openedFrom === "track" || openedFrom === "quote") {
-        quietTarget(decodeURIComponent(window.location.hash.slice(1)));
+    // bookmark or quote (`from=mark`).
+    function setupFlashTarget() {
+      if (openedFrom === "track" || openedFrom === "mark") {
+        flashTarget(decodeURIComponent(window.location.hash.slice(1)));
       }
       window.addEventListener("hashchange", () => {
-        if (decodeURIComponent(window.location.hash.slice(1)) !== quiet) {
-          quiet = null;
-          text.classList.remove("quiet-target");
+        if (decodeURIComponent(window.location.hash.slice(1)) !== flashed) {
+          flashed = null;
+          text.classList.remove("flash-target");
         }
       });
     }
 
-    function quietTarget(id) {
-      quiet = id;
-      text.classList.add("quiet-target");
+    function flashTarget(id) {
+      flashed = id;
+      text.classList.add("flash-target");
     }
 
     function setupTrack() {
@@ -1216,7 +1215,7 @@
       });
     }
 
-    setupQuietTarget();
+    setupFlashTarget();
     if (track) {
       setupTrack();
     }
