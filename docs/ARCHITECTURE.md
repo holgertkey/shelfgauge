@@ -2,10 +2,10 @@
 
 > Status: v1 implemented (scanner, storage, web server, library and reading mode,
 > hardening), annotations (0.6.0), reader settings (0.7.0), EPUB (0.8.0), plain text
-> and `.fbz` (0.9.0). The V2 hub below is designed, not built.
+> and `.fbz` (0.9.0), HTML (0.10.0, opt-in). The V2 hub below is designed, not built.
 
 `shelfgauge` is a single-binary Rust app that indexes a directory tree of ebook files (FB2
-(also `.fbz`), EPUB and TXT, plain files and `.zip` archives with any number of books inside) into a local SQLite DB
+(also `.fbz`), EPUB, TXT and opt-in HTML, plain files and `.zip` archives with any number of books inside) into a local SQLite DB
 and serves a browsable, server-rendered web library on a fixed `localhost` port. License: MIT.
 Key design points to keep in mind when implementing:
 
@@ -37,7 +37,8 @@ Key design points to keep in mind when implementing:
   An archive's entries are parsed in parallel jobs, at most `threads × 4` per archive:
   every job opens the archive and parses its central directory, so many small jobs on a
   huge archive would be quadratic.
-- **Enabled formats**: `[scan] formats` (default `fb2`, `epub`, `txt`) builds the
+- **Enabled formats**: `[scan] formats` (default `fb2`, `epub`, `txt`; `html` is known
+  but opt-in) builds the
   scanner's registry (`Registry::with_formats`; unknown names are a config error).
   Taking a format off the list makes its files invisible to the walk, so their books
   are marked removed (annotations survive by the usual retention); putting it back finds
@@ -98,13 +99,17 @@ Key design points to keep in mind when implementing:
 - **Format abstraction is two layers, and must stay that way as formats are added**:
   - *Container layer*: resolves raw bytes to parse (bare file vs. one entry of a `.zip`),
     independent of ebook format.
-  - *Format layer*: a `BookParser` trait (one impl per format: FB2, EPUB, TXT) producing a
+  - *Format layer*: a `BookParser` trait (one impl per format: FB2, EPUB, TXT, HTML) producing a
     common `BookMetadata` / `BookContent` representation. The viewer must only depend on
     `BookContent`/`BookMetadata`, never on format-specific details.
   - Shared pieces of the format layer: `format::zipbook` (the limited in-memory reader
     of zipped books: entry count, per-entry size and ratio, total size), used by EPUB
-    and `.fbz`; `format::encoding`; `format::sections` (a flat list of items and cuts →
-    the section tree with the rules for titles, used by EPUB and TXT).
+    and `.fbz`; `format::encoding` (BOM, in-band declaration checked against the
+    bytes, UTF-8, detector); `format::sections` (a flat list of items and cuts → the
+    section tree with the rules for titles, used by EPUB, TXT and HTML);
+    `format::xhtml` (the XHTML → items converter, notes, anchors and links, the XML
+    pre-pass, path resolution; images through a `Resources` trait), used by EPUB and
+    HTML.
   - The format set is final: FB2 (+ `.fbz`), EPUB, TXT and (0.10.0, opt-in) HTML.
     Fixed-page-layout formats (PDF/DjVu), MOBI/AZW3, FB3, DOCX/RTF/ODT and comics are
     out of scope.
@@ -144,6 +149,29 @@ Key design points to keep in mind when implementing:
   characters of text or a name like `readme`/`license` → not a book. Only existing
   block kinds are produced, so FB2 and EPUB numbering are untouched; a golden test pins
   the TXT mapping.
+- **HTML** (`src/format/html/`, opt-in): bytes → text (BOM, `<meta charset>` /
+  `http-equiv` prescan of the first 1 024 bytes checked against the bytes, UTF-8,
+  detector) → `html5ever` into our own arena DOM (`dom.rs`: index-linked nodes, O(1)
+  tree operations, no recursion; not `scraper` — selectors and CSS parsing we do not
+  need — and not `markup5ever_rcdom`, which is test-only). The text is fed in 64 KB
+  chunks and parsing stops with an error when the tree gets deeper than 512 (the HTML
+  tree builder scans the open-element stack, so deep nesting is quadratic) or has more
+  than 1 M nodes (memory). In `.xhtml` files (XML declaration or XHTML namespace)
+  self-closed raw-text elements (`<title/>`, `<script .../>`) are expanded first, and
+  the XML declaration's encoding is used when there is no `<meta charset>`. The body
+  is serialized as well-formed XHTML (`serialize.rs`: names validated, Word's `o:p`
+  unwrapped, only `epub:`/`xlink:` attribute prefixes, `<a name>` → `id`; scripts,
+  forms, SVG/MathML, `pagenum` spans and link-dominated `nav`/`header`/`footer` left
+  out; nesting below 128 flattened to text) and converted by `format::xhtml` as one
+  document without images. A `<pre>` with more than 50 lines or most of the text goes
+  through the TXT paragraph and heading rules, its `<h*>` elements as forced headings.
+  Section depth = rank of (heading level, part-like keyword) — Gutenberg uses `h2` for
+  both books and chapters; a heading right after a higher-ranked one continues its
+  title unless it is itself a heading line; a single top-ranked heading that is not
+  part-like (the book's title in `<h1>`) starts no section. Metadata from Dublin Core metas,
+  `author`/`description` metas, `<html lang>`, else `<title>` patterns. Less than
+  5 000 characters of text or more than half link text → not a book. html5ever panics
+  are caught in the parser.
 - **UI is server-rendered** (askama templates, hand-written CSS/JS, assets embedded in the
   binary; no SPA, no Node). Layout is inspired by mdBook: collapsible left sidebar + main
   area + top bar + color themes. **Nothing is copied from mdBook** (MPL-2.0) — only the
@@ -413,7 +441,8 @@ into a versioned wire format, so the model must be extended for EPUB (lists, `pr
 rules, sections from the navigation document and headings, inline EPUB3 footnotes)
 while a change still costs only a `PARSER_VERSION` bump. FB2 block numbering stays
 unchanged (its golden test must not change). TXT and `.fbz` followed in 0.9.0, HTML
-(opt-in) is planned for 0.10.0; no other formats (decided 2026-10-15).
+(opt-in) followed in 0.10.0; no other formats (decided 2026-10-15). Images of HTML books
+(sibling files) need a container-layer extension and come later.
 
 ## Planned tech stack
 
@@ -427,6 +456,7 @@ unchanged (its golden test must not change). TXT and `.fbz` followed in 0.9.0, H
 | DB access from async | read pool (`r2d2_sqlite`) + `spawn_blocking` |
 | Config | serde + toml |
 | XML parsing (FB2, EPUB) | roxmltree (read-only DOM) |
+| HTML parsing | html5ever + own arena DOM, serialized to XHTML for roxmltree |
 | Encoding detection | encoding_rs (+ chardetng fallback; FB2, TXT) |
 | Directory walking | walkdir + ignore |
 | Archives | `zip` crate (`.zip` libraries, EPUB containers, `.fbz`) |

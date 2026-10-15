@@ -36,8 +36,8 @@ pub(super) fn decode(data: &[u8]) -> String {
     clean(&decoded.text)
 }
 
-/// See [`decode`].
-fn clean(text: &str) -> String {
+/// Cleans decoded text (see [`decode`]).
+pub(crate) fn clean(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {

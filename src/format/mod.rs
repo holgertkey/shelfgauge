@@ -1,6 +1,6 @@
 //! The format layer: parsers that turn the raw bytes of a book into the common model.
 //!
-//! Each ebook format ([`fb2`], [`epub`], [`txt`]) implements [`BookParser`]; a
+//! Each ebook format ([`fb2`], [`epub`], [`txt`], [`html`]) implements [`BookParser`]; a
 //! [`Registry`] maps file extensions to parsers. Everything downstream depends only on [`model`], never on a specific format.
 
 use std::path::Path;
@@ -8,6 +8,7 @@ use std::path::Path;
 pub mod encoding;
 pub mod epub;
 pub mod fb2;
+pub mod html;
 pub mod model;
 pub(crate) mod repair;
 pub(crate) mod sections;
@@ -132,9 +133,10 @@ impl ParseError {
 }
 
 /// The names of the built-in formats.
-pub const FORMATS: &[&str] = &["fb2", "epub", "txt"];
+pub const FORMATS: &[&str] = &["fb2", "epub", "txt", "html"];
 
-/// The formats a library indexes unless `[scan] formats` says otherwise.
+/// The formats a library indexes unless `[scan] formats` says otherwise (HTML is
+/// opt-in: most HTML files are not books).
 pub const DEFAULT_FORMATS: &[&str] = &["fb2", "epub", "txt"];
 
 /// A format name that is not one of [`FORMATS`].
@@ -151,6 +153,7 @@ fn builtin(name: &str) -> Option<Box<dyn BookParser>> {
         "fb2" => Some(Box::new(fb2::Fb2Parser)),
         "epub" => Some(Box::new(epub::EpubParser)),
         "txt" => Some(Box::new(txt::TxtParser)),
+        "html" => Some(Box::new(html::HtmlParser)),
         _ => None,
     }
 }
@@ -195,7 +198,7 @@ impl Registry {
     /// let registry = Registry::with_formats(&["fb2", "EPUB"]).unwrap();
     /// assert!(registry.for_extension("txt").is_none());
     /// let error = Registry::with_formats(&["mobi"]).unwrap_err();
-    /// assert_eq!(error.to_string(), r#"unknown format "mobi" (known formats: fb2, epub, txt)"#);
+    /// assert_eq!(error.to_string(), r#"unknown format "mobi" (known formats: fb2, epub, txt, html)"#);
     /// ```
     pub fn with_formats<S: AsRef<str>>(names: &[S]) -> Result<Self, UnknownFormat> {
         let mut registry = Self::new();
@@ -361,9 +364,15 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(
-            Registry::with_formats(&["fb2", "html"]).unwrap_err().name,
-            "html"
+            Registry::with_formats(&["fb2", "mobi"]).unwrap_err().name,
+            "mobi"
         );
+        assert!(
+            Registry::with_builtin_formats()
+                .for_extension("HTM")
+                .is_some()
+        );
+        assert!(!DEFAULT_FORMATS.contains(&"html"), "HTML is opt-in");
     }
 
     #[test]

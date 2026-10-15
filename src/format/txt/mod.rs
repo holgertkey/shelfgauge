@@ -20,7 +20,7 @@
 //! `readme`, `license`, ...), is [not a book](crate::format::ParseErrorKind::NotABook).
 
 use super::model::{Body, BookContent, BookMetadata, Person};
-use super::sections::build_sections;
+use super::sections::{Item, build_sections};
 use super::{BookParser, ParseError};
 
 mod headings;
@@ -28,6 +28,7 @@ mod paragraphs;
 mod text;
 
 pub use paragraphs::Style;
+pub(crate) use text::clean;
 
 /// Minimum characters of text (whitespace not counted) of a book.
 pub const MIN_TEXT: usize = 2_000;
@@ -96,6 +97,40 @@ impl BookParser for TxtParser {
             ..BookMetadata::default()
         })
     }
+}
+
+/// The rank of a heading-like line (1 for parts, 2 for chapters, prologues and lone
+/// numerals), if it is one (see `headings`); used for HTML headings.
+pub(crate) fn heading_rank(text: &str) -> Option<u8> {
+    headings::classify(text).map(|(rank, _)| rank)
+}
+
+/// The items of a text that is already decoded and [cleaned](text::clean): paragraphs,
+/// verse, rules and headings, with the lines `forced` (index, text) as headings too
+/// (ranked like heading lines, rank 2 if they do not look like one). Used for the text
+/// of an HTML `<pre>` holding a whole book, whose `<h*>` elements are the forced lines.
+pub(crate) fn items_with_headings(text: &str, forced: &[(usize, String)]) -> Vec<Item> {
+    let lines = text::lines(text);
+    let stats = paragraphs::stats(&lines);
+    let is_forced = |line: usize| forced.iter().any(|(f, _)| *f == line);
+    let mut found: Vec<headings::Heading> = headings::find(&lines, stats.style)
+        .into_iter()
+        .filter(|h| !is_forced(h.line))
+        .map(|mut h| {
+            h.name = h.name.filter(|&n| !is_forced(n));
+            h
+        })
+        .collect();
+    for (line, title) in forced.iter().filter(|(line, _)| *line < lines.len()) {
+        found.push(headings::Heading {
+            line: *line,
+            rank: heading_rank(title).unwrap_or(2),
+            text: text::collapse_spaces(headings::undecorated(title)),
+            name: None,
+        });
+    }
+    found.sort_by_key(|h| h.line);
+    paragraphs::build(&lines, stats, &found).0
 }
 
 /// The style the paragraphs of a text are read in (for reports and tests).

@@ -1,5 +1,5 @@
 //! Mutation tests (a small in-tree fuzzer): corrupted FB2 files (plain and zipped as
-//! `.fbz`), EPUB books, plain text books and zip archives must never panic, and parsed content must keep the split invariants.
+//! `.fbz`), EPUB books, plain text books, HTML pages and zip archives must never panic, and parsed content must keep the split invariants.
 //!
 //! The inputs are the synthetic fixtures, mutated by a seeded generator, so runs are
 //! reproducible. `SHELFGAUGE_FUZZ_ITERATIONS` sets the number of cases per test (default
@@ -18,6 +18,7 @@ use shelfgauge::container::ReadLimits;
 use shelfgauge::container::zip::{ArchiveReader, list_books};
 use shelfgauge::format::epub::EpubParser;
 use shelfgauge::format::fb2::Fb2Parser;
+use shelfgauge::format::html::HtmlParser;
 use shelfgauge::format::model::{BlockId, BookContent};
 use shelfgauge::format::txt::TxtParser;
 use shelfgauge::format::{BookParser, run_with_parser_stack};
@@ -374,6 +375,81 @@ fn mutated_txt_never_panics() {
             exercise(&content);
         });
     }
+}
+
+/// HTML-specific changes: tag soup, encodings, foreign content, deep nesting.
+const HTML_FRAGMENTS: &[&str] = &[
+    "<P>",
+    "<BR>",
+    "</td></tr></table>",
+    "<table><tr><td>",
+    "<a href=javascript:alert(1)>x",
+    "<a name=n href=#n>",
+    "<o:p>",
+    "<svg><foreignObject><p>",
+    "<math><mi>",
+    "<template><p>",
+    "<select><option>",
+    "<pre>\n",
+    "</pre>",
+    "<h2>ГЛАВА 2.</h2>",
+    "<meta charset=koi8-r>",
+    "<!-- ",
+    "<![CDATA[",
+    "<b><i><u>",
+    "</b></i>",
+    "<p class=pagenum>",
+    "<nav><a href=/>x</a></nav>",
+    "&nbsp;&amp;&#0;&#xD800;",
+    "<div><div><div><div>",
+];
+
+#[test]
+fn mutated_html_never_panics() {
+    let seeds = [
+        common::html_tag_soup().into_bytes(),
+        common::html_libru().into_bytes(),
+        common::html_gutenberg().into_bytes(),
+        common::html_saved_page().into_bytes(),
+    ];
+    let mut rng = rng();
+    let (mut parsed, mut failed) = (0, 0);
+    for n in 0..iterations() {
+        let mut data = mutate(&mut rng, &seeds[n as usize % seeds.len()]);
+        for _ in 0..rng.below(4) {
+            let at = rng.below(data.len() + 1);
+            let fragment = HTML_FRAGMENTS[rng.below(HTML_FRAGMENTS.len())];
+            data.splice(at..at, fragment.bytes());
+        }
+        if rng.below(40) == 0 {
+            let at = rng.below(data.len() + 1);
+            data.splice(at..at, "<div>".repeat(1000).into_bytes());
+        }
+        if rng.below(20) == 0 {
+            data = (0..rng.below(5000)).map(|_| rng.next() as u8).collect();
+        }
+        let ok = run_with_parser_stack(|| {
+            let _ = HtmlParser.parse_metadata(&data);
+            match HtmlParser.parse_content(&data) {
+                Ok(content) => {
+                    exercise(&content);
+                    true
+                }
+                // html5ever accepts anything, and the XHTML we write must always be
+                // accepted by the XML stage: only the size limits may fail.
+                Err(e) => {
+                    assert!(e.message.contains("more than"), "{e}");
+                    false
+                }
+            }
+        });
+        if ok {
+            parsed += 1;
+        } else {
+            failed += 1;
+        }
+    }
+    assert!(parsed > 0, "parsed {parsed}, failed {failed}");
 }
 
 fn zip_bytes() -> Vec<u8> {

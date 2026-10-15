@@ -293,3 +293,80 @@ pub fn txt_gutenberg() -> String {
         block.repeat(4)
     )
 }
+
+/// A tag-soup HTML book (unclosed `<p>`, `<BR>`, unquoted attributes, upper case), as
+/// text: two chapters with `<H2>` headings and a footnote-like link to an anchor.
+pub fn html_tag_soup() -> String {
+    let paragraph = "<P CLASS=text>Старый маяк стоял на краю скалистого берега. Каждый вечер \
+                     смотритель поднимался по винтовой лестнице, зажигал лампу и долго смотрел \
+                     на тёмное море, где проходили редкие корабли.";
+    format!(
+        "<HTML><HEAD><TITLE>Иван Петров. Маяк</TITLE>\
+         <META NAME=description CONTENT='Повесть о маяке'></HEAD><BODY>\
+         <H2>Глава 1</H2>{p}<BR>Вторая строка<P>См. <A HREF=#note>примечание</A> и \
+         <a href=\"http://example.org/\">сайт</a>, <a href=\"other.html\">другой файл</a>.\
+         {p}{p}<H2>Глава 2</H2>{p}{p}{p}<P ID=note>Примечание в конце.{p}{p}",
+        p = paragraph.repeat(6)
+    )
+}
+
+/// A lib.ru-style HTML page: the whole book in a `<pre>` (nested in another `<pre>`
+/// with a form, as on lib.ru), headings as `<h2>` inside it.
+pub fn html_libru() -> String {
+    let more = "     Кирила Петрович принимал знаки подобострастия как надлежащую дань; дом его\n\
+                всегда был полон гостями, готовыми тешить его барскую праздность.\n";
+    let text = (txt_libru() + &more.repeat(40))
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace("ГЛАВА II.", "<ul><a name=2></a><h2>ГЛАВА II.</h2></ul>");
+    format!(
+        "<html><head><title>Александр Пушкин. Дубровский</title></head><body><pre>\
+         <div align=right><form action=/x><select name=format><OPTION VALUE=\"_Contents\">\
+         Содержание<OPTION VALUE=\"\">Lib.ru html</select><input type=submit value=go>\
+         </form></div><pre>\n{text}</pre></pre></body></html>"
+    )
+}
+
+/// A Project Gutenberg-style HTML book: Dublin Core metadata, books and chapters as
+/// `<h2>`, paragraphs as `<p>`.
+pub fn html_gutenberg() -> String {
+    let paragraph = "<p>“Well, Prince, so Genoa and Lucca are now just family estates of the \
+                     Buonapartes. But I warn you, if you don’t tell me that this means war, if \
+                     you still try to defend the infamies and horrors perpetrated by that \
+                     Antichrist—I really believe he is Antichrist—I will have nothing more to do \
+                     with you. And I warn you, if you still try to defend him, you are no \
+                     longer my friend, no longer my ‘faithful slave,’ as you call yourself! But \
+                     how do you do? I see I have frightened you—sit down and tell me all the \
+                     news. It is all the same to me, he said, and went on reading the letter \
+                     that had come that morning from the country, from his old father.”</p>\n";
+    let paragraph = paragraph.replacen("</p>", " ", 1) + &paragraph.replacen("<p>", "", 1);
+    let chapter = |n: &str| {
+        format!(
+            "<div class=\"chapter\"><h2><a id=\"ch{n}\"></a>\n CHAPTER {n}\n</h2>\n{}</div>\n",
+            paragraph.repeat(3)
+        )
+    };
+    format!(
+        "<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\
+         <title>The Project Gutenberg eBook of War and Peace, by Leo Tolstoy</title>\
+         <meta name=\"dc.title\" content=\"War and Peace\">\
+         <meta name=\"dc.creator\" content=\"Tolstoy, Leo, graf, 1828-1910\">\
+         <meta name=\"dc.language\" content=\"en\"></head><body>\
+         <h1>WAR AND PEACE</h1><h2>BOOK ONE: 1805</h2>{}{}<h2>BOOK TWO: 1805</h2>{}</body></html>",
+        chapter("I"),
+        chapter("II"),
+        chapter("I")
+    )
+}
+
+/// A saved web page that is not a book: site chrome, many links, a short article.
+pub fn html_saved_page() -> String {
+    let links: String = (0..200)
+        .map(|i| format!("<li><a href=\"/page{i}\">Ссылка на страницу номер {i}</a></li>"))
+        .collect();
+    format!(
+        "<html><head><title>Новости</title></head><body><header><nav><ul>{links}</ul></nav>\
+         </header><article><p>Короткая новость дня.</p></article><footer><ul>{links}</ul>\
+         </footer></body></html>"
+    )
+}

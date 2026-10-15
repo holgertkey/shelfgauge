@@ -8,6 +8,28 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-15
+
+### Added
+
+- HTML books (`.html`, `.htm`, `.xhtml`), plain and inside `.zip` archives, when
+  `"html"` is added to `[scan] formats` (off by default, as most HTML files are not
+  books). Pages are parsed like a browser does (html5ever), in the encoding of their
+  `<meta charset>` (checked against the bytes) or a detected one (windows-1251, KOI8-R
+  ...). Scripts, styles, forms, page numbers and link-only navigation are left out. A
+  lib.ru page holding the whole text in a `<pre>` is read like a text file
+  (paragraphs, verse, volumes and chapters). Sections come from the headings, with
+  part-like headings (`BOOK ONE`, `ЧАСТЬ ПЕРВАЯ`) above chapters of the same level;
+  links within the page work. Title, authors, language and description come from
+  Dublin Core metas, `<meta name="author">`/`"description"`, `<html lang>` or the
+  `<title>` (`Author. Title`, Project Gutenberg titles). Pages with less than 5 000
+  characters of text or mostly links are not books. Pictures are not shown yet.
+
+### Changed
+
+- The XHTML conversion of EPUB moved to a module shared with HTML; EPUB books are read
+  exactly as before.
+
 ## [0.9.0] - 2026-10-15
 
 ### Added

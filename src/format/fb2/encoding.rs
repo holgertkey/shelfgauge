@@ -23,10 +23,10 @@
 //! Decoding never fails: malformed sequences become U+FFFD and are reported in
 //! [`Decoded::had_errors`] so the caller can log or reject the book.
 
-use encoding_rs::{Encoding, UTF_8, UTF_16BE, UTF_16LE};
+use encoding_rs::{Encoding, UTF_16BE, UTF_16LE};
 
 pub use crate::format::encoding::{Decoded, Detection, MOSTLY_UTF8_RATIO};
-use crate::format::encoding::{Utf8Quality, decode_bom, finish, guess};
+use crate::format::encoding::{decode_bom, decode_declared, finish};
 
 /// How many leading bytes are searched for the XML declaration.
 const DECLARATION_SEARCH_LIMIT: usize = 1024;
@@ -55,23 +55,7 @@ pub fn decode(bytes: &[u8]) -> Decoded<'_> {
     }
 
     let declared_label = declared_label(bytes).map(|l| String::from_utf8_lossy(l).into_owned());
-    let declared = declared_label
-        .as_deref()
-        .and_then(|label| Encoding::for_label_no_replacement(label.as_bytes()))
-        .filter(|encoding| encoding.is_ascii_compatible());
-    let utf8 = Utf8Quality::of(bytes);
-
-    let (encoding, detection) = match (declared, utf8) {
-        (Some(e), Utf8Quality::Invalid) if e == UTF_8 => (guess(bytes), Detection::Guessed),
-        (Some(e), _) if e == UTF_8 => (UTF_8, Detection::Declaration),
-        (Some(_), Utf8Quality::Valid) if !bytes.is_ascii() => (UTF_8, Detection::ValidUtf8),
-        (Some(_), Utf8Quality::Mostly) => (UTF_8, Detection::MostlyUtf8),
-        (Some(encoding), _) => (encoding, Detection::Declaration),
-        (None, Utf8Quality::Valid) => (UTF_8, Detection::ValidUtf8),
-        (None, Utf8Quality::Mostly) => (UTF_8, Detection::MostlyUtf8),
-        (None, Utf8Quality::Invalid) => (guess(bytes), Detection::Guessed),
-    };
-    finish(encoding, bytes, detection, declared_label)
+    decode_declared(bytes, declared_label)
 }
 
 /// UTF-16 without BOM: the file starts with `<?` (or `<` plus another ASCII character)
@@ -85,7 +69,7 @@ fn utf16_pattern(bytes: &[u8]) -> Option<&'static Encoding> {
 }
 
 /// The raw `encoding` label of the XML declaration at the start of `bytes`, if any.
-fn declared_label(bytes: &[u8]) -> Option<&[u8]> {
+pub(crate) fn declared_label(bytes: &[u8]) -> Option<&[u8]> {
     let head = &bytes[..bytes.len().min(DECLARATION_SEARCH_LIMIT)];
     let start = head.iter().position(|b| !b.is_ascii_whitespace())?;
     let decl = head[start..].strip_prefix(b"<?xml")?;
@@ -114,7 +98,7 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use encoding_rs::{IBM866, KOI8_R, KOI8_U, WINDOWS_1251, WINDOWS_1252};
+    use encoding_rs::{IBM866, KOI8_R, KOI8_U, UTF_8, WINDOWS_1251, WINDOWS_1252};
     use std::borrow::Cow;
 
     /// License-free Russian sample text, long enough for the statistical detector.

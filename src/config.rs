@@ -40,8 +40,9 @@ base_path = "/"
 [scan]
 # Gitignore-style patterns of paths to skip, in addition to .shelfgauge/ itself.
 exclude = []
-# Book formats to index: "fb2" (also .fbz), "epub", "txt". Text files that are too
-# short or named like readme.txt are not books and are skipped.
+# Book formats to index: "fb2" (also .fbz), "epub", "txt", "html" (.html, .htm,
+# .xhtml; not listed by default, since most HTML files are not books). Text files and
+# pages that are too short (or mostly links, or named like readme.txt) are skipped.
 formats = ["fb2", "epub", "txt"]
 
 [library]
@@ -673,12 +674,13 @@ mod tests {
             invalid_key("[scan]\nformats = [\"fb2\", \"mobi\"]"),
             "scan.formats"
         );
-        assert_eq!(invalid_key("[scan]\nformats = [\"html\"]"), "scan.formats");
+        let (config, _) = parse("[scan]\nformats = [\"fb2\", \"HTML\"]").unwrap();
+        assert_eq!(config.scan.formats, ["fb2", "html"], "HTML is opt-in");
         assert_eq!(invalid_key("[scan]\nformats = []"), "scan.formats");
         match parse("[scan]\nformats = [\"mobi\"]").unwrap_err() {
             Error::InvalidConfig { error, .. } => assert_eq!(
                 error.message,
-                r#"unknown format "mobi" (known formats: fb2, epub, txt)"#
+                r#"unknown format "mobi" (known formats: fb2, epub, txt, html)"#
             ),
             other => panic!("{other:?}"),
         }

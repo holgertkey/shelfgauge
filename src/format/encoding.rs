@@ -8,9 +8,16 @@
 //!    here). Cyrillic code pages are recognized: windows-1251, IBM866 and KOI8 (reported
 //!    as KOI8-U, which decodes Russian text like KOI8-R).
 //!
-//! [`decode_text`] runs them for plain text; formats with an in-band declaration (the
-//! XML declaration of FB2, see [`fb2::encoding`](super::fb2::encoding)) put their own
-//! steps between them.
+//! [`decode_text`] runs them for plain text. Formats with an in-band declaration (the
+//! XML declaration of FB2, see [`fb2::encoding`](super::fb2::encoding); `<meta charset>`
+//! of HTML) use it between steps 1 and 2, but do not trust it blindly:
+//!
+//! - declared UTF-8 but not (mostly) valid UTF-8 → treated as undeclared;
+//! - declared another encoding but the bytes are (mostly) valid UTF-8 *and* contain
+//!   non-ASCII bytes → UTF-8 (valid multi-byte UTF-8 is practically never
+//!   legacy-encoded text; saved pages re-encoded to UTF-8 often keep their old label);
+//! - a label that is unknown or names an encoding that cannot be declared in ASCII
+//!   (UTF-16) → treated as undeclared.
 //!
 //! "Mostly valid UTF-8" means valid multi-byte characters outnumber invalid sequences
 //! at least [`MOSTLY_UTF8_RATIO`] to 1: a UTF-8 book with a few stray bytes is decoded
@@ -51,7 +58,7 @@ pub enum Detection {
     Bom,
     /// UTF-16 without BOM, recognized by its first characters.
     Utf16Pattern,
-    /// From the XML declaration.
+    /// From an in-band declaration (the XML declaration, `<meta charset>`).
     Declaration,
     /// The bytes are valid UTF-8 (no usable declaration, or one that was contradicted).
     ValidUtf8,
@@ -83,12 +90,28 @@ pub fn decode_text(bytes: &[u8]) -> Decoded<'_> {
     if let Some(decoded) = decode_bom(bytes) {
         return decoded;
     }
-    let (encoding, detection) = match Utf8Quality::of(bytes) {
-        Utf8Quality::Valid => (UTF_8, Detection::ValidUtf8),
-        Utf8Quality::Mostly => (UTF_8, Detection::MostlyUtf8),
-        Utf8Quality::Invalid => (guess(bytes), Detection::Guessed),
+    decode_declared(bytes, None)
+}
+
+/// Decodes `bytes` (without a BOM) that declare the encoding `declared_label`, or
+/// nothing, checking the label against the bytes (see the [module docs](self)).
+pub(crate) fn decode_declared(bytes: &[u8], declared_label: Option<String>) -> Decoded<'_> {
+    let declared = declared_label
+        .as_deref()
+        .and_then(|label| Encoding::for_label_no_replacement(label.as_bytes()))
+        .filter(|encoding| encoding.is_ascii_compatible());
+    let utf8 = Utf8Quality::of(bytes);
+    let (encoding, detection) = match (declared, utf8) {
+        (Some(e), Utf8Quality::Invalid) if e == UTF_8 => (guess(bytes), Detection::Guessed),
+        (Some(e), _) if e == UTF_8 => (UTF_8, Detection::Declaration),
+        (Some(_), Utf8Quality::Valid) if !bytes.is_ascii() => (UTF_8, Detection::ValidUtf8),
+        (Some(_), Utf8Quality::Mostly) => (UTF_8, Detection::MostlyUtf8),
+        (Some(encoding), _) => (encoding, Detection::Declaration),
+        (None, Utf8Quality::Valid) => (UTF_8, Detection::ValidUtf8),
+        (None, Utf8Quality::Mostly) => (UTF_8, Detection::MostlyUtf8),
+        (None, Utf8Quality::Invalid) => (guess(bytes), Detection::Guessed),
     };
-    finish(encoding, bytes, detection, None)
+    finish(encoding, bytes, detection, declared_label)
 }
 
 /// Step 1: decodes `bytes` by their byte order mark, if they have one.

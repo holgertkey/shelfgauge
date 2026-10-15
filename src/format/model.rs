@@ -37,6 +37,8 @@
 //! - TXT has one main body; sections come only from heading-like lines (part and
 //!   chapter lines, cut with the EPUB section rules). It produces paragraphs (verse as a
 //!   paragraph with line breaks) and rules, nothing else.
+//! - HTML has one main body converted like an EPUB document (notes typed as notes go to
+//!   a notes body); sections come from the headings.
 //!
 //! Numbering happens in [`BookContent::new`] and [`Annotation::new`], so parsers cannot
 //! forget it. Any change to the numbering or to the model requires bumping

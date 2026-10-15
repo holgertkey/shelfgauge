@@ -45,7 +45,7 @@ pub(super) struct Heading {
 }
 
 /// What kind of heading line `text` is: its rank and whether it is a lone numeral.
-fn classify(text: &str) -> Option<(u8, bool)> {
+pub(super) fn classify(text: &str) -> Option<(u8, bool)> {
     let text = undecorated(text);
     if text.is_empty() || text.chars().count() > MAX_HEADING_LEN {
         return None;

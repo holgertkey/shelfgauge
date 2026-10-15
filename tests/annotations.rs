@@ -10,6 +10,7 @@ use shelfgauge::annotations::text::BookText;
 use shelfgauge::config::{ReaderConfig, SplitMode};
 use shelfgauge::format::epub::EpubParser;
 use shelfgauge::format::fb2::Fb2Parser;
+use shelfgauge::format::html::HtmlParser;
 use shelfgauge::format::model::{BlockId, BookContent};
 use shelfgauge::format::txt::TxtParser;
 use shelfgauge::format::{BookParser, run_with_parser_stack};
@@ -194,6 +195,20 @@ fn txt_block_text_equals_rendered_text_content() {
                 || verse.starts_with("Мороз и солнце; день чудесный!\nЕще ты"),
             "{verse:?}"
         );
+    });
+}
+
+#[test]
+fn html_block_text_equals_rendered_text_content() {
+    run_with_parser_stack(|| {
+        for html in [
+            common::html_tag_soup(),
+            common::html_libru(),
+            common::html_gutenberg(),
+        ] {
+            let content = HtmlParser.parse_content(html.as_bytes()).unwrap();
+            check_book(&content);
+        }
     });
 }
 

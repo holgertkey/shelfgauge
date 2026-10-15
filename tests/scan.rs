@@ -66,7 +66,8 @@ impl TestLibrary {
     }
 
     fn scan_with(&mut self, exclude: &[String], cancel: bool) -> ScanSummary {
-        self.scan_registry(&Registry::with_builtin_formats(), exclude, cancel)
+        let defaults = Registry::with_formats(shelfgauge::format::DEFAULT_FORMATS).unwrap();
+        self.scan_registry(&defaults, exclude, cancel)
     }
 
     fn scan_registry(
@@ -857,4 +858,34 @@ fn formats_taken_off_the_list_are_removed_and_come_back() {
     let s = lib.scan_registry(&all, &[], false);
     assert_eq!((s.moved, s.added, s.unchanged), (2, 0, 1), "{s:?}");
     assert_eq!(lib.id_of("Текст"), text_id, "the same book comes back");
+}
+
+#[test]
+fn html_books_are_indexed_only_when_enabled() {
+    let mut lib = TestLibrary::new();
+    lib.write("site/Пушкин.html", common::html_libru().as_bytes());
+    lib.write("site/index.htm", common::html_saved_page().as_bytes());
+    lib.zip(
+        "pages.zip",
+        &[("war.xhtml", common::html_gutenberg().into_bytes())],
+    );
+    lib.write("book.fb2", &fb2("Книга", "А"));
+    let s = lib.scan();
+    assert_eq!((s.added, s.not_books), (1, 0), "off by default: {s:?}");
+
+    let with_html = Registry::with_formats(&["fb2", "epub", "txt", "html"]).unwrap();
+    let s = lib.scan_registry(&with_html, &[], false);
+    assert_eq!((s.added, s.not_books, s.errors), (2, 1, 0), "{s:?}");
+    assert_eq!(lib.live_titles(), ["War and Peace", "Дубровский", "Книга"]);
+    let details = book_by_id(&lib.conn, lib.id_of("Дубровский"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(details.format, "html");
+    assert_eq!(
+        lib.scan_registry(&with_html, &[], false),
+        summary(0, 0, 0, 0, 3, 0)
+    );
+
+    let s = lib.scan();
+    assert_eq!(s.removed, 2, "turned off again: {s:?}");
 }
