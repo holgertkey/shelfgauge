@@ -252,7 +252,9 @@ impl Scanner<'_> {
         progress.set_phase(ScanPhase::Comparing);
         let containers = list_containers(conn)?;
         let books = all_books(conn)?;
-        let plan = detect::plan(&walk, &containers, &books, &self.registry.extensions());
+        let extensions = self.registry.extensions();
+        let plan = detect::plan(&walk, &containers, &books, &extensions);
+        let formats = crate::storage::containers::listed_formats(&extensions);
 
         // Candidates for moved books: vanished in this scan, or removed earlier.
         let vanished: HashSet<i64> = plan.vanished.iter().copied().collect();
@@ -332,7 +334,7 @@ impl Scanner<'_> {
             for archive in &plan.archives {
                 run.send(Op::StartArchive(ContainerRecord {
                     mtime_ns: UNFINISHED_MTIME,
-                    ..archive_record(&archive.found)
+                    ..archive_record(&archive.found, &formats)
                 }));
             }
             for (book_id, (i, entry)) in zip_moves {
@@ -355,7 +357,10 @@ impl Scanner<'_> {
                 .collect();
             for (i, work) in archive_work.iter().enumerate() {
                 if work.is_empty() {
-                    run.send(Op::FinishArchive(archive_record(&plan.archives[i].found)));
+                    run.send(Op::FinishArchive(archive_record(
+                        &plan.archives[i].found,
+                        &formats,
+                    )));
                 }
             }
             let chunks: Vec<(usize, &[EntryRecord])> = archive_work
@@ -376,7 +381,7 @@ impl Scanner<'_> {
                     if remaining[i].fetch_sub(1, Ordering::AcqRel) == 1
                         && !failed[i].load(Ordering::Acquire)
                     {
-                        run.send(Op::FinishArchive(archive_record(archive)));
+                        run.send(Op::FinishArchive(archive_record(archive, &formats)));
                     }
                 });
             });
@@ -631,13 +636,16 @@ fn is_transient(error: &ContainerError) -> bool {
     )
 }
 
-fn archive_record(found: &Found) -> ContainerRecord {
+/// The record of an archive listed for `formats` (see
+/// [`listed_formats`](crate::storage::containers::listed_formats)).
+fn archive_record(found: &Found, formats: &str) -> ContainerRecord {
     ContainerRecord {
         path: found.path.clone(),
         kind: ContainerKind::Zip,
         size: found.size,
         mtime_ns: found.mtime_ns,
         content_hash: None,
+        listed_formats: Some(formats.to_owned()),
     }
 }
 
@@ -648,6 +656,7 @@ fn file_record(found: &Found, content_hash: Option<Vec<u8>>) -> ContainerRecord 
         size: found.size,
         mtime_ns: found.mtime_ns,
         content_hash,
+        listed_formats: None,
     }
 }
 

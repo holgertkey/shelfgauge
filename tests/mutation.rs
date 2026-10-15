@@ -1,5 +1,5 @@
-//! Mutation tests (a small in-tree fuzzer): corrupted FB2 files and zip archives must
-//! never panic, and parsed content must keep the split invariants.
+//! Mutation tests (a small in-tree fuzzer): corrupted FB2 files, EPUB books and zip
+//! archives must never panic, and parsed content must keep the split invariants.
 //!
 //! The inputs are the synthetic fixtures, mutated by a seeded generator, so runs are
 //! reproducible. `SHELFGAUGE_FUZZ_ITERATIONS` sets the number of cases per test (default
@@ -11,9 +11,12 @@
 
 use std::io::Write;
 
+mod common;
+
 use shelfgauge::config::{ReaderConfig, SplitMode};
 use shelfgauge::container::ReadLimits;
 use shelfgauge::container::zip::{ArchiveReader, list_books};
+use shelfgauge::format::epub::EpubParser;
 use shelfgauge::format::fb2::Fb2Parser;
 use shelfgauge::format::model::{BlockId, BookContent};
 use shelfgauge::format::{BookParser, run_with_parser_stack};
@@ -51,6 +54,28 @@ const FRAGMENTS: &[&str] = &[
     "<?xml version=\"1.0\" encoding=\"windows-1251\"?>",
     "\u{0}",
     "\u{feff}",
+    // EPUB / XHTML.
+    "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.1//EN\" \"x.dtd\">",
+    "&nbsp;",
+    "&#0;",
+    "<br>",
+    "<ul><li>",
+    "</li></ol>",
+    "<pre>\n",
+    "<hr/>",
+    "<h1>",
+    "</h2>",
+    "<aside epub:type=\"footnote\" id=\"fn1\">",
+    "<section epub:type=\"endnotes\"><ol><li id=\"n\">",
+    "<a href=\"ch2.xhtml#target\" epub:type=\"noteref\">",
+    "<a href=\"../../../etc/passwd\">",
+    "<img src=\"../img/pic.png\"/>",
+    "<svg><image xlink:href=\"../img/cover.png\"/></svg>",
+    "<itemref idref=\"ch1\"/>",
+    "<itemref idref=\"nav\" linear=\"no\"/>",
+    "<li><span>x</span><ol>",
+    "<navPoint><content src=\"#\"/>",
+    "epub:type=\"",
 ];
 
 /// xorshift64*: small, deterministic, good enough to pick mutations.
@@ -214,6 +239,44 @@ fn mutated_fb2_never_panics() {
         }
     }
     // The mutations must not be so destructive that nothing is ever parsed.
+    assert!(parsed > 0 && failed > 0, "parsed {parsed}, failed {failed}");
+}
+
+#[test]
+fn mutated_epub_never_panics() {
+    let books = [common::epub3_entries(), common::epub2_entries()];
+    let mut rng = rng();
+    let (mut parsed, mut failed) = (0, 0);
+    for n in 0..iterations() {
+        let mut entries = books[n as usize % books.len()].clone();
+        // Mutate one or two documents (or the zip itself, below).
+        for _ in 0..=rng.below(2) {
+            let i = rng.below(entries.len());
+            if entries[i].0 != "mimetype" && !entries[i].0.ends_with(".png") {
+                entries[i].1 = mutate(&mut rng, &entries[i].1);
+            }
+        }
+        let mut data = common::zip(&entries);
+        if rng.below(8) == 0 && !data.is_empty() {
+            let i = rng.below(data.len());
+            data[i] ^= 1 << rng.below(8);
+        }
+        let ok = run_with_parser_stack(|| {
+            let _ = EpubParser.parse_metadata(&data);
+            match EpubParser.parse_content(&data) {
+                Ok(content) => {
+                    exercise(&content);
+                    true
+                }
+                Err(_) => false,
+            }
+        });
+        if ok {
+            parsed += 1;
+        } else {
+            failed += 1;
+        }
+    }
     assert!(parsed > 0 && failed > 0, "parsed {parsed}, failed {failed}");
 }
 

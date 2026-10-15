@@ -1,5 +1,7 @@
 //! Scanner tests on temporary libraries.
 
+mod common;
+
 use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
@@ -64,13 +66,21 @@ impl TestLibrary {
     }
 
     fn scan_with(&mut self, exclude: &[String], cancel: bool) -> ScanSummary {
-        let registry = Registry::with_builtin_formats();
+        self.scan_registry(&Registry::with_builtin_formats(), exclude, cancel)
+    }
+
+    fn scan_registry(
+        &mut self,
+        registry: &Registry,
+        exclude: &[String],
+        cancel: bool,
+    ) -> ScanSummary {
         let progress = ScanProgress::default();
         let cancel = AtomicBool::new(cancel);
         let scanner = Scanner {
             library: &self.library,
             exclude,
-            registry: &registry,
+            registry,
             limits: ReadLimits::default(),
             threads: 2,
             progress: &progress,
@@ -555,4 +565,94 @@ fn error_messages_do_not_reveal_absolute_paths() {
     assert!(message.contains("exceeds the limit"), "{message}");
     let root = lib.root().display().to_string();
     assert!(!message.contains(&root), "{message}");
+}
+
+#[test]
+fn epub_books_plain_inside_archives_and_protected() {
+    let mut lib = TestLibrary::new();
+    lib.write("books/war.epub", &common::epub3());
+    lib.zip(
+        "more.zip",
+        &[
+            ("novels/pp.epub", common::epub2()),
+            ("pp.fb2", fb2("Гордость", "Остин")),
+        ],
+    );
+    let mut locked = common::epub2_entries();
+    locked.push(("META-INF/license.lcpl", b"{}".to_vec()));
+    lib.write("locked.epub", &common::zip(&locked));
+    lib.write("broken.epub", b"not a zip");
+
+    let s = lib.scan();
+    assert_eq!(
+        (s.added, s.errors),
+        (5, 1),
+        "a protected book is not an error"
+    );
+    let status = |title: &str| {
+        lib.books()
+            .into_iter()
+            .filter(|(_, t, _)| t == title)
+            .map(|(_, _, status)| status)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(status("Война и мир"), [BookStatus::Ok]);
+    assert_eq!(status("broken"), [BookStatus::Error]);
+    let mut pp = status("Pride and Prejudice");
+    pp.sort_by_key(|s| format!("{s:?}"));
+    assert_eq!(pp, [BookStatus::Ok, BookStatus::Protected]);
+    let war = book_by_id(&lib.conn, lib.id_of("Война и мир"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(war.format, "epub");
+    assert!(war.cover_mime.is_some());
+    let in_zip = lib
+        .books()
+        .into_iter()
+        .map(|(id, _, _)| lib.path_of(id))
+        .find(|p| p.ends_with(".epub") && p.contains("::"))
+        .unwrap();
+    assert_eq!(in_zip, "more.zip::novels/pp.epub");
+    let locked = lib
+        .books()
+        .into_iter()
+        .find(|(id, _, _)| lib.path_of(*id) == "locked.epub")
+        .unwrap();
+    let details = book_by_id(&lib.conn, locked.0).unwrap().unwrap();
+    assert_eq!(details.drm.as_deref(), Some("Readium LCP"));
+
+    assert_eq!(
+        lib.scan(),
+        summary(0, 0, 0, 0, 5, 0),
+        "nothing parsed again"
+    );
+}
+
+/// Regression: an archive indexed before a format was supported is listed again (its
+/// stat is unchanged), so its books of the new format are found; its other books are
+/// not parsed again.
+#[test]
+fn archives_are_listed_again_when_formats_are_added() {
+    let mut lib = TestLibrary::new();
+    lib.zip(
+        "mixed.zip",
+        &[
+            ("a.fb2", fb2("Старая", "Автор")),
+            ("b.epub", common::epub2()),
+        ],
+    );
+    let mut fb2_only = Registry::new();
+    fb2_only.register(Box::new(shelfgauge::format::fb2::Fb2Parser));
+    let s = lib.scan_registry(&fb2_only, &[], false);
+    assert_eq!((s.added, s.parsed), (1, 1));
+    assert_eq!(lib.live_titles(), ["Старая"]);
+
+    let s = lib.scan();
+    assert_eq!((s.added, s.parsed, s.unchanged), (1, 1, 1), "{s:?}");
+    assert_eq!(lib.live_titles(), ["Pride and Prejudice", "Старая"]);
+    assert_eq!(
+        lib.scan(),
+        summary(0, 0, 0, 0, 2, 0),
+        "listed once, then unchanged"
+    );
 }

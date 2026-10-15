@@ -3,7 +3,7 @@
 //! Parsing is defensive: element names are matched by local name (files with missing or
 //! wrong namespaces are common), unknown elements keep their text, and no input makes
 //! the parser panic. A document whose only problem is unbalanced tags (a stray close
-//! tag, unclosed elements) is repaired and parsed again (see `repair`). Only input that
+//! tag, unclosed elements) is repaired and parsed again (see `format::repair`). Only input that
 //! is not XML, or not FictionBook, is an error.
 
 use base64::Engine as _;
@@ -11,29 +11,18 @@ use base64::engine::general_purpose::{GeneralPurpose, PAD_INDIFFERENT};
 use roxmltree::{Document, Node, ParsingOptions};
 
 use super::model::{BookContent, BookMetadata, Image};
-use super::{BookParser, ParseError};
+use super::xml::{MAX_XML_DEPTH, NODES_LIMIT, nesting_exceeds, normalize_space, sniff_image_mime};
+use super::{BookParser, ParseError, repair};
 
 mod content;
 pub mod encoding;
 mod metadata;
-mod repair;
-
-/// Maximum number of XML nodes in one file; protects against memory exhaustion.
-///
-/// A large real book (10 MB of text) has a few hundred thousand nodes.
-const NODES_LIMIT: u32 = 4_000_000;
 
 /// Maximum element nesting converted structurally; deeper content is kept as plain text.
-const MAX_DEPTH: usize = 64;
-
-/// Maximum element nesting accepted at all.
 ///
-/// `roxmltree`'s tokenizer recurses once per nesting level without a limit (about 10 KB
-/// of stack per level in debug builds), and a stack overflow aborts the whole process
-/// (it cannot be caught), so deeper documents are rejected before parsing. Real FB2
-/// files nest a few dozen levels at most. Together with [`MAX_DEPTH`] this keeps parsing
-/// within [`PARSER_STACK_SIZE`](crate::format::PARSER_STACK_SIZE).
-const MAX_XML_DEPTH: usize = 256;
+/// Together with [`MAX_XML_DEPTH`] this keeps parsing within
+/// [`PARSER_STACK_SIZE`](crate::format::PARSER_STACK_SIZE).
+const MAX_DEPTH: usize = 64;
 
 /// Lenient base64: padding optional, non-zero trailing bits accepted.
 const BASE64: GeneralPurpose = GeneralPurpose::new(
@@ -121,60 +110,6 @@ fn with_root<T>(data: &[u8], f: impl FnOnce(Node<'_, '_>) -> T) -> Result<T, Par
     Ok(f(root))
 }
 
-/// Whether element nesting in `xml` exceeds `limit`, by a quick scan of the markup.
-///
-/// Comments, CDATA sections, processing instructions, declarations and quoted attribute
-/// values are skipped; malformed markup is left to the XML parser to report.
-fn nesting_exceeds(xml: &str, limit: usize) -> bool {
-    let bytes = xml.as_bytes();
-    let skip_past = |from: usize, end: &[u8]| {
-        bytes[from..]
-            .windows(end.len())
-            .position(|w| w == end)
-            .map_or(bytes.len(), |p| from + p + end.len())
-    };
-    let mut depth = 0usize;
-    let mut i = 0;
-    while let Some(offset) = bytes[i..].iter().position(|&b| b == b'<') {
-        i += offset;
-        let rest = &bytes[i..];
-        if rest.starts_with(b"<!--") {
-            i = skip_past(i + 4, b"-->");
-        } else if rest.starts_with(b"<![CDATA[") {
-            i = skip_past(i + 9, b"]]>");
-        } else if rest.starts_with(b"<?") {
-            i = skip_past(i + 2, b"?>");
-        } else if rest.starts_with(b"<!") || rest.starts_with(b"</") {
-            depth = depth.saturating_sub(usize::from(rest.starts_with(b"</")));
-            i = skip_past(i + 2, b">");
-        } else {
-            // A start tag: find its end outside quoted attribute values.
-            let mut quote = None;
-            let mut j = i + 1;
-            while j < bytes.len() {
-                match (quote, bytes[j]) {
-                    (None, b'"' | b'\'') => quote = Some(bytes[j]),
-                    (Some(q), b) if b == q => quote = None,
-                    (None, b'>') => break,
-                    _ => {}
-                }
-                j += 1;
-            }
-            if j < bytes.len() && bytes[j - 1] != b'/' {
-                depth += 1;
-                if depth > limit {
-                    return true;
-                }
-            }
-            i = j;
-        }
-        if i >= bytes.len() {
-            break;
-        }
-    }
-    false
-}
-
 /// Whether `node` is an element with the local name `name` (namespace ignored).
 fn is(node: Node<'_, '_>, name: &str) -> bool {
     node.is_element() && node.tag_name().name() == name
@@ -218,23 +153,6 @@ fn text_content(node: Node<'_, '_>) -> String {
     normalize_space(&text)
 }
 
-/// Collapses runs of XML whitespace into single spaces and trims the result.
-fn normalize_space(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for word in text.split(is_xml_space).filter(|w| !w.is_empty()) {
-        if !out.is_empty() {
-            out.push(' ');
-        }
-        out.push_str(word);
-    }
-    out
-}
-
-/// XML whitespace (space, tab, CR, LF); other Unicode spaces such as NBSP are content.
-fn is_xml_space(c: char) -> bool {
-    matches!(c, ' ' | '\t' | '\r' | '\n')
-}
-
 /// The `<binary>` elements of the document.
 fn binaries<'a, 'input>(root: Node<'a, 'input>) -> impl Iterator<Item = Node<'a, 'input>> {
     children(root, "binary")
@@ -260,32 +178,6 @@ fn decode_binary(node: Node<'_, '_>) -> Option<Image> {
         .or_else(|| declared_mime(attr(node, "content-type")?))
         .unwrap_or_else(|| "application/octet-stream".to_owned());
     Some(Image { mime, data })
-}
-
-/// The MIME type of common image formats, from their magic bytes.
-fn sniff_image_mime(data: &[u8]) -> Option<&'static str> {
-    match data {
-        [0xff, 0xd8, 0xff, ..] => Some("image/jpeg"),
-        [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', ..] => Some("image/png"),
-        [b'G', b'I', b'F', b'8', b'7' | b'9', b'a', ..] => Some("image/gif"),
-        [
-            b'R',
-            b'I',
-            b'F',
-            b'F',
-            _,
-            _,
-            _,
-            _,
-            b'W',
-            b'E',
-            b'B',
-            b'P',
-            ..,
-        ] => Some("image/webp"),
-        [b'B', b'M', ..] => Some("image/bmp"),
-        _ => None,
-    }
 }
 
 /// A normalized `content-type` attribute, if it names an image type.
@@ -366,22 +258,6 @@ mod tests {
     }
 
     #[test]
-    fn nesting_scan() {
-        let nested = |n: usize| format!("<r>{}x{}</r>", "<s a='>'>".repeat(n), "</s>".repeat(n));
-        assert!(!nesting_exceeds(&nested(9), 10));
-        assert!(nesting_exceeds(&nested(10), 10));
-        // Empty elements, closed siblings, comments, CDATA and PIs do not nest.
-        let flat = format!(
-            "<r>{}</r>",
-            "<p/><p></p><!-- <a><b><c> --><![CDATA[<a><b><c>]]><?pi <a><b> ?>".repeat(50)
-        );
-        assert!(!nesting_exceeds(&flat, 3));
-        for tricky in ["", "<", "<a", "<a '", "<!--", "</", "<a/", "<<<>>>"] {
-            let _ = nesting_exceeds(tricky, 1);
-        }
-    }
-
-    #[test]
     fn deepest_accepted_nesting_fits_the_parser_stack() {
         // Exercise the section, block and inline conversion paths at the deepest nesting
         // that passes the pre-scan.
@@ -430,13 +306,6 @@ mod tests {
     }
 
     #[test]
-    fn whitespace_normalization() {
-        assert_eq!(normalize_space("  a \n\t b\r\n"), "a b");
-        assert_eq!(normalize_space("a\u{a0}b"), "a\u{a0}b");
-        assert_eq!(normalize_space(" \n "), "");
-    }
-
-    #[test]
     fn binaries_with_line_breaks_decode_and_sniff_type() {
         let wrapped: String = PNG_1X1
             .as_bytes()
@@ -466,17 +335,5 @@ mod tests {
         assert_eq!(binary("<binary>!!!not base64!!!</binary>"), None);
         assert_eq!(binary("<binary>A</binary>"), None);
         assert_eq!(binary("<binary/>"), None);
-    }
-
-    #[test]
-    fn mime_sniffing() {
-        assert_eq!(sniff_image_mime(b"\xff\xd8\xff\xe0"), Some("image/jpeg"));
-        assert_eq!(sniff_image_mime(b"GIF89a..."), Some("image/gif"));
-        assert_eq!(
-            sniff_image_mime(b"RIFF\0\0\0\0WEBPVP8 "),
-            Some("image/webp")
-        );
-        assert_eq!(sniff_image_mime(b"BM.."), Some("image/bmp"));
-        assert_eq!(sniff_image_mime(b"\x89PN"), None);
     }
 }

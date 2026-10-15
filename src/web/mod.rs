@@ -241,6 +241,7 @@ impl AppState {
                 AppError::FileMissing
             }
             load::LoadError::Unreadable(reason) => AppError::Unreadable(reason),
+            load::LoadError::Protected(scheme) => AppError::Protected(scheme),
         })?;
         let content = Arc::new(content);
         if let Some(key) = key {

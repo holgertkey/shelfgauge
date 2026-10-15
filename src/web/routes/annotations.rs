@@ -195,6 +195,10 @@ impl From<AppError> for ApiError {
                 "the book's file is missing: rescan the library".to_owned(),
             ),
             AppError::BadRequest(message) => Self(StatusCode::UNPROCESSABLE_ENTITY, message),
+            AppError::Protected(scheme) => Self(
+                StatusCode::FORBIDDEN,
+                format!("the book is protected by DRM ({scheme})"),
+            ),
             AppError::Unreadable(reason) => {
                 tracing::warn!("cannot read a book: {reason}");
                 Self(StatusCode::INTERNAL_SERVER_ERROR, reason)

@@ -1,11 +1,14 @@
 //! Annotation anchors against real rendering: the server's block text must equal what
 //! a browser sees as the `textContent` of each `id="b<n>"` element.
 
+mod common;
+
 use std::collections::HashMap;
 
 use shelfgauge::annotations::anchor::{Anchor, find, quote};
 use shelfgauge::annotations::text::BookText;
 use shelfgauge::config::{ReaderConfig, SplitMode};
+use shelfgauge::format::epub::EpubParser;
 use shelfgauge::format::fb2::Fb2Parser;
 use shelfgauge::format::model::{BlockId, BookContent};
 use shelfgauge::format::{BookParser, run_with_parser_stack};
@@ -53,7 +56,8 @@ fn unescape(text: &str) -> String {
 }
 
 /// The text content of every element with an `id` in renderer output (which has no
-/// comments, scripts or void elements other than `img`).
+/// comments, scripts or void elements other than `img`, `br` and `hr`), parsed as an
+/// HTML parser does: a line feed right after `<pre>` is dropped.
 fn text_by_id(html: &str) -> HashMap<String, String> {
     let mut texts: HashMap<String, String> = HashMap::new();
     let mut open: Vec<Option<String>> = Vec::new();
@@ -65,7 +69,17 @@ fn text_by_id(html: &str) -> HashMap<String, String> {
             rest = &tag_rest[end + 1..];
             if tag.starts_with('/') {
                 open.pop();
-            } else if !tag.starts_with("img") {
+            } else if tag.starts_with("hr") {
+                let id = tag
+                    .split_once("id=\"")
+                    .map(|(_, r)| r[..r.find('"').unwrap()].to_owned());
+                if let Some(id) = id {
+                    texts.entry(id).or_default();
+                }
+            } else if !tag.starts_with("img") && tag != "br" {
+                if tag.starts_with("pre") {
+                    rest = rest.strip_prefix('\n').unwrap_or(rest);
+                }
                 let id = tag
                     .split_once("id=\"")
                     .map(|(_, r)| r[..r.find('"').unwrap()].to_owned());
@@ -125,6 +139,40 @@ fn server_block_text_equals_rendered_text_content() {
             "{texts:?}"
         );
         assert!(texts.contains(&"H1H2c1c2"), "{texts:?}");
+    });
+}
+
+#[test]
+fn epub_block_text_equals_rendered_text_content() {
+    run_with_parser_stack(|| {
+        let content = EpubParser.parse_content(&common::epub3()).unwrap();
+        check_book(&content);
+        let book = BookText::new(&content);
+        let texts: Vec<&str> = (1..=book.block_count() as u32)
+            .map(|n| book.text(BlockId::new(n).unwrap()).unwrap())
+            .collect();
+        assert!(
+            texts.contains(&"Text witha break and a footnote1."),
+            "{texts:?}"
+        );
+        assert!(texts.contains(&"  code\n    indented"), "{texts:?}");
+        assert!(texts.contains(&"Headxy"), "{texts:?}");
+        // A preformatted block starting with a line feed keeps it.
+        let pre = shelfgauge::format::model::Block::new(
+            shelfgauge::format::model::BlockKind::Preformatted(vec![
+                shelfgauge::format::model::Inline::Text("\nx".into()),
+            ]),
+        );
+        let content = BookContent::new(
+            vec![shelfgauge::format::model::Body::main(
+                shelfgauge::format::model::Section {
+                    blocks: vec![pre],
+                    ..Default::default()
+                },
+            )],
+            Default::default(),
+        );
+        check_book(&content);
     });
 }
 

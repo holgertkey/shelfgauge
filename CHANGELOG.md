@@ -8,15 +8,44 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-15
+
+### Added
+
+- EPUB books (EPUB 2.0.1 and 3.x), as plain `.epub` files and inside `.zip` archives:
+  metadata (title, authors with their sort names, series from EPUB 3 collections or
+  Calibre, subjects as genres, the description as annotation, language, cover), and
+  the text in the reader. The table of contents comes from the navigation document
+  (the NCX in EPUB 2), else from the headings; a chapter whose heading is missing gets
+  its title from the table of contents. Footnotes (`aside` and other elements marked as
+  notes), endnote sections and non-linear documents are collected in a notes section
+  after the text, and note references and links between the book's files lead to the
+  right place. Lists (also nested), preformatted text, horizontal rules and line breaks
+  are shown; stylesheets, embedded fonts and scripts are not used, and only raster
+  images are shown (never SVG). Real-world XHTML is accepted: HTML named entities such
+  as `&nbsp;`, a DOCTYPE, an undeclared `epub:` prefix, unbalanced tags.
+- DRM-protected EPUBs (Adobe ADEPT, Readium LCP, Apple FairPlay) are indexed with their
+  readable metadata and get the status "Protected by DRM": marked "DRM" in lists,
+  explained on the book card and in the reader, never opened, never decrypted, not
+  counted as broken and not parsed again on upgrades. EPUB font obfuscation is not DRM.
+
+### Changed
+
+- The index gets schema version 3 (the `protected` status, and the formats each archive
+  was listed for); the update runs on the first start and keeps the index. The first
+  scan after it lists every `.zip` archive again (without unpacking known books), so
+  EPUB books in archives indexed before are found. The content cache is rebuilt (`PARSER_VERSION` 2);
+  block numbers of FB2 books do not change, so links, bookmarks and quotes keep working.
+
 ### Fixed
 
 - Browser reader views (Firefox Reader View and the like) no longer take an epigraph's
   or a poem's author line for the book's author and cut it out of the text: the
   reading page names the title and authors in `<meta>` tags, and the line's class no
   longer contains `author`.
-- Reading pages carry the book's language (`<html lang>`, from the FB2 `<lang>` when it
-  is a valid tag), so the browser hyphenates the text and reader views read it aloud in
-  the right language; the UI around the text stays marked as English.
+- Reading pages carry the book's language (`<html lang>`, from the book's metadata when
+  it is a valid tag), so the browser hyphenates the text and reader views read it aloud
+  in the right language; the UI around the text stays marked as English.
 
 ## [0.7.0] - 2026-10-14
 

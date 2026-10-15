@@ -1,12 +1,15 @@
 //! The format layer: parsers that turn the raw bytes of a book into the common model.
 //!
-//! Each ebook format implements [`BookParser`]; a [`Registry`] maps file extensions to
+//! Each ebook format ([`fb2`], [`epub`]) implements [`BookParser`]; a [`Registry`] maps file extensions to
 //! parsers. Everything downstream depends only on [`model`], never on a specific format.
 
 use std::path::Path;
 
+pub mod epub;
 pub mod fb2;
 pub mod model;
+pub(crate) mod repair;
+pub(crate) mod xml;
 
 use model::{BookContent, BookMetadata};
 
@@ -96,7 +99,7 @@ impl Registry {
         Self::default()
     }
 
-    /// Creates a registry with all built-in formats (FB2).
+    /// Creates a registry with all built-in formats (FB2, EPUB).
     ///
     /// # Examples
     ///
@@ -105,10 +108,12 @@ impl Registry {
     ///
     /// let registry = Registry::with_builtin_formats();
     /// assert_eq!(registry.for_extension("FB2").unwrap().format(), "fb2");
+    /// assert_eq!(registry.for_extension("epub").unwrap().format(), "epub");
     /// ```
     pub fn with_builtin_formats() -> Self {
         let mut registry = Self::new();
         registry.register(Box::new(fb2::Fb2Parser));
+        registry.register(Box::new(epub::EpubParser));
         registry
     }
 

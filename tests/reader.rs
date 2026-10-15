@@ -1,6 +1,8 @@
 //! Reading-mode tests: parts, deep links, images, the content cache and error pages,
 //! on a scanned temporary library.
 
+mod common;
+
 use std::io::Write;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -985,4 +987,53 @@ async fn read_pages_name_the_book_for_reader_views() {
         .body;
     assert!(card.contains("<html lang=\"en\""));
     assert!(!card.contains("og:title"));
+}
+
+#[tokio::test]
+async fn epub_books_are_read_and_protected_ones_say_why_not() {
+    let lib = TestLibrary::new();
+    lib.write("war.epub", &common::epub3());
+    let mut locked = common::epub3_entries();
+    locked.push(("META-INF/license.lcpl", b"{}".to_vec()));
+    lib.write("locked.epub", &common::zip(&locked));
+    lib.scan();
+    let server = lib.server("/", whole());
+
+    let id = lib.id_of("war.epub");
+    let card = server.ok(&format!("/book/{id}")).await;
+    assert!(card.body.contains(">Read</a>"), "{}", card.body);
+    assert!(card.body.contains("<dd>EPUB</dd>"), "the format is shown");
+    let page = server.ok(&format!("/book/{id}/read")).await;
+    let text = page.text();
+    assert!(text.contains("Text with<br>a break"), "{text}");
+    assert!(text.contains("<ul id=\"b6\"><li id=\"b7\">"), "{text}");
+    assert!(!text.contains("<script"), "{text}");
+    let src = text
+        .split("<img src=\"")
+        .nth(1)
+        .and_then(|s| s.split('"').next())
+        .unwrap()
+        .replace("&amp;", "&");
+    assert!(
+        src.starts_with(&format!("/book/{id}/image/OEBPS%2Fimg%2Fpic.png?v=")),
+        "{src}"
+    );
+    let image = server.ok(&src).await;
+    assert_eq!(image.header(header::CONTENT_TYPE), "image/png");
+    let parts = server.parts(&format!("/book/{id}/read")).await;
+    assert!(parts.last().unwrap().text().contains("Endnote one."));
+
+    let locked = lib.id_of("locked.epub");
+    let card = server.ok(&format!("/book/{locked}")).await;
+    assert!(card.body.contains("protected by DRM"), "{}", card.body);
+    assert!(card.body.contains("Readium LCP"), "{}", card.body);
+    assert!(!card.body.contains(">Read</a>"), "no Read button");
+    let reply = server.get(&format!("/book/{locked}/read")).await;
+    assert_eq!(reply.status, StatusCode::FORBIDDEN);
+    assert!(reply.body.contains("Protected by DRM"), "{}", reply.body);
+    assert!(reply.body.contains("Readium LCP"), "{}", reply.body);
+    let reply = server
+        .get(&format!("/book/{locked}/image/OEBPS%2Fimg%2Fpic.png"))
+        .await;
+    assert_eq!(reply.status, StatusCode::FORBIDDEN);
 }

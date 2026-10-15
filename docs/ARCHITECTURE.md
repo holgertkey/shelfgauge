@@ -1,11 +1,11 @@
 # shelfgauge — Architecture
 
 > Status: v1 implemented (scanner, storage, web server, library and reading mode,
-> hardening), annotations (0.6.0) and reader settings (0.7.0). The V2 hub below is
-> designed, not built.
+> hardening), annotations (0.6.0), reader settings (0.7.0) and EPUB (0.8.0). The V2 hub
+> below is designed, not built.
 
-`shelfgauge` is a single-binary Rust app that indexes a directory tree of ebook files (FB2 in
-v1, plain files and `.zip` archives with any number of books inside) into a local SQLite DB
+`shelfgauge` is a single-binary Rust app that indexes a directory tree of ebook files (FB2 and
+EPUB, plain files and `.zip` archives with any number of books inside) into a local SQLite DB
 and serves a browsable, server-rendered web library on a fixed `localhost` port. License: MIT.
 Key design points to keep in mind when implementing:
 
@@ -28,14 +28,19 @@ Key design points to keep in mind when implementing:
   aborts a scan (it's recorded with an error status). Zip entries are identified by raw
   name bytes (old archives use CP866 names without the UTF-8 flag; display names are
   decoded UTF-8 → CP866 → windows-1251 → CP437). Nested archives are
-  skipped. Removed books get status `removed` instead of being deleted.
+  skipped; an `.epub` inside a `.zip` is a book (EPUB is a book file whose zip structure
+  the EPUB parser reads itself, not an archive container). Each archive records the
+  formats it was listed for (`containers.listed_formats`, schema v3): when a format is
+  added, unchanged archives are listed again (central directory only), so their books of
+  the new format are found while known entries are not parsed again. Removed books get status `removed` instead of being deleted.
   An archive's entries are parsed in parallel jobs, at most `threads × 4` per archive:
   every job opens the archive and parses its central directory, so many small jobs on a
   huge archive would be quadratic.
 - **Parser upgrades reach failed books**: each book row records the `PARSER_VERSION`
   that wrote it (`books.parser_version`, schema v2). A book that failed with an older
   parser is parsed again by the next scan even if its file is unchanged; books that
-  parsed are left alone.
+  parsed are left alone. DRM-protected books (status `protected`, schema v3) are not
+  failures and are never parsed again.
 - **Scan safety**: an archive's real `(size, mtime)` is committed only after all of its
   books (a sentinel mtime marks it unfinished), a plain file's container and book are
   committed together, so an interrupted scan is completed by the next one. Books are
@@ -54,10 +59,12 @@ Key design points to keep in mind when implementing:
   `spawn_blocking`. Search uses FTS5 (`unicode61`, prefix queries; `unicode61` does not
   fold `ё`, so indexed text and queries map `ё` → `е`; no stemming in v1). Paths are
   stored relative to the library root as `/`-separated TEXT; schema changes are
-  append-only migrations (`PRAGMA user_version`; local indexes already exist).
+  append-only migrations (`PRAGMA user_version`; local indexes already exist). Migrations
+  run with foreign keys off (a table rebuild would otherwise cascade-delete the rows
+  referencing it) and must pass `foreign_key_check` before their commit.
 - **Parser threads need a large stack**: `roxmltree` recurses once per XML nesting level
-  and a stack overflow aborts the whole process, so the FB2 parser rejects nesting deeper
-  than 256 levels, and every thread that runs a parser (rayon pool, blocking workers) is
+  and a stack overflow aborts the whole process, so the XML-based parsers (FB2, EPUB
+  documents) reject nesting deeper than 256 levels, and every thread that runs a parser (rayon pool, blocking workers) is
   created with `format::PARSER_STACK_SIZE` (16 MB) of stack.
 - **FB2 encoding detection** before XML parsing: BOM → UTF-16 pattern → XML declaration
   (`encoding_rs`) → fallback (valid UTF-8, else `chardetng`). The declaration is not
@@ -68,16 +75,36 @@ Key design points to keep in mind when implementing:
   rebalanced (stray close tags dropped, unclosed elements closed; comments, CDATA and
   attribute values untouched) and the text is parsed again under the same limits.
 - **Robustness tests**: `tests/mutation.rs` is an in-tree mutation fuzzer (seeded, no
-  extra dependencies) that runs corrupted FB2 files through parse → split → render and
-  corrupted zip archives through listing and reading; long runs via
+  extra dependencies) that runs corrupted FB2 files and EPUB books (mutated documents
+  re-zipped, or a corrupted container) through parse → split → render and corrupted zip
+  archives through listing and reading; long runs via
   `SHELFGAUGE_FUZZ_ITERATIONS`.
 - **Format abstraction is two layers, and must stay that way as formats are added**:
   - *Container layer*: resolves raw bytes to parse (bare file vs. one entry of a `.zip`),
     independent of ebook format.
-  - *Format layer*: a `BookParser` trait (one impl per format — only FB2 in v1) producing a
+  - *Format layer*: a `BookParser` trait (one impl per format: FB2, EPUB) producing a
     common `BookMetadata` / `BookContent` representation. The viewer must only depend on
     `BookContent`/`BookMetadata`, never on format-specific details.
   - Fixed-page-layout formats (PDF/DjVu) are explicitly out of scope.
+- **EPUB** (`src/format/epub/`, EPUB 2.0.1 and 3.x): the parser opens the OCF zip from
+  the bytes it is given, with its own limits (entries, per-entry size and compression
+  ratio, total unpacked size), follows `META-INF/container.xml` to the package document
+  and reads metadata (`dc:*`, EPUB 3 refinements and EPUB 2 `opf:` attributes, series
+  from `belongs-to-collection` of type `series` or Calibre's meta, cover from
+  `cover-image` / `meta name="cover"`; scanning never reads the spine). XHTML goes
+  through a pre-pass (DOCTYPE removed, XHTML 1.x named entities made numeric, invalid
+  characters dropped, undeclared prefixes declared) before `roxmltree`. The linear
+  spine documents become one main body: wrapper elements are not blocks, a run of inline
+  content is one paragraph, sections are cut at the navigation document's entries (NCX
+  for EPUB 2; headings or spine documents as fallbacks), headings at a cut become the
+  section title, else the entry's label is the section's navigation-only title.
+  Footnotes (`aside`/elements typed as notes), note collections and non-linear documents
+  form a notes body. Every element id is an anchor key `path#id` bound to the first
+  block completed after it; links are rewritten to those anchors (unresolvable ones
+  become text). CSS, scripts, fonts and remote resources are ignored; only known raster
+  images are kept (SVG never). The model gained lists, list items (containers),
+  preformatted text, rules and line breaks; FB2 never produces them, so its numbering
+  is unchanged.
 - **UI is server-rendered** (askama templates, hand-written CSS/JS, assets embedded in the
   binary; no SPA, no Node). Layout is inspired by mdBook: collapsible left sidebar + main
   area + top bar + color themes. **Nothing is copied from mdBook** (MPL-2.0) — only the
@@ -115,7 +142,9 @@ Key design points to keep in mind when implementing:
     IDs and never emitted as HTML ids.
   - **Block IDs** are the block's ordinal in document order (`b1234`), counting every
     block (the exact rule is documented in `src/format/model.rs` and pinned by a golden
-    test). Each FB2 `<body>` is a root section (main body first, then notes bodies). They must be deterministic and **must not depend on the split setting**; deep
+    test, with a second golden test for the EPUB mapping). Each FB2 `<body>` is a root
+    section (main body first, then notes bodies); an EPUB has one main body and at most
+    one notes body. They must be deterministic and **must not depend on the split setting**; deep
     links address a block (`?at=<block-id>`) and the server resolves the part. Cached
     `BookContent` carries a `parser_version`; bumping it invalidates the cache.
 
@@ -330,16 +359,17 @@ independent features.
   (re-encrypting all records on a trusted client); copies already cached on a device
   cannot be retracted, nor can exported `.sgbook` files.
 
-**DRM** (applies once EPUB or another DRM-capable format is added): DRM-free books,
+**DRM** (implemented for EPUB in 0.8.0): DRM-free books,
 including purchased ones with a watermark, are ordinary books and watermarks are never
 removed; EPUB font obfuscation is not DRM (embedded fonts are not used anyway).
 DRM-encrypted books (Adobe ADEPT, Readium LCP, FairPlay, Kindle) are never decrypted:
 the parser detects them (EPUB: `META-INF/encryption.xml` with algorithms other than font
-obfuscation, `rights.xml`, `license.lcpl`), indexes the readable metadata and gives them
-a separate "Protected by DRM" status — not a parse error, never opened in the reader,
-never published.
+obfuscation — `rights.xml` then names Adobe ADEPT —, `license.lcpl`, `sinf.xml`), indexes
+the readable metadata and gives them a separate "Protected by DRM" status (`protected`,
+with the scheme in `books.drm`) — not a parse error, never parsed again, never opened
+in the reader (content loading refuses them before reading the file), never published.
 
-**Order of new formats**: EPUB (0.8.0) comes before the hub. The hub turns `BookContent`
+**Order of new formats**: EPUB (0.8.0, done) comes before the hub. The hub turns `BookContent`
 into a versioned wire format, so the model must be extended for EPUB (lists, `pre`,
 rules, sections from the navigation document and headings, inline EPUB3 footnotes)
 while a change still costs only a `PARSER_VERSION` bump. FB2 block numbering stays
@@ -356,10 +386,10 @@ unchanged (its golden test must not change). TXT any time; MOBI/AZW3 later or ne
 | Database | rusqlite (SQLite, WAL) + FTS5 |
 | DB access from async | read pool (`r2d2_sqlite`) + `spawn_blocking` |
 | Config | serde + toml |
-| FB2 XML parsing | roxmltree (read-only DOM) |
+| XML parsing (FB2, EPUB) | roxmltree (read-only DOM) |
 | Encoding detection | encoding_rs (+ chardetng fallback) |
 | Directory walking | walkdir + ignore |
-| Archives | `zip` crate (`.zip` only) |
+| Archives | `zip` crate (`.zip` libraries, EPUB containers) |
 | Parallel parsing | rayon |
 
 ## Out of scope for v1

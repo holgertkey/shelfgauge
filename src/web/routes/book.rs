@@ -9,6 +9,7 @@ use super::annotations::{Lists, book_annotations, progress_label};
 use super::{date, parse_id, render};
 use crate::cache::covers;
 use crate::storage::books::{BookStatus, book_by_id};
+use crate::web::error::PROTECTED;
 use crate::web::layout::{Layout, SidebarMode};
 use crate::web::sidebar::{self, Focus};
 use crate::web::{AppError, AppState};
@@ -80,6 +81,14 @@ pub(crate) async fn card(
             format!(
                 "The book could not be read: {}",
                 book.error_message.as_deref().unwrap_or("unknown error")
+            ),
+        )),
+        BookStatus::Protected => notices.push((
+            "protected",
+            format!(
+                "{} ({}).",
+                PROTECTED.trim_end_matches('.'),
+                book.drm.as_deref().unwrap_or("unknown DRM")
             ),
         )),
         BookStatus::Ok => {}

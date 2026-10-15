@@ -45,6 +45,7 @@ fn container(conn: &Connection, path: &str) -> i64 {
             size: 100,
             mtime_ns: 1,
             content_hash: (kind == ContainerKind::File).then(|| path.as_bytes().to_vec()),
+            listed_formats: None,
         },
     )
     .unwrap()
@@ -82,6 +83,7 @@ fn book(
         cover_mime: None,
         status: BookStatus::Ok,
         error_message: None,
+        drm: None,
     }
 }
 
@@ -423,6 +425,37 @@ fn error_books_keep_their_location() {
     assert_eq!(
         book_by_id(&db.conn, id).unwrap().unwrap().status,
         BookStatus::Error
+    );
+}
+
+#[test]
+fn protected_books_keep_their_status_when_moved() {
+    use shelfgauge::format::model::BookMetadata;
+    let db = db();
+    let c = container(&db.conn, "locked.epub");
+    let metadata = BookMetadata {
+        title: "Locked".to_owned(),
+        drm: Some("Adobe ADEPT".to_owned()),
+        ..BookMetadata::default()
+    };
+    let record = BookRecord::parsed(c, None, None, "epub", &metadata, "locked");
+    assert_eq!(record.status, BookStatus::Protected);
+    let id = upsert_book(&db.conn, &record).unwrap();
+    let details = book_by_id(&db.conn, id).unwrap().unwrap();
+    assert_eq!(details.status, BookStatus::Protected);
+    assert_eq!(details.drm.as_deref(), Some("Adobe ADEPT"));
+    assert_eq!(details.error_message, None);
+    assert_eq!(count_books(&db.conn).unwrap(), 1);
+    assert_eq!(
+        titles(&search(&db.conn, "locked", 10, 0).unwrap()),
+        ["Locked"]
+    );
+    mark_removed(&db.conn, id).unwrap();
+    let moved = container(&db.conn, "moved/locked.epub");
+    relocate(&db.conn, id, moved, None).unwrap();
+    assert_eq!(
+        book_by_id(&db.conn, id).unwrap().unwrap().status,
+        BookStatus::Protected
     );
 }
 

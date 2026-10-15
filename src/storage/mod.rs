@@ -44,6 +44,15 @@ pub enum StorageError {
         /// The newest schema version this build supports.
         supported: u32,
     },
+
+    /// A schema migration left the database inconsistent and was rolled back.
+    #[error("migrating the database to schema version {version} failed: {message}")]
+    Migration {
+        /// The schema version the migration was to create.
+        version: u32,
+        /// What went wrong.
+        message: String,
+    },
 }
 
 /// Opens (creating if needed) the database for writing and migrates it.

@@ -139,6 +139,7 @@ pub(crate) struct BookRow {
     authors: String,
     series: String,
     error: bool,
+    protected: bool,
 }
 
 impl BookRow {
@@ -153,6 +154,7 @@ impl BookRow {
             authors: book.authors,
             series,
             error: book.status == BookStatus::Error,
+            protected: book.status == BookStatus::Protected,
         }
     }
 }

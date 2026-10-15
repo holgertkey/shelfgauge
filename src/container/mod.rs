@@ -4,6 +4,9 @@
 //! relative to the library root; zip entries are identified by their raw name bytes
 //! (old archives use CP866 names without the UTF-8 flag), with index, size and CRC32
 //! recorded to detect changes.
+//!
+//! An `.epub` is a book file, not an archive container (plain or as a zip entry): its
+//! bytes go to the EPUB parser, which reads its zip structure itself.
 
 use std::path::{Component, Path, PathBuf};
 

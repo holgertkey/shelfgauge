@@ -18,6 +18,9 @@ pub enum BookStatus {
     Error,
     /// The book's file disappeared; kept (not deleted) so it can be matched again.
     Removed,
+    /// The book is protected by DRM: its metadata is indexed, but its content cannot
+    /// be read. Not an error: never parsed again on a parser upgrade.
+    Protected,
 }
 
 impl BookStatus {
@@ -26,6 +29,7 @@ impl BookStatus {
             Self::Ok => "ok",
             Self::Error => "error",
             Self::Removed => "removed",
+            Self::Protected => "protected",
         }
     }
 
@@ -33,6 +37,7 @@ impl BookStatus {
         match text {
             "error" => Self::Error,
             "removed" => Self::Removed,
+            "protected" => Self::Protected,
             _ => Self::Ok,
         }
     }
@@ -82,10 +87,13 @@ pub struct BookRecord {
     pub status: BookStatus,
     /// Why parsing failed, for [`BookStatus::Error`].
     pub error_message: Option<String>,
+    /// The DRM scheme, for [`BookStatus::Protected`].
+    pub drm: Option<String>,
 }
 
 impl BookRecord {
     /// A successfully parsed book; `fallback_title` is used if the metadata has none.
+    /// A book whose metadata names a DRM scheme is [`BookStatus::Protected`].
     pub fn parsed(
         container_id: i64,
         entry: Option<EntryRecord>,
@@ -111,8 +119,13 @@ impl BookRecord {
             annotation: metadata.annotation.plain_text(),
             language: metadata.language.clone(),
             cover_mime: metadata.cover.as_ref().map(|c| c.mime.clone()),
-            status: BookStatus::Ok,
+            status: if metadata.drm.is_some() {
+                BookStatus::Protected
+            } else {
+                BookStatus::Ok
+            },
             error_message: None,
+            drm: metadata.drm.clone(),
         }
     }
 
@@ -139,6 +152,7 @@ impl BookRecord {
             cover_mime: None,
             status: BookStatus::Error,
             error_message: Some(message.to_owned()),
+            drm: None,
         }
     }
 }
@@ -221,6 +235,8 @@ pub struct BookDetails {
     pub status: BookStatus,
     /// Error message for [`BookStatus::Error`].
     pub error_message: Option<String>,
+    /// The DRM scheme for [`BookStatus::Protected`].
+    pub drm: Option<String>,
     /// Container path relative to the library root.
     pub container_path: String,
     /// Container kind.
@@ -274,7 +290,7 @@ pub fn update_book(conn: &Connection, id: i64, record: &BookRecord) -> Result<()
              container_id = ?2, entry_name = ?3, entry_path = ?4, entry_index = ?5,
              entry_size = ?6, entry_crc32 = ?7, format = ?8, title = ?9, sort_title = ?10,
              language = ?11, annotation = ?12, cover_mime = ?13, status = ?14,
-             error_message = ?15, content_hash = ?16, parser_version = ?17,
+             error_message = ?15, content_hash = ?16, parser_version = ?17, drm = ?18,
              updated_at = unixepoch()
          WHERE id = ?1",
         params![
@@ -295,6 +311,7 @@ pub fn update_book(conn: &Connection, id: i64, record: &BookRecord) -> Result<()
             record.error_message,
             record.content_hash,
             PARSER_VERSION,
+            record.drm,
         ],
     )?;
 
@@ -359,8 +376,8 @@ pub fn mark_removed(conn: &Connection, id: i64) -> Result<(), StorageError> {
     Ok(())
 }
 
-/// Moves book `id` to a new location (keeping its id and metadata) and marks it `ok`
-/// or `error` again, restoring it to the search index.
+/// Moves book `id` to a new location (keeping its id and metadata) and gives it back
+/// its status (`ok`, `error` or `protected`), restoring it to the search index.
 pub fn relocate(
     conn: &Connection,
     id: i64,
@@ -371,7 +388,9 @@ pub fn relocate(
         "UPDATE books SET
              container_id = ?2, entry_name = ?3, entry_path = ?4, entry_index = ?5,
              entry_size = ?6, entry_crc32 = ?7,
-             status = CASE WHEN error_message IS NULL THEN 'ok' ELSE 'error' END,
+             status = CASE WHEN error_message IS NOT NULL THEN 'error'
+                           WHEN drm IS NOT NULL THEN 'protected'
+                           ELSE 'ok' END,
              updated_at = unixepoch()
          WHERE id = ?1",
         params![
@@ -550,7 +569,7 @@ pub fn book_by_id(conn: &Connection, id: i64) -> Result<Option<BookDetails>, Sto
             "SELECT b.id, b.title, b.annotation, b.language, b.cover_mime, b.format,
                     b.status, b.error_message, c.path, c.kind,
                     b.entry_name, b.entry_path, b.entry_index, b.entry_size, b.entry_crc32,
-                    b.added_at, b.updated_at, b.content_hash
+                    b.added_at, b.updated_at, b.content_hash, b.drm
              FROM books b JOIN containers c ON c.id = b.container_id
              WHERE b.id = ?1",
             [id],
@@ -579,6 +598,7 @@ pub fn book_by_id(conn: &Connection, id: i64) -> Result<Option<BookDetails>, Sto
                     format: row.get(5)?,
                     status: BookStatus::parse(&row.get::<_, String>(6)?),
                     error_message: row.get(7)?,
+                    drm: row.get(18)?,
                     container_path: row.get(8)?,
                     container_kind: parse_kind(&row.get::<_, String>(9)?),
                     entry,

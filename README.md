@@ -1,15 +1,15 @@
-# shelfgauge v0.7.0
+# shelfgauge v0.8.0
 
-A single-binary tool that indexes a folder tree of ebooks — FB2 files, plain or inside
-`.zip` archives — into a local SQLite database and serves a browsable, searchable web
-library on `localhost`, with an in-browser reader.
+A single-binary tool that indexes a folder tree of ebooks — FB2 and EPUB files, plain or
+inside `.zip` archives — into a local SQLite database and serves a browsable, searchable
+web library on `localhost`, with an in-browser reader.
 
-**Current version:** 0.7.0
+**Current version:** 0.8.0
 
 ## Status
 
-Early development, not yet published. `shelfgauge [PATH]` indexes a library of FB2 books
-(plain files and `.zip` archives, any number of books per archive) in the background and
+Early development, not yet published. `shelfgauge [PATH]` indexes a library of FB2 and
+EPUB books (plain files and `.zip` archives, any number of books per archive) in the background and
 serves it as a web library: browse by author or by folder, open a book card (cover,
 series, genres, annotation), search by title, author, series or annotation, and read
 books in the browser. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design.
@@ -51,6 +51,18 @@ directory must already be a library.
 library in the background while serving the existing index. Only changed files are read
 again; moved or renamed books keep their identity. Ctrl+C stops the server; a running
 scan keeps what it has indexed so far, and the next scan completes it.
+
+### Formats
+
+- **FB2** (FictionBook 2), in any of the usual encodings.
+- **EPUB** 2 and 3. The table of contents comes from the book's navigation document
+  (NCX in EPUB 2), footnotes and endnotes are collected after the text, and links
+  inside the book work. Stylesheets, embedded fonts and scripts are not used: the
+  reader shows the text in its own typography.
+- **DRM**: books protected by DRM (Adobe ADEPT, Readium LCP, Apple FairPlay) are listed
+  with their metadata and marked "DRM", but shelfgauge does not open them — read them in
+  the app of the store you got them from. EPUB font obfuscation is not DRM; such books
+  open normally.
 
 ### In the browser
 
@@ -186,4 +198,4 @@ MIT — see [LICENSE](LICENSE).
 
 ---
 
-_shelfgauge v0.7.0 — MIT License_
+_shelfgauge v0.8.0 — MIT License_

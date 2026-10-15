@@ -581,6 +581,11 @@ body.sidebar-hidden .sidebar-resizer {
   background: var(--error);
 }
 
+.badge.protected {
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
 .book-card {
   display: grid;
   grid-template-columns: 12rem minmax(0, 1fr);
@@ -633,6 +638,10 @@ body.sidebar-hidden .sidebar-resizer {
 
 .notice.error {
   border-left: 3px solid var(--error);
+}
+
+.notice.protected {
+  border-left: 3px solid var(--border);
 }
 
 .annotation p {
@@ -1112,6 +1121,42 @@ button.small.primary {
 
 .text .align-right {
   text-align: right;
+}
+
+.text ol,
+.text ul {
+  margin: 0.6em 0;
+  padding-left: 2em;
+}
+
+.text li p {
+  margin: 0 0 0.3em;
+  text-indent: 0;
+}
+
+.text li > ol,
+.text li > ul {
+  margin: 0.3em 0;
+}
+
+.text pre {
+  margin: 1em 0;
+  padding: 0.5em 0.75em;
+  overflow-x: auto;
+  font-size: 0.85em;
+  line-height: 1.4;
+  white-space: pre;
+  text-align: left;
+  hyphens: none;
+  background: var(--active-bg);
+  border-radius: 4px;
+}
+
+.text hr {
+  width: 30%;
+  margin: 1.5em auto;
+  border: 0;
+  border-top: 1px solid var(--border);
 }
 
 .text .note-ref {

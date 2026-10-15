@@ -1,6 +1,6 @@
 //! Repairing unbalanced tags, for files that are XML except for their tag structure.
 //!
-//! Real FB2 files sometimes have a stray close tag (e.g. a `</section>` without an
+//! Real FB2 and EPUB files sometimes have a stray close tag (e.g. a `</section>` without an
 //! opening tag) or end without closing their elements. [`rebalance`] rewrites only the
 //! tag structure, deterministically:
 //!
@@ -15,7 +15,7 @@
 //! compared exactly (namespace prefix included).
 
 /// The rebalanced document, or `None` if the tag structure needed no change.
-pub(super) fn rebalance(xml: &str) -> Option<String> {
+pub(crate) fn rebalance(xml: &str) -> Option<String> {
     let bytes = xml.as_bytes();
     let mut out = String::with_capacity(xml.len() + 64);
     let mut open: Vec<&str> = Vec::new();

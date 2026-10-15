@@ -300,6 +300,34 @@ impl Renderer<'_> {
                 }
                 self.out.push_str("</table>");
             }
+            BlockKind::List {
+                ordered,
+                start,
+                items,
+            } => {
+                let tag = if *ordered { "ol" } else { "ul" };
+                if *ordered && *start != 1 {
+                    let _ = write!(self.out, "<ol id=\"{id}\" start=\"{start}\">");
+                } else {
+                    self.open(tag, id, "");
+                }
+                self.blocks(items, "");
+                let _ = write!(self.out, "</{tag}>");
+            }
+            BlockKind::ListItem(blocks) => {
+                self.open("li", id, "");
+                self.blocks(blocks, "");
+                self.out.push_str("</li>");
+            }
+            BlockKind::Preformatted(inlines) => {
+                self.open("pre", id, "");
+                // The HTML parser drops a line feed right after `<pre>`: this one, so
+                // a leading line feed of the text survives.
+                self.out.push('\n');
+                self.inlines(inlines);
+                self.out.push_str("</pre>");
+            }
+            BlockKind::Rule => self.open("hr", id, ""),
         }
     }
 
@@ -344,6 +372,7 @@ impl Renderer<'_> {
             Inline::Superscript(children) => self.wrap("sup", children),
             Inline::Code(children) => self.wrap("code", children),
             Inline::Image(image) => self.image(image, "inline"),
+            Inline::LineBreak => self.out.push_str("<br>"),
             Inline::Link {
                 target,
                 note,
@@ -684,6 +713,50 @@ mod tests {
         ));
         assert!(html.contains(r#"<table id="b1"><tr><th colspan="2" class="align-center">c</th><td colspan="2">c</td></tr></table>"#), "{html}");
         assert!(!html.contains("style"));
+    }
+
+    #[test]
+    fn lists_preformatted_text_rules_and_line_breaks() {
+        let item = |s: &str| Block::new(BlockKind::ListItem(vec![Block::paragraph(s)]));
+        let content = content_with(
+            vec![
+                Block::new(BlockKind::List {
+                    ordered: true,
+                    start: 4,
+                    items: vec![item("a")],
+                }),
+                Block::new(BlockKind::List {
+                    ordered: false,
+                    start: 1,
+                    items: vec![item("b")],
+                }),
+                Block::new(BlockKind::Preformatted(text("\n<x>  y"))),
+                Block::new(BlockKind::Rule),
+                Block::new(BlockKind::Paragraph(vec![
+                    Inline::Text("1".into()),
+                    Inline::LineBreak,
+                    Inline::Text("2".into()),
+                ])),
+            ],
+            vec![],
+        );
+        let html = render_all(&content);
+        assert!(
+            html.contains(r#"<ol id="b1" start="4"><li id="b2"><p id="b3">a</p></li></ol>"#),
+            "{html}"
+        );
+        assert!(
+            html.contains(r#"<ul id="b4"><li id="b5"><p id="b6">b</p></li></ul>"#),
+            "{html}"
+        );
+        assert!(
+            html.contains("<pre id=\"b7\">\n\n&lt;x&gt;  y</pre>"),
+            "{html}"
+        );
+        assert!(
+            html.contains(r#"<hr id="b8"><p id="b9">1<br>2</p>"#),
+            "{html}"
+        );
     }
 
     #[test]

@@ -34,6 +34,7 @@ pub(super) fn parse(root: Node<'_, '_>) -> BookMetadata {
             .map(text_content)
             .filter(|lang| !lang.is_empty()),
         cover: cover(root, info),
+        drm: None,
     }
 }
 

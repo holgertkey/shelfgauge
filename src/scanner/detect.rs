@@ -18,7 +18,7 @@ use super::walk::{Found, Walk};
 use crate::container::ContainerKind;
 use crate::container::zip::list_books;
 use crate::storage::books::{BookStatus, EntryRecord, LocatedBook};
-use crate::storage::containers::StoredContainer;
+use crate::storage::containers::{StoredContainer, listed_formats};
 
 /// A plain file that must be read.
 #[derive(Debug, Clone)]
@@ -70,6 +70,8 @@ pub(super) fn plan(
         .map(|c| (c.record.path.as_str(), c))
         .collect();
 
+    // An archive listed for other formats is listed again.
+    let formats = listed_formats(extensions);
     let mut plan = Plan::default();
     for found in &walk.found {
         let stored = by_path.get(found.path.as_str()).copied();
@@ -81,6 +83,8 @@ pub(super) fn plan(
                 && c.record.kind == found.kind
                 && c.record.size == found.size
                 && c.record.mtime_ns == found.mtime_ns
+                && (found.kind == ContainerKind::File
+                    || c.record.listed_formats.as_deref() == Some(formats.as_str()))
         });
         match found.kind {
             ContainerKind::File => {

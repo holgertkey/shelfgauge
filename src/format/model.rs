@@ -12,15 +12,28 @@
 //! - Bodies are numbered in order (the main body first, then notes bodies), then within
 //!   each [`Section`]: its `title` lines, its `blocks`, then its `children` sections,
 //!   recursively.
-//! - A container block (epigraph, cite, annotation, poem, stanza) is numbered *before*
-//!   its contents; a poem's or stanza's `title` lines come before its `blocks`.
-//! - Every block counts: title lines, empty lines, images, verses, text-author lines.
+//! - A container block (epigraph, cite, annotation, poem, stanza, list, list item) is
+//!   numbered *before* its contents; a poem's or stanza's `title` lines come before its
+//!   `blocks`, a list's items in order, each item before its blocks.
+//! - Every block counts: title lines, empty lines, images, verses, text-author lines,
+//!   horizontal rules.
 //! - Not blocks (never numbered): sections and bodies themselves (a TOC entry links to
-//!   the section's [`Section::first_block_id`]), inline content including inline images,
-//!   and table rows and cells (a table is one block).
+//!   the section's [`Section::first_block_id`]), inline content including inline images
+//!   and line breaks, and table rows and cells (a table is one block).
 //! - IDs never depend on how the book is split into parts for reading.
 //! - Annotation blocks in [`BookMetadata`] are numbered separately, starting at `b1`;
 //!   they are never mixed with content IDs.
+//!
+//! The rule is the same for every format; what differs is how a parser maps its source
+//! to the model:
+//!
+//! - FB2 never produces lists, preformatted blocks or rules; its bodies and sections are
+//!   the `<body>` and `<section>` elements.
+//! - EPUB has one main body: the linear spine documents in order, cut into sections at
+//!   the entries of the navigation document (NCX in EPUB 2), else at headings. Wrapper
+//!   elements (`div`, `section`, ...) are not blocks; a run of inline content outside a
+//!   paragraph is one paragraph. Footnotes (`aside` and other elements typed as notes)
+//!   and non-linear spine documents form a notes body after it, one section per note.
 //!
 //! Numbering happens in [`BookContent::new`] and [`Annotation::new`], so parsers cannot
 //! forget it. Any change to the numbering or to the model requires bumping
@@ -38,7 +51,7 @@ use serde::{Deserialize, Serialize};
 /// constant invalidates every cache. Bump it whenever the model, a parser's output or
 /// the block numbering rule changes (the golden numbering test in this module failing is
 /// a signal to do so).
-pub const PARSER_VERSION: u32 = 1;
+pub const PARSER_VERSION: u32 = 2;
 
 /// A block's ordinal in document order, shown as `b<n>` (see the [module docs](self)).
 #[derive(
@@ -120,6 +133,9 @@ pub struct BookMetadata {
     pub language: Option<String>,
     /// The cover image, if the book has one.
     pub cover: Option<Image>,
+    /// The DRM scheme protecting the book's content (e.g. `Adobe ADEPT`), if any: the
+    /// metadata is readable, the content is not.
+    pub drm: Option<String>,
 }
 
 /// A person's name as given by the source; every part is optional.
@@ -316,19 +332,25 @@ pub struct Section {
     pub blocks: Vec<Block>,
     /// Nested sections.
     pub children: Vec<Section>,
+    /// A title from the book's table of contents, for a section whose source has no
+    /// title of its own (EPUB). Shown in navigation only, never as text of the book.
+    pub nav_title: Option<String>,
 }
 
 impl Section {
-    /// The title as plain text, with lines joined by spaces; `None` if untitled.
+    /// The title as plain text on one line (lines joined by spaces, whitespace
+    /// collapsed), else the [`nav_title`](Self::nav_title); `None` if untitled.
     pub fn title_text(&self) -> Option<String> {
-        let text = self
-            .title
-            .iter()
-            .map(Block::plain_text)
-            .filter(|line| !line.trim().is_empty())
-            .collect::<Vec<_>>()
-            .join(" ");
-        (!text.is_empty()).then_some(text)
+        let mut words = Vec::new();
+        for line in &self.title {
+            words.extend(line.plain_text().split_whitespace().map(str::to_owned));
+        }
+        if words.is_empty()
+            && let Some(nav) = &self.nav_title
+        {
+            words.extend(nav.split_whitespace().map(str::to_owned));
+        }
+        (!words.is_empty()).then(|| words.join(" "))
     }
 
     /// The ID of the first block in this section or its descendants, if any.
@@ -389,12 +411,15 @@ impl Block {
             BlockKind::Paragraph(inlines)
             | BlockKind::Subtitle(inlines)
             | BlockKind::Verse(inlines)
-            | BlockKind::TextAuthor(inlines) => inlines_text(inlines, &mut out),
+            | BlockKind::TextAuthor(inlines)
+            | BlockKind::Preformatted(inlines) => inlines_text(inlines, &mut out),
             BlockKind::Date(text) => out.push_str(text),
-            BlockKind::EmptyLine | BlockKind::Image(_) => {}
+            BlockKind::EmptyLine | BlockKind::Image(_) | BlockKind::Rule => {}
             BlockKind::Epigraph(blocks)
             | BlockKind::Cite(blocks)
-            | BlockKind::Annotation(blocks) => {
+            | BlockKind::Annotation(blocks)
+            | BlockKind::ListItem(blocks)
+            | BlockKind::List { items: blocks, .. } => {
                 out = blocks_text(blocks);
             }
             BlockKind::Poem { title, blocks } | BlockKind::Stanza { title, blocks } => {
@@ -459,6 +484,21 @@ pub enum BlockKind {
     },
     /// A table (one block; rows and cells are not numbered).
     Table(Table),
+    /// A list.
+    List {
+        /// Whether the items are numbered.
+        ordered: bool,
+        /// The number of the first item of an ordered list (usually 1).
+        start: u32,
+        /// The items: [`BlockKind::ListItem`] blocks.
+        items: Vec<Block>,
+    },
+    /// An item of a list: any blocks, including nested lists.
+    ListItem(Vec<Block>),
+    /// Preformatted text: whitespace and line breaks are kept as they are.
+    Preformatted(Vec<Inline>),
+    /// A horizontal rule (a thematic break).
+    Rule,
 }
 
 impl BlockKind {
@@ -478,6 +518,10 @@ impl BlockKind {
             Self::Poem { .. } => "poem",
             Self::Stanza { .. } => "stanza",
             Self::Table(_) => "table",
+            Self::List { .. } => "list",
+            Self::ListItem(_) => "list_item",
+            Self::Preformatted(_) => "preformatted",
+            Self::Rule => "rule",
         }
     }
 }
@@ -575,6 +619,8 @@ pub enum Inline {
     },
     /// An inline image (not a block, not numbered).
     Image(ImageRef),
+    /// A line break inside a block (`\n` in plain text).
+    LineBreak,
 }
 
 /// The target of a [`Inline::Link`].
@@ -602,9 +648,11 @@ fn number_block(block: &mut Block, next: &mut u32) {
 /// The child block lists of a container block, in numbering order.
 fn children(kind: &BlockKind) -> [&[Block]; 2] {
     match kind {
-        BlockKind::Epigraph(blocks) | BlockKind::Cite(blocks) | BlockKind::Annotation(blocks) => {
-            [blocks, &[]]
-        }
+        BlockKind::Epigraph(blocks)
+        | BlockKind::Cite(blocks)
+        | BlockKind::Annotation(blocks)
+        | BlockKind::ListItem(blocks)
+        | BlockKind::List { items: blocks, .. } => [blocks, &[]],
         BlockKind::Poem { title, blocks } | BlockKind::Stanza { title, blocks } => [title, blocks],
         _ => [&[], &[]],
     }
@@ -613,9 +661,11 @@ fn children(kind: &BlockKind) -> [&[Block]; 2] {
 /// Mutable variant of [`children`]; must return the lists in the same order.
 fn children_mut(kind: &mut BlockKind) -> [&mut [Block]; 2] {
     match kind {
-        BlockKind::Epigraph(blocks) | BlockKind::Cite(blocks) | BlockKind::Annotation(blocks) => {
-            [blocks, &mut []]
-        }
+        BlockKind::Epigraph(blocks)
+        | BlockKind::Cite(blocks)
+        | BlockKind::Annotation(blocks)
+        | BlockKind::ListItem(blocks)
+        | BlockKind::List { items: blocks, .. } => [blocks, &mut []],
         BlockKind::Poem { title, blocks } | BlockKind::Stanza { title, blocks } => [title, blocks],
         _ => [&mut [], &mut []],
     }
@@ -674,6 +724,7 @@ fn inlines_text(inlines: &[Inline], out: &mut String) {
             | Inline::Code(children)
             | Inline::Link { children, .. } => inlines_text(children, out),
             Inline::Image(_) => {}
+            Inline::LineBreak => out.push('\n'),
         }
     }
 }
@@ -868,6 +919,117 @@ mod tests {
         assert_eq!(actual, expected);
     }
 
+    /// The block kinds only EPUB produces: nested lists, preformatted text, rules and
+    /// line breaks, with a section titled only by the navigation document.
+    fn epub_sample() -> BookContent {
+        let item = |blocks: Vec<Block>| b(BlockKind::ListItem(blocks));
+        let nested = b(BlockKind::List {
+            ordered: false,
+            start: 1,
+            items: vec![item(vec![p("Inner")])],
+        });
+        let list = b(BlockKind::List {
+            ordered: true,
+            start: 3,
+            items: vec![item(vec![p("First"), nested]), item(vec![p("Second")])],
+        });
+        let lines = b(BlockKind::Paragraph(vec![
+            Inline::Text("One".to_owned()),
+            Inline::LineBreak,
+            Inline::Text("Two".to_owned()),
+        ]));
+        let chapter = Section {
+            title: vec![p("Chapter")],
+            blocks: vec![
+                list,
+                b(BlockKind::Rule),
+                b(BlockKind::Preformatted(text("  code\n  more"))),
+                lines,
+            ],
+            ..Section::default()
+        };
+        let untitled = Section {
+            nav_title: Some("From the TOC".to_owned()),
+            blocks: vec![p("Text")],
+            ..Section::default()
+        };
+        let main = Section {
+            children: vec![chapter, untitled],
+            ..Section::default()
+        };
+        let notes = Section {
+            children: vec![Section {
+                blocks: vec![p("A note.")],
+                ..Section::default()
+            }],
+            ..Section::default()
+        };
+        BookContent::new(vec![Body::main(main), Body::notes(notes)], BTreeMap::new())
+    }
+
+    /// Golden test of the numbering of the EPUB-only kinds. If this fails after a
+    /// change, the block IDs of existing EPUB books changed: bump `PARSER_VERSION`.
+    #[test]
+    fn epub_kinds_follow_the_documented_order() {
+        let content = epub_sample();
+        let actual: Vec<(String, &str, String)> = content
+            .blocks()
+            .iter()
+            .map(|block| (block.id.to_string(), block.kind.name(), block.plain_text()))
+            .collect();
+        let expected = [
+            ("b1", "paragraph", "Chapter"),
+            ("b2", "list", "First\nInner\nSecond"),
+            ("b3", "list_item", "First\nInner"),
+            ("b4", "paragraph", "First"),
+            ("b5", "list", "Inner"),
+            ("b6", "list_item", "Inner"),
+            ("b7", "paragraph", "Inner"),
+            ("b8", "list_item", "Second"),
+            ("b9", "paragraph", "Second"),
+            ("b10", "rule", ""),
+            ("b11", "preformatted", "  code\n  more"),
+            ("b12", "paragraph", "One\nTwo"),
+            ("b13", "paragraph", "Text"),
+            ("b14", "paragraph", "A note."),
+        ];
+        let expected: Vec<(String, &str, String)> = expected
+            .iter()
+            .map(|(id, kind, text)| (id.to_string(), *kind, text.to_string()))
+            .collect();
+        assert_eq!(actual, expected);
+        let list = content.blocks()[1];
+        assert_eq!((list.id.ordinal(), list.last_id().ordinal()), (2, 9));
+        let bytes = postcard::to_stdvec(&content).unwrap();
+        assert_eq!(
+            postcard::from_bytes::<BookContent>(&bytes).unwrap(),
+            content
+        );
+    }
+
+    #[test]
+    fn title_text_is_one_line_and_falls_back_to_the_nav_title() {
+        let content = epub_sample();
+        let main = &content.bodies()[0].section;
+        assert_eq!(
+            main.children[1].title_text().as_deref(),
+            Some("From the TOC")
+        );
+        let section = Section {
+            title: vec![b(BlockKind::Paragraph(vec![
+                Inline::Text("Chapter  I".to_owned()),
+                Inline::LineBreak,
+                Inline::Text(" The Beginning ".to_owned()),
+            ]))],
+            nav_title: Some("Ignored".to_owned()),
+            ..Section::default()
+        };
+        assert_eq!(
+            section.title_text().as_deref(),
+            Some("Chapter I The Beginning")
+        );
+    }
+
     #[test]
     fn containers_occupy_a_contiguous_id_range() {
         let content = sample();
@@ -1027,6 +1189,7 @@ mod tests {
                 mime: "image/png".to_owned(),
                 data: vec![0x89, b'P', b'N', b'G'],
             }),
+            drm: Some("Adobe ADEPT".to_owned()),
         };
         let json = serde_json::to_string(&metadata).unwrap();
         let back: BookMetadata = serde_json::from_str(&json).unwrap();

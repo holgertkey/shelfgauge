@@ -31,6 +31,9 @@ pub enum LoadError {
     /// The book cannot be read or parsed.
     #[error("{0}")]
     Unreadable(String),
+    /// The book is protected by DRM (the scheme is given); it is never read.
+    #[error("the book is protected by DRM ({0})")]
+    Protected(String),
 }
 
 /// The content-cache key of a book: a plain file's content hash, or a zip entry's
@@ -96,6 +99,10 @@ pub fn load(
         return Err(LoadError::NeedsRescan(
             "the book was removed from the library".to_owned(),
         ));
+    }
+    if book.status == BookStatus::Protected {
+        let scheme = book.drm.clone().unwrap_or_else(|| "unknown DRM".to_owned());
+        return Err(LoadError::Protected(scheme));
     }
     let cache = ContentCache::new(library.content_dir());
     let key = content_key(book);

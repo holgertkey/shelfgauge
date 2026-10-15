@@ -25,6 +25,8 @@ pub(crate) enum AppError {
     Unreadable(String),
     /// The request is invalid (400); the reason is shown.
     BadRequest(String),
+    /// The book is protected by DRM (403); the scheme is shown.
+    Protected(String),
     /// An unexpected failure (500); the message is logged, not shown.
     Internal(String),
 }
@@ -36,6 +38,7 @@ pub(crate) enum ErrorPage {
     FileMissing,
     Unreadable(String),
     BadRequest(String),
+    Protected(String),
     Internal,
 }
 
@@ -52,6 +55,7 @@ impl IntoResponse for AppError {
                 )
             }
             Self::BadRequest(reason) => (StatusCode::BAD_REQUEST, ErrorPage::BadRequest(reason)),
+            Self::Protected(scheme) => (StatusCode::FORBIDDEN, ErrorPage::Protected(scheme)),
             Self::Internal(message) => {
                 tracing::error!("{message}");
                 (StatusCode::INTERNAL_SERVER_ERROR, ErrorPage::Internal)
@@ -103,6 +107,10 @@ struct ErrorTemplate<'a> {
     rescan: bool,
 }
 
+/// What a DRM-protected book shows instead of its text.
+pub(crate) const PROTECTED: &str = "This book is protected by DRM, so shelfgauge cannot \
+    open it. Open it in the app of the store where you got it.";
+
 /// The fallback for unknown paths.
 pub(crate) async fn not_found() -> AppError {
     AppError::NotFound
@@ -124,6 +132,7 @@ pub(crate) async fn render_errors(
     let status = response.status();
     let detail = match &page {
         ErrorPage::Unreadable(reason) | ErrorPage::BadRequest(reason) => Some(reason.clone()),
+        ErrorPage::Protected(scheme) => Some(format!("Protection: {scheme}.")),
         _ => None,
     };
     let (title, message, rescan) = match page {
@@ -144,6 +153,7 @@ pub(crate) async fn render_errors(
             "The request could not be carried out.",
             false,
         ),
+        ErrorPage::Protected(_) => ("Protected by DRM", PROTECTED, false),
         ErrorPage::Internal => (
             "Internal error",
             "Something went wrong on the server. The details are in the server log.",

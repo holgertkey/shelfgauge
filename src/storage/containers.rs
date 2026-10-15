@@ -18,6 +18,27 @@ pub struct ContainerRecord {
     pub mtime_ns: i64,
     /// Content hash of a plain file (not used for archives).
     pub content_hash: Option<Vec<u8>>,
+    /// For an archive: the book formats its entries were listed for (see
+    /// [`listed_formats`]). An archive listed for other formats is listed again even if
+    /// its stat is unchanged, so books of a newly supported format are found.
+    pub listed_formats: Option<String>,
+}
+
+/// The value of [`ContainerRecord::listed_formats`] for the file `extensions`: sorted,
+/// comma-separated.
+///
+/// # Examples
+///
+/// ```
+/// use shelfgauge::storage::containers::listed_formats;
+///
+/// assert_eq!(listed_formats(&["fb2", "epub"]), "epub,fb2");
+/// ```
+pub fn listed_formats(extensions: &[&str]) -> String {
+    let mut extensions: Vec<String> = extensions.iter().map(|e| e.to_lowercase()).collect();
+    extensions.sort();
+    extensions.dedup();
+    extensions.join(",")
 }
 
 /// A container as stored.
@@ -36,18 +57,20 @@ pub struct StoredContainer {
 /// Returns the container id, which stays the same for the same path.
 pub fn upsert_container(conn: &Connection, record: &ContainerRecord) -> Result<i64, StorageError> {
     let id = conn.query_row(
-        "INSERT INTO containers (path, kind, size, mtime_ns, content_hash, present)
-         VALUES (?1, ?2, ?3, ?4, ?5, 1)
+        "INSERT INTO containers (path, kind, size, mtime_ns, content_hash, present, listed_formats)
+         VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6)
          ON CONFLICT (path) DO UPDATE SET
              kind = excluded.kind, size = excluded.size, mtime_ns = excluded.mtime_ns,
-             content_hash = excluded.content_hash, present = 1
+             content_hash = excluded.content_hash, present = 1,
+             listed_formats = excluded.listed_formats
          RETURNING id",
         params![
             record.path,
             kind_str(record.kind),
             record.size as i64,
             record.mtime_ns,
-            record.content_hash
+            record.content_hash,
+            record.listed_formats,
         ],
         |row| row.get(0),
     )?;
@@ -67,7 +90,7 @@ pub fn container_by_path(
 ) -> Result<Option<StoredContainer>, StorageError> {
     Ok(conn
         .query_row(
-            "SELECT id, path, kind, size, mtime_ns, content_hash, present
+            "SELECT id, path, kind, size, mtime_ns, content_hash, present, listed_formats
              FROM containers WHERE path = ?1",
             [path],
             stored_container,
@@ -78,7 +101,7 @@ pub fn container_by_path(
 /// All recorded containers, ordered by path.
 pub fn list_containers(conn: &Connection) -> Result<Vec<StoredContainer>, StorageError> {
     let mut stmt = conn.prepare(
-        "SELECT id, path, kind, size, mtime_ns, content_hash, present
+        "SELECT id, path, kind, size, mtime_ns, content_hash, present, listed_formats
          FROM containers ORDER BY path",
     )?;
     let rows = stmt.query_map([], stored_container)?;
@@ -109,6 +132,7 @@ fn stored_container(row: &Row<'_>) -> rusqlite::Result<StoredContainer> {
             size: row.get::<_, i64>(3)? as u64,
             mtime_ns: row.get(4)?,
             content_hash: row.get(5)?,
+            listed_formats: row.get(7)?,
         },
         present: row.get(6)?,
     })
@@ -126,6 +150,7 @@ mod tests {
             size: 10,
             mtime_ns: 1_700_000_000_123_456_789,
             content_hash: (kind == ContainerKind::File).then(|| vec![1, 2, 3]),
+            listed_formats: (kind == ContainerKind::Zip).then(|| "fb2".to_owned()),
         }
     }
 

@@ -53,9 +53,10 @@ fn block_text(block: &Block, out: &mut String) {
         BlockKind::Paragraph(inlines)
         | BlockKind::Subtitle(inlines)
         | BlockKind::Verse(inlines)
-        | BlockKind::TextAuthor(inlines) => inlines_text(inlines, out),
+        | BlockKind::TextAuthor(inlines)
+        | BlockKind::Preformatted(inlines) => inlines_text(inlines, out),
         BlockKind::Date(text) => out.push_str(text),
-        BlockKind::EmptyLine => {}
+        BlockKind::EmptyLine | BlockKind::Rule => {}
         BlockKind::Image(image) => {
             // The renderer emits a caption only for a non-blank title.
             if let Some(title) = image.title.as_deref().filter(|t| !t.trim().is_empty()) {
@@ -71,7 +72,9 @@ fn block_text(block: &Block, out: &mut String) {
         | BlockKind::Cite(_)
         | BlockKind::Annotation(_)
         | BlockKind::Poem { .. }
-        | BlockKind::Stanza { .. } => {
+        | BlockKind::Stanza { .. }
+        | BlockKind::List { .. }
+        | BlockKind::ListItem(_) => {
             for child in child_blocks(block) {
                 block_text(child, out);
             }
@@ -90,7 +93,8 @@ fn inlines_text(inlines: &[Inline], out: &mut String) {
             | Inline::Superscript(children)
             | Inline::Code(children)
             | Inline::Link { children, .. } => inlines_text(children, out),
-            Inline::Image(_) => {}
+            // `<br>` and `<img>` have no text content.
+            Inline::Image(_) | Inline::LineBreak => {}
         }
     }
 }
@@ -98,9 +102,11 @@ fn inlines_text(inlines: &[Inline], out: &mut String) {
 /// The blocks nested directly in `block`, in numbering order.
 fn child_blocks(block: &Block) -> impl Iterator<Item = &Block> {
     let (first, second): (&[Block], &[Block]) = match &block.kind {
-        BlockKind::Epigraph(blocks) | BlockKind::Cite(blocks) | BlockKind::Annotation(blocks) => {
-            (blocks, &[])
-        }
+        BlockKind::Epigraph(blocks)
+        | BlockKind::Cite(blocks)
+        | BlockKind::Annotation(blocks)
+        | BlockKind::ListItem(blocks)
+        | BlockKind::List { items: blocks, .. } => (blocks, &[]),
         BlockKind::Poem { title, blocks } | BlockKind::Stanza { title, blocks } => (title, blocks),
         _ => (&[], &[]),
     };
@@ -444,6 +450,24 @@ mod tests {
         assert_eq!(rendered_text(&poem), "Tv1v2");
         let date = Block::new(BlockKind::Date("a\r\nb\rc\0".into()));
         assert_eq!(rendered_text(&date), "a\nb\nc\u{fffd}");
+        let list = Block::new(BlockKind::List {
+            ordered: true,
+            start: 1,
+            items: vec![
+                Block::new(BlockKind::ListItem(vec![Block::paragraph("a")])),
+                Block::new(BlockKind::ListItem(vec![Block::new(BlockKind::Paragraph(
+                    vec![
+                        Inline::Text("b".into()),
+                        Inline::LineBreak,
+                        Inline::Text("c".into()),
+                    ],
+                ))])),
+            ],
+        });
+        assert_eq!(rendered_text(&list), "abc", "<br> has no text content");
+        let pre = Block::new(BlockKind::Preformatted(text("\n  x\r\n")));
+        assert_eq!(rendered_text(&pre), "\n  x\n");
+        assert_eq!(rendered_text(&Block::new(BlockKind::Rule)), "");
     }
 
     fn book() -> BookContent {

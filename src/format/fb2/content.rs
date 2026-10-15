@@ -16,6 +16,7 @@ use crate::format::model::{
     Align, Block, BlockKind, Body, BookContent, ImageRef, Inline, LinkTarget, Section, Table,
     TableCell, TableRow,
 };
+use crate::format::xml::{extend_merged, push_text, trim_end, trim_start};
 
 /// Converts all bodies and binaries; the first body is the main text, the rest notes.
 pub(super) fn parse(root: Node<'_, '_>) -> BookContent {
@@ -401,112 +402,6 @@ fn push_inline(node: Node<'_, '_>, depth: usize, out: &mut Vec<Inline>) {
                 push_inline(child, depth + 1, out);
             }
         }
-    }
-}
-
-/// Appends text with XML whitespace runs collapsed, merging with a preceding text.
-fn push_text(out: &mut Vec<Inline>, text: &str) {
-    let mut collapsed = String::with_capacity(text.len());
-    let mut in_space = false;
-    for c in text.chars() {
-        if matches!(c, ' ' | '\t' | '\r' | '\n') {
-            if !in_space {
-                collapsed.push(' ');
-            }
-            in_space = true;
-        } else {
-            collapsed.push(c);
-            in_space = false;
-        }
-    }
-    if collapsed.is_empty() {
-        return;
-    }
-    if let Some(Inline::Text(previous)) = out.last_mut() {
-        if previous.ends_with(' ') && collapsed.starts_with(' ') {
-            collapsed.remove(0);
-        }
-        previous.push_str(&collapsed);
-    } else {
-        out.push(Inline::Text(collapsed));
-    }
-}
-
-/// Appends inlines, merging a leading text with a preceding text.
-fn extend_merged(out: &mut Vec<Inline>, inlines: Vec<Inline>) {
-    for inline in inlines {
-        match inline {
-            Inline::Text(text) => push_text(out, &text),
-            other => out.push(other),
-        }
-    }
-}
-
-/// The child list of a formatting inline, if it is one.
-fn inline_children(inline: &mut Inline) -> Option<&mut Vec<Inline>> {
-    match inline {
-        Inline::Emphasis(children)
-        | Inline::Strong(children)
-        | Inline::Strikethrough(children)
-        | Inline::Subscript(children)
-        | Inline::Superscript(children)
-        | Inline::Code(children)
-        | Inline::Link { children, .. } => Some(children),
-        Inline::Text(_) | Inline::Image(_) => None,
-    }
-}
-
-/// Removes leading whitespace of the inline content.
-fn trim_start(inlines: &mut Vec<Inline>) {
-    while let Some(first) = inlines.first_mut() {
-        match first {
-            Inline::Text(text) => {
-                let trimmed = text.trim_start_matches(' ');
-                if trimmed.is_empty() {
-                    inlines.remove(0);
-                    continue;
-                }
-                *text = trimmed.to_owned();
-            }
-            Inline::Image(_) => {}
-            other => {
-                if let Some(children) = inline_children(other) {
-                    trim_start(children);
-                    if children.is_empty() {
-                        inlines.remove(0);
-                        continue;
-                    }
-                }
-            }
-        }
-        return;
-    }
-}
-
-/// Removes trailing whitespace of the inline content.
-fn trim_end(inlines: &mut Vec<Inline>) {
-    while let Some(last) = inlines.last_mut() {
-        match last {
-            Inline::Text(text) => {
-                let trimmed_len = text.trim_end_matches(' ').len();
-                if trimmed_len == 0 {
-                    inlines.pop();
-                    continue;
-                }
-                text.truncate(trimmed_len);
-            }
-            Inline::Image(_) => {}
-            other => {
-                if let Some(children) = inline_children(other) {
-                    trim_end(children);
-                    if children.is_empty() {
-                        inlines.pop();
-                        continue;
-                    }
-                }
-            }
-        }
-        return;
     }
 }
 
