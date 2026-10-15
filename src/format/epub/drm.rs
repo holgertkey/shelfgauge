@@ -10,9 +10,9 @@
 use std::collections::HashSet;
 
 use super::package::LocalName;
-use super::paths::resolve;
-use super::xml::with_document;
 use crate::format::ParseError;
+use crate::format::xhtml::document::with_document;
+use crate::format::xhtml::paths::resolve;
 use crate::format::zipbook::ZipBook as Archive;
 
 /// Font obfuscation algorithms (EPUB 3.3 §4.4.5 and Adobe's predecessor).

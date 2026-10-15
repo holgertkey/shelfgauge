@@ -20,12 +20,9 @@ use super::{BookParser, ParseError};
 
 mod content;
 mod drm;
-mod entities;
 mod metadata;
 mod nav;
 mod package;
-mod paths;
-mod xml;
 
 pub(crate) use metadata::person;
 

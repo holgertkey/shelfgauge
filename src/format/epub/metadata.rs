@@ -14,11 +14,10 @@
 //!   item whose id names a cover. Only known raster types; an encrypted cover is
 //!   skipped.
 
-use super::content;
 use super::drm::Protection;
 use super::package::Package;
-use super::xml::with_document;
 use crate::format::model::{Annotation, Block, BookMetadata, Image, Person, Series};
+use crate::format::xhtml::document::with_document;
 use crate::format::xml::{normalize_space, sniff_image_mime};
 use crate::format::zipbook::ZipBook as Archive;
 
@@ -204,7 +203,7 @@ fn annotation(package: &Package) -> Annotation {
     if raw.contains('<') {
         let fragment = format!("<div>{raw}</div>");
         if let Ok(blocks) = with_document(fragment.as_bytes(), |doc| {
-            content::fragment_blocks(doc.root_element())
+            crate::format::xhtml::fragment_blocks(doc.root_element())
         }) && !blocks.is_empty()
         {
             return Annotation::new(blocks);

@@ -12,6 +12,7 @@ pub mod model;
 pub(crate) mod repair;
 pub(crate) mod sections;
 pub mod txt;
+pub(crate) mod xhtml;
 pub(crate) mod xml;
 pub(crate) mod zipbook;
 

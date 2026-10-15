@@ -5,9 +5,9 @@ use std::collections::HashMap;
 
 use roxmltree::Node;
 
-use super::paths::resolve;
-use super::xml::with_document;
 use crate::format::ParseError;
+use crate::format::xhtml::document::with_document;
+use crate::format::xhtml::paths::resolve;
 use crate::format::xml::normalize_space;
 use crate::format::zipbook::ZipBook as Archive;
 

@@ -1,4 +1,5 @@
-//! Loading the XML documents of an EPUB (container, package, navigation, XHTML).
+//! Loading XML documents of books (EPUB container, package, navigation and XHTML
+//! documents; HTML pages serialized as XHTML).
 //!
 //! XHTML content documents are XML, but real books use what only HTML parsers accept,
 //! so the text goes through a pre-pass before `roxmltree` sees it:
@@ -25,7 +26,7 @@ use crate::format::repair;
 use crate::format::xml::{MAX_XML_DEPTH, NODES_LIMIT, nesting_exceeds};
 
 /// The namespace of `epub:type` and other EPUB attributes.
-pub(super) const OPS_NS: &str = "http://www.idpf.org/2007/ops";
+pub(crate) const OPS_NS: &str = "http://www.idpf.org/2007/ops";
 
 /// Well-known prefixes declared when a document uses them without a declaration.
 const KNOWN_PREFIXES: &[(&str, &str)] =
@@ -35,7 +36,7 @@ const KNOWN_PREFIXES: &[(&str, &str)] =
 const MAX_PREFIX_RETRIES: usize = 8;
 
 /// Decodes `data`, runs the pre-pass and parses it, then calls `f` with the document.
-pub(super) fn with_document<T>(
+pub(crate) fn with_document<T>(
     data: &[u8],
     f: impl FnOnce(&Document<'_>) -> T,
 ) -> Result<T, ParseError> {
@@ -105,7 +106,7 @@ fn parse_and_apply<T>(
 }
 
 /// The pre-pass described in the [module docs](self).
-pub(super) fn prepare(text: &str) -> String {
+pub(crate) fn prepare(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 64);
     let mut rest = text;
     let mut seen_root = false;

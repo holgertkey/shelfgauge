@@ -4,8 +4,8 @@
 use roxmltree::Node;
 
 use super::package::{LocalName, Package};
-use super::paths::resolve;
-use super::xml::{OPS_NS, with_document};
+use crate::format::xhtml::document::{OPS_NS, with_document};
+use crate::format::xhtml::paths::resolve;
 use crate::format::xml::normalize_space;
 use crate::format::zipbook::ZipBook as Archive;
 

@@ -1,10 +1,10 @@
-//! Paths inside the EPUB container: resolving relative URLs of the package and the
-//! content documents to entry names.
+//! Paths inside a book: resolving relative URLs of documents (EPUB package and content
+//! documents, HTML pages) to entry names.
 
 use percent_encoding::percent_decode_str;
 
 /// The directory part of an entry path, with a trailing `/` (empty at the root).
-pub(super) fn directory(path: &str) -> &str {
+pub(crate) fn directory(path: &str) -> &str {
     path.rfind('/').map_or("", |i| &path[..=i])
 }
 
@@ -14,7 +14,7 @@ pub(super) fn directory(path: &str) -> &str {
 ///
 /// The path is percent-decoded; a query is dropped. An URL with only a fragment points
 /// into `base` itself.
-pub(super) fn resolve(base: &str, url: &str) -> Option<(String, Option<String>)> {
+pub(crate) fn resolve(base: &str, url: &str) -> Option<(String, Option<String>)> {
     let url = url.trim();
     if has_scheme(url) || url.starts_with("//") {
         return None;
@@ -40,7 +40,7 @@ pub(super) fn resolve(base: &str, url: &str) -> Option<(String, Option<String>)>
 }
 
 /// Whether `url` starts with a scheme (`http:`, `mailto:`, ...).
-pub(super) fn has_scheme(url: &str) -> bool {
+pub(crate) fn has_scheme(url: &str) -> bool {
     match url.split_once(':') {
         Some((scheme, _)) => {
             let mut chars = scheme.chars();

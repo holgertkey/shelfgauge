@@ -2,7 +2,7 @@
 //! `special`), which XML parsers do not know without the DTD.
 
 /// `(name, code point)`, sorted by name for binary search.
-pub(super) const ENTITIES: &[(&str, u32)] = &[
+pub(crate) const ENTITIES: &[(&str, u32)] = &[
     ("AElig", 0x00C6),
     ("Aacute", 0x00C1),
     ("Acirc", 0x00C2),
@@ -258,7 +258,7 @@ pub(super) const ENTITIES: &[(&str, u32)] = &[
 ];
 
 /// The code point of the named entity `name` (case-sensitive), if XHTML 1.x defines it.
-pub(super) fn lookup(name: &str) -> Option<char> {
+pub(crate) fn lookup(name: &str) -> Option<char> {
     let index = ENTITIES.binary_search_by(|(n, _)| (*n).cmp(name)).ok()?;
     char::from_u32(ENTITIES[index].1)
 }
