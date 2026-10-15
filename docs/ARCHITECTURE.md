@@ -303,6 +303,19 @@ independent features.
   stays). Records for books an instance does not have are kept as orphans (annotation
   rules above). Devices work offline (Service Worker + Cache Storage, changes queued in
   IndexedDB).
+- **Book files (`.sgbook`)**, agreed 2026-10-15: a second delivery channel for the same
+  publication (the hub's publication storage stays). A zip without compression: first
+  entry `mimetype` (`application/vnd.shelfgauge.book`, so files are recognized by
+  content, not name), then `sg.json` (format version, publication id, account id and
+  key id, the book key encrypted with the account key, optionally an encrypted snapshot
+  of the book's annotations) and the blobs at the hub's paths. Passed on by any means
+  and opened only in the hub's reader app, which copies it into browser storage (OPFS /
+  IndexedDB); it opens only where the account key is, also offline — a forwarded file
+  is useless to others. Opening: File Handling API on desktop Chromium, Web Share Target
+  on Chrome for Android, an "Open file" button everywhere (the only way on iOS / Safari
+  and Firefox). Exporting or opening a file puts the book on the shelf; files do not
+  expire and cannot be revoked; clients keep old account keys after a rotation (selected
+  by the key id).
 - **Lifetime and quotas** are hub settings: `publication_expiry_days` (days without
   opens, `0` = never, the self-hosted default; the shelf item stays and the book can be
   republished) and per-account limits on bytes, publications and devices (unlimited by
@@ -315,7 +328,7 @@ independent features.
   not against a malicious operator serving a key-stealing reader (mitigation: open
   source, self-hosting); a revoked device keeps the account key until the key is rotated
   (re-encrypting all records on a trusted client); copies already cached on a device
-  cannot be retracted.
+  cannot be retracted, nor can exported `.sgbook` files.
 
 **DRM** (applies once EPUB or another DRM-capable format is added): DRM-free books,
 including purchased ones with a watermark, are ordinary books and watermarks are never
