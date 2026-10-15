@@ -245,6 +245,20 @@ fn every_code_page_gives_the_same_book() {
         }
         inputs.push(bytes);
     }
+    // UTF-16 without a BOM, both byte orders.
+    for le in [true, false] {
+        let bytes = text
+            .encode_utf16()
+            .flat_map(|unit| {
+                if le {
+                    unit.to_le_bytes()
+                } else {
+                    unit.to_be_bytes()
+                }
+            })
+            .collect();
+        inputs.push(bytes);
+    }
     for bytes in inputs {
         assert_eq!(outline(&bytes), expected);
         assert_eq!(style_of(&bytes), Style::Indented);

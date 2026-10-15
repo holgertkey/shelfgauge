@@ -8,9 +8,10 @@
 //!    here). Cyrillic code pages are recognized: windows-1251, IBM866 and KOI8 (reported
 //!    as KOI8-U, which decodes Russian text like KOI8-R).
 //!
-//! [`decode_text`] runs them for plain text. Formats with an in-band declaration (the
-//! XML declaration of FB2, see [`fb2::encoding`](super::fb2::encoding); `<meta charset>`
-//! of HTML) use it between steps 1 and 2, but do not trust it blindly:
+//! [`decode_text`] runs them for plain text, with one more step between 1 and 2: UTF-16
+//! without a BOM, recognized by its line breaks and spaces. Formats with an in-band
+//! declaration (the XML declaration of FB2, see
+//! [`fb2::encoding`](super::fb2::encoding); `<meta charset>` of HTML) use it between steps 1 and 2, but do not trust it blindly:
 //!
 //! - declared UTF-8 but not (mostly) valid UTF-8 → treated as undeclared;
 //! - declared another encoding but the bytes are (mostly) valid UTF-8 *and* contain
@@ -30,7 +31,7 @@
 use std::borrow::Cow;
 
 use chardetng::{EncodingDetector, Iso2022JpDetection, Utf8Detection};
-use encoding_rs::{Encoding, UTF_8};
+use encoding_rs::{Encoding, UTF_8, UTF_16BE, UTF_16LE};
 
 /// Minimum ratio of valid multi-byte UTF-8 characters to invalid sequences for bytes
 /// to be decoded as UTF-8 despite errors.
@@ -56,7 +57,8 @@ pub struct Decoded<'a> {
 pub enum Detection {
     /// From a byte order mark.
     Bom,
-    /// UTF-16 without BOM, recognized by its first characters.
+    /// UTF-16 without BOM, recognized by its first characters (FB2) or by its line
+    /// breaks and spaces (plain text).
     Utf16Pattern,
     /// From an in-band declaration (the XML declaration, `<meta charset>`).
     Declaration,
@@ -69,8 +71,8 @@ pub enum Detection {
     Guessed,
 }
 
-/// Decodes plain text: BOM, then (mostly) valid UTF-8, then the detector (see the
-/// [module docs](self)).
+/// Decodes plain text: BOM, then UTF-16 without BOM, then (mostly) valid UTF-8, then
+/// the detector (see the [module docs](self)).
 ///
 /// # Examples
 ///
@@ -90,7 +92,69 @@ pub fn decode_text(bytes: &[u8]) -> Decoded<'_> {
     if let Some(decoded) = decode_bom(bytes) {
         return decoded;
     }
+    if let Some(encoding) = utf16_text(bytes) {
+        return finish(encoding, bytes, Detection::Utf16Pattern, None);
+    }
     decode_declared(bytes, None)
+}
+
+/// How many leading bytes [`utf16_text`] looks at.
+const UTF16_SAMPLE: usize = 64 * 1024;
+
+/// How many line break and space units [`utf16_text`] needs at least.
+const UTF16_MIN_HITS: usize = 8;
+
+/// UTF-16 plain text without a BOM, LE or BE.
+///
+/// Text in UTF-8 or a legacy encoding has no zero bytes, while UTF-16 text has a line
+/// break or space unit (`0A 00`, `0D 00`, `20 00` in LE) every paragraph at least, even
+/// in CJK text. The reverse units (U+0A00, U+0D00, U+2000) are practically never used,
+/// so the byte order is the one whose units occur and whose reverse does not. In the
+/// first [`UTF16_SAMPLE`] bytes:
+///
+/// - break and space units are at least 1 in 256 units and at least [`UTF16_MIN_HITS`]
+///   (a book has many more; stray zero bytes in other text do not add up to that), and
+///   the other order has at most an eighth of them;
+/// - the units form valid UTF-16 (no lone surrogates) with few control characters.
+pub(crate) fn utf16_text(bytes: &[u8]) -> Option<&'static Encoding> {
+    let sample = &bytes[..bytes.len().min(UTF16_SAMPLE) & !1];
+    let units = sample.len() / 2;
+    let (mut le, mut be) = (0usize, 0usize);
+    for pair in sample.as_chunks::<2>().0 {
+        match pair {
+            [b'\n' | b'\r' | b' ', 0] => le += 1,
+            [0, b'\n' | b'\r' | b' '] => be += 1,
+            _ => {}
+        }
+    }
+    let (encoding, hits, other) = if le >= be {
+        (UTF_16LE, le, be)
+    } else {
+        (UTF_16BE, be, le)
+    };
+    if hits < UTF16_MIN_HITS || hits < units / 256 || other > hits / 8 {
+        return None;
+    }
+    let units = sample.as_chunks::<2>().0.iter().map(|&pair| {
+        if encoding == UTF_16LE {
+            u16::from_le_bytes(pair)
+        } else {
+            u16::from_be_bytes(pair)
+        }
+    });
+    let mut controls = 0usize;
+    let mut chars = char::decode_utf16(units).peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            // A pair cut by the end of the sample.
+            Err(_) if chars.peek().is_none() && sample.len() < bytes.len() => {}
+            Err(_) => return None,
+            Ok('\t' | '\n' | '\r' | '\u{c}') => {}
+            Ok(c) if c.is_control() => controls += 1,
+            Ok(_) => {}
+        }
+    }
+    (controls <= sample.len() / 2 / 100).then_some(encoding)
 }
 
 /// Decodes `bytes` (without a BOM) that declare the encoding `declared_label`, or
@@ -176,7 +240,7 @@ pub(crate) fn guess(bytes: &[u8]) -> &'static Encoding {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use encoding_rs::{IBM866, KOI8_R, KOI8_U, UTF_16BE, UTF_16LE, WINDOWS_1251, WINDOWS_1252};
+    use encoding_rs::{IBM866, KOI8_R, KOI8_U, WINDOWS_1251, WINDOWS_1252};
 
     /// License-free Russian sample text, long enough for the statistical detector.
     pub(crate) const RUSSIAN: &str = "Старый маяк стоял на краю скалистого берега. Каждый вечер \
@@ -261,6 +325,81 @@ mod tests {
         let decoded = decode_text(&bytes);
         assert_eq!(decoded.encoding, WINDOWS_1251);
         assert_eq!(decoded.declared_label, None);
+    }
+
+    fn utf16(text: &str, encoding: &'static Encoding) -> Vec<u8> {
+        text.encode_utf16()
+            .flat_map(|unit| {
+                if encoding == UTF_16LE {
+                    unit.to_le_bytes()
+                } else {
+                    unit.to_be_bytes()
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn utf16_without_bom_is_recognized() {
+        let german = "Der alte Leuchtturm stand am Rand der felsigen Küste.\r\n\
+            Jeden Abend stieg der Wärter die Wendeltreppe hinauf.\r\n";
+        // Paragraphs indented with U+3000 (bytes `00 30` in LE) and no ASCII spaces.
+        let japanese = "\u{3000}古い灯台は岩だらけの海岸の端に立っていた。\n\
+            \u{3000}毎晩、灯台守はらせん階段を上ってランプに火をともした。\n\
+            \u{3000}一隻の船も通らない暗い海を長い間眺めていた。\n"
+            .repeat(5);
+        let emoji = "Короткая строка 🙂\n".repeat(1000);
+        for text in [RUSSIAN, german, &japanese, &emoji] {
+            for encoding in [UTF_16LE, UTF_16BE] {
+                let bytes = utf16(text, encoding);
+                let decoded = decode_text(&bytes);
+                assert_eq!(
+                    (decoded.encoding, decoded.detection),
+                    (encoding, Detection::Utf16Pattern),
+                    "{text:.20}"
+                );
+                assert_eq!(decoded.text, text);
+                assert!(!decoded.had_errors);
+            }
+        }
+    }
+
+    #[test]
+    fn utf16_sample_may_cut_a_surrogate_pair() {
+        // The high surrogate is the last unit of the sample.
+        let mut text = "a\n".repeat(UTF16_SAMPLE / 4 - 1);
+        text.push('a');
+        text.push('🙂');
+        text.push('\n');
+        let bytes = utf16(&text, UTF_16LE);
+        assert!(bytes.len() > UTF16_SAMPLE);
+        assert_eq!(utf16_text(&bytes), Some(UTF_16LE));
+    }
+
+    #[test]
+    fn other_texts_are_not_utf16() {
+        let mut stray_zeros = encode(WINDOWS_1251, RUSSIAN);
+        stray_zeros.extend_from_slice(b"\n\0 \0");
+        let binary: Vec<u8> = (0..1000u32)
+            .flat_map(|i| [b' ', 0, (i % 7) as u8, 0])
+            .collect();
+        let ascii = utf16(&"ab\n".repeat(UTF16_MIN_HITS), UTF_16LE);
+        let few = utf16(&"ab\n".repeat(UTF16_MIN_HITS - 1), UTF_16LE);
+        let mut lone_surrogate = ascii.clone();
+        lone_surrogate.extend_from_slice(&[0x00, 0xd8, b'x', 0]);
+        for bytes in [
+            RUSSIAN.as_bytes(),
+            &encode(WINDOWS_1251, RUSSIAN),
+            &stray_zeros,
+            &binary,
+            &lone_surrogate,
+            &few,
+            b"\n\0",
+            b"\n",
+        ] {
+            assert_eq!(utf16_text(bytes), None, "{bytes:?}");
+        }
+        assert_eq!(utf16_text(&ascii), Some(UTF_16LE));
     }
 
     #[test]

@@ -56,7 +56,7 @@ use serde::{Deserialize, Serialize};
 /// constant invalidates every cache. Bump it whenever the model, a parser's output or
 /// the block numbering rule changes (the golden numbering test in this module failing is
 /// a signal to do so).
-pub const PARSER_VERSION: u32 = 3;
+pub const PARSER_VERSION: u32 = 4;
 
 /// A block's ordinal in document order, shown as `b<n>` (see the [module docs](self)).
 #[derive(

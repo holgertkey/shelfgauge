@@ -8,6 +8,12 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+### Fixed
+
+- Plain text books in UTF-16 without a byte order mark (LE or BE) are recognized by
+  their line breaks and spaces instead of being misread as a legacy code page. The
+  content cache is rebuilt (`PARSER_VERSION` 4).
+
 ## [0.10.0] - 2026-10-15
 
 ### Added
