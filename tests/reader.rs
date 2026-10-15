@@ -866,13 +866,17 @@ async fn the_track_has_chapter_ticks_and_progress_links_open_the_place() {
     );
 
     // `?progress=` opens the main-text block at that share: a chapter's start opens its
-    // title, the end the last paragraph.
+    // title, the end the last paragraph. `from=track` tells the reader not to highlight
+    // the block (the place is only rough).
     let location = |reply: Reply| {
         assert_eq!(reply.status, StatusCode::SEE_OTHER);
         reply.header(header::LOCATION).to_owned()
     };
     let open = |share: u64| server.get_owned(format!("/book/{id}/read?progress={share}"));
-    assert_eq!(location(open(0).await), format!("/book/{id}/read#b1"));
+    assert_eq!(
+        location(open(0).await),
+        format!("/book/{id}/read?from=track#b1")
+    );
     let chapter_two = location(open(at[1]).await);
     let block = chapter_two.rsplit('#').next().unwrap().to_owned();
     assert!(
@@ -883,7 +887,7 @@ async fn the_track_has_chapter_ticks_and_progress_links_open_the_place() {
     let last = *read.block_ids().last().unwrap();
     assert_eq!(
         location(open(10_000).await),
-        format!("/book/{id}/read#b{last}")
+        format!("/book/{id}/read?from=track#b{last}")
     );
     // Split into parts: the redirect names the part.
     let parts = lib.server(
@@ -898,7 +902,7 @@ async fn the_track_has_chapter_ticks_and_progress_links_open_the_place() {
         .await;
     let target = location(reply);
     assert!(
-        target.starts_with(&format!("/book/{id}/read?part=3#b")),
+        target.starts_with(&format!("/book/{id}/read?part=3&from=track#b")),
         "{target}"
     );
     for bad in ["10001", "-1", "abc", "", "1.5"] {
@@ -926,7 +930,7 @@ async fn progress_links_never_open_the_notes() {
     let reply = server.get(&format!("/book/{id}/read?progress=10000")).await;
     let location = reply.header(header::LOCATION);
     assert!(
-        !location.contains(&format!("part={}#", notes + 1)),
+        !location.contains(&format!("part={}&", notes + 1)),
         "the end of the main text, not the notes: {location}"
     );
 }

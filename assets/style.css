@@ -996,6 +996,11 @@ button.small.primary {
   transition: background 2s;
 }
 
+/* A place picked on the status line's track is only rough: no highlight. */
+.text.track-target :target {
+  background: none;
+}
+
 .text p {
   margin: 0 0 0.6em;
   text-indent: 1.5em;

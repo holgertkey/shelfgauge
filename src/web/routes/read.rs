@@ -218,7 +218,8 @@ fn page(state: &AppState, book: &BookDetails, params: &Params) -> Result<Outcome
             .block_at_share(share, SCALE)
             .ok_or(AppError::NotFound)?;
         let part = part_of(&parts, block).ok_or(AppError::NotFound)?;
-        return Ok(Outcome::Redirect(links.block(part, block)));
+        let url = format!("{}#{block}", urls.read_from_track(book.id, part + 1));
+        return Ok(Outcome::Redirect(url));
     }
     if let Some(at) = &params.at {
         let block: BlockId = at.parse().map_err(|_| AppError::NotFound)?;

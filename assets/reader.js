@@ -971,7 +971,9 @@
   // bookmark ticks (from the Bookmarks list, so they follow its changes), the read part
   // and the current position. A click jumps to that place: within this part by
   // scrolling to the block (a fragment link, so Back returns), elsewhere through
-  // `?progress=`. On a touch screen the first tap only shows the place.
+  // `?progress=`. On a touch screen the first tap only shows the place. The block
+  // reached from the track is not highlighted as a `:target` (the place is rough);
+  // other fragment links keep their highlight.
   const SCALE = 10000;
   let updateStatus = () => {};
   let drawBookmarks = () => {};
@@ -993,6 +995,8 @@
     let frame = 0;
     let fill = null;
     let point = null;
+    // The block id reached from the track, shown without the `:target` highlight.
+    let quiet = null;
 
     // Characters of the main text before each leaf block of the part (built lazily).
     function counts() {
@@ -1092,8 +1096,27 @@
       } else if (window.location.hash === `#${block.id}`) {
         block.scrollIntoView();
       } else {
+        quietTarget(block.id);
         window.location.hash = block.id;
       }
+    }
+
+    // Opened through `?progress=`: the server redirects with `from=track`.
+    function setupQuietTarget() {
+      if (new URLSearchParams(window.location.search).get("from") === "track") {
+        quietTarget(decodeURIComponent(window.location.hash.slice(1)));
+      }
+      window.addEventListener("hashchange", () => {
+        if (decodeURIComponent(window.location.hash.slice(1)) !== quiet) {
+          quiet = null;
+          text.classList.remove("track-target");
+        }
+      });
+    }
+
+    function quietTarget(id) {
+      quiet = id;
+      text.classList.add("track-target");
     }
 
     function setupTrack() {
@@ -1190,6 +1213,7 @@
       });
     }
 
+    setupQuietTarget();
     if (track) {
       setupTrack();
     }
