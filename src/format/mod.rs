@@ -5,11 +5,14 @@
 
 use std::path::Path;
 
+pub mod encoding;
 pub mod epub;
 pub mod fb2;
 pub mod model;
 pub(crate) mod repair;
+pub(crate) mod sections;
 pub(crate) mod xml;
+pub(crate) mod zipbook;
 
 use model::{BookContent, BookMetadata};
 

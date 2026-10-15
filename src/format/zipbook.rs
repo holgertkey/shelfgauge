@@ -1,6 +1,6 @@
-//! The zip container of an EPUB (OCF), read from memory with limits.
+//! A book that is itself a zip file (an EPUB, a `.fbz`), read from memory with limits.
 //!
-//! An EPUB is handed to the parser as bytes (a plain file, or an entry of a library
+//! Such a book is handed to its parser as bytes (a plain file, or an entry of a library
 //! archive), so its own zip structure is read here, not by the container layer. Every
 //! read is bounded: the number of entries, the uncompressed size of one entry (declared
 //! and actual), its compression ratio, and the total uncompressed size read from one
@@ -14,13 +14,13 @@ use zip::ZipArchive;
 
 use crate::format::ParseError;
 
-/// Maximum number of entries in an EPUB.
+/// Maximum number of entries in a book.
 const MAX_ENTRIES: usize = 10_000;
 
 /// Maximum uncompressed size of one entry.
 const MAX_ENTRY_SIZE: u64 = 64 * 1024 * 1024;
 
-/// Maximum uncompressed size read from one EPUB in total.
+/// Maximum uncompressed size read from one book in total.
 const MAX_TOTAL_SIZE: u64 = 512 * 1024 * 1024;
 
 /// Entries larger than this must not be compressed more than [`MAX_RATIO`] times.
@@ -29,9 +29,11 @@ const RATIO_MIN_SIZE: u64 = 1024 * 1024;
 /// Maximum compression ratio of a large entry (zip bombs reach millions).
 const MAX_RATIO: u64 = 1000;
 
-/// An opened EPUB container.
-pub(super) struct Archive<'a> {
+/// An opened zipped book.
+pub(crate) struct ZipBook<'a> {
     zip: ZipArchive<Cursor<&'a [u8]>>,
+    /// The format name used in error messages (`EPUB`).
+    label: &'static str,
     /// Entry index by exact name.
     names: HashMap<String, usize>,
     /// Entry index by lowercase name, for books whose links differ in case.
@@ -40,14 +42,21 @@ pub(super) struct Archive<'a> {
     total: u64,
 }
 
-impl<'a> Archive<'a> {
-    /// Opens the zip structure of `data`.
-    pub(super) fn open(data: &'a [u8]) -> Result<Self, ParseError> {
-        let zip = ZipArchive::new(Cursor::new(data))
-            .map_err(|e| ParseError::new(format!("not an EPUB: invalid zip container: {e}")))?;
+impl<'a> ZipBook<'a> {
+    /// Opens the zip structure of `data`; `label` names the format in error messages
+    /// (`"EPUB"`: "not an EPUB: ...").
+    pub(crate) fn open(data: &'a [u8], label: &'static str) -> Result<Self, ParseError> {
+        let article = if label.starts_with(['A', 'E', 'I', 'O', 'U']) {
+            "an"
+        } else {
+            "a"
+        };
+        let zip = ZipArchive::new(Cursor::new(data)).map_err(|e| {
+            ParseError::new(format!("not {article} {label}: invalid zip container: {e}"))
+        })?;
         if zip.len() > MAX_ENTRIES {
             return Err(ParseError::new(format!(
-                "the EPUB has {} entries, more than the limit of {MAX_ENTRIES}",
+                "the {label} has {} entries, more than the limit of {MAX_ENTRIES}",
                 zip.len()
             )));
         }
@@ -66,6 +75,7 @@ impl<'a> Archive<'a> {
         }
         Ok(Self {
             zip,
+            label,
             names,
             folded,
             total: 0,
@@ -81,7 +91,7 @@ impl<'a> Archive<'a> {
     }
 
     /// Whether the container has an entry at `path`.
-    pub(super) fn contains(&self, path: &str) -> bool {
+    pub(crate) fn contains(&self, path: &str) -> bool {
         self.index(path).is_some()
     }
 
@@ -89,7 +99,7 @@ impl<'a> Archive<'a> {
     ///
     /// `Ok(None)` if there is no such entry; an error if the entry is encrypted (zip
     /// encryption), broken or over a limit.
-    pub(super) fn read(&mut self, path: &str) -> Result<Option<Vec<u8>>, ParseError> {
+    pub(crate) fn read(&mut self, path: &str) -> Result<Option<Vec<u8>>, ParseError> {
         let Some(index) = self.index(path) else {
             return Ok(None);
         };
@@ -118,7 +128,8 @@ impl<'a> Archive<'a> {
         let total = self.total + size;
         if total > MAX_TOTAL_SIZE {
             return Err(ParseError::new(format!(
-                "the EPUB unpacks to more than {MAX_TOTAL_SIZE} bytes"
+                "the {} unpacks to more than {MAX_TOTAL_SIZE} bytes",
+                self.label
             )));
         }
         let file = self.zip.by_index(index).map_err(|e| error(e.to_string()))?;
@@ -134,7 +145,7 @@ impl<'a> Archive<'a> {
     }
 }
 
-/// Builds an EPUB-like zip from `(name, data)` pairs (stored or deflated), for tests.
+/// Builds a zip from `(name, data)` pairs (stored or deflated), for tests.
 #[cfg(test)]
 pub(crate) fn zip_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
     use std::io::Write;
@@ -163,7 +174,7 @@ mod tests {
     #[test]
     fn reads_entries_by_exact_or_folded_name() {
         let data = zip_bytes(&[("OEBPS/Text/Ch1.xhtml", b"one"), ("mimetype", b"x")]);
-        let mut archive = Archive::open(&data).unwrap();
+        let mut archive = ZipBook::open(&data, "EPUB").unwrap();
         assert_eq!(
             archive.read("OEBPS/Text/Ch1.xhtml").unwrap().unwrap(),
             b"one"
@@ -180,14 +191,16 @@ mod tests {
     fn zip_bombs_are_refused() {
         let big = vec![0u8; 3 * 1024 * 1024];
         let data = zip_bytes(&[("bomb.xhtml", &big)]);
-        let mut archive = Archive::open(&data).unwrap();
+        let mut archive = ZipBook::open(&data, "EPUB").unwrap();
         let err = archive.read("bomb.xhtml").unwrap_err();
         assert!(err.message.contains("compressed"), "{err}");
     }
 
     #[test]
     fn non_zip_is_an_error() {
-        let err = Archive::open(b"<FictionBook/>").err().unwrap();
+        let err = ZipBook::open(b"<FictionBook/>", "EPUB").err().unwrap();
         assert!(err.message.contains("not an EPUB"), "{err}");
+        let err = ZipBook::open(b"x", "zipped FB2").err().unwrap();
+        assert!(err.message.starts_with("not a zipped FB2"), "{err}");
     }
 }

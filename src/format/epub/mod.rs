@@ -3,7 +3,7 @@
 //! An EPUB is a zip container (OCF): `META-INF/container.xml` names the package
 //! document (OPF) with the metadata, the manifest of resources and the spine (the
 //! reading order of the XHTML content documents). The parser reads the container
-//! itself from the bytes it is given, with limits (see `archive`).
+//! itself from the bytes it is given, with limits (see `format::zipbook`).
 //!
 //! Parsing is defensive like FB2: elements are matched by local name, unknown elements
 //! keep their text, and no input makes the parser panic. CSS, scripts, embedded fonts
@@ -15,9 +15,9 @@
 //! [`EpubParser::parse_content`] refuses them.
 
 use super::model::{BookContent, BookMetadata};
+use super::zipbook::ZipBook;
 use super::{BookParser, ParseError};
 
-mod archive;
 mod content;
 mod drm;
 mod entities;
@@ -45,7 +45,7 @@ impl BookParser for EpubParser {
     /// For a DRM-protected book whose package document cannot be read, the metadata
     /// is empty apart from [`BookMetadata::drm`].
     fn parse_metadata(&self, data: &[u8]) -> Result<BookMetadata, ParseError> {
-        let mut archive = archive::Archive::open(data)?;
+        let mut archive = ZipBook::open(data, "EPUB")?;
         let protection = drm::detect(&mut archive)?;
         match package::read(&mut archive) {
             Ok(package) => Ok(metadata::build(&package, &mut archive, &protection)),
@@ -59,7 +59,7 @@ impl BookParser for EpubParser {
 
     /// Converts the spine documents; a DRM-protected book is an error.
     fn parse_content(&self, data: &[u8]) -> Result<BookContent, ParseError> {
-        let mut archive = archive::Archive::open(data)?;
+        let mut archive = ZipBook::open(data, "EPUB")?;
         let protection = drm::detect(&mut archive)?;
         if let Some(scheme) = &protection.scheme {
             return Err(ParseError::new(format!(

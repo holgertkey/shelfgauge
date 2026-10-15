@@ -5,11 +5,11 @@ use std::collections::HashMap;
 
 use roxmltree::Node;
 
-use super::archive::Archive;
 use super::paths::resolve;
 use super::xml::with_document;
 use crate::format::ParseError;
 use crate::format::xml::normalize_space;
+use crate::format::zipbook::ZipBook as Archive;
 
 /// The media type of a package document in `container.xml`.
 const PACKAGE_MEDIA_TYPE: &str = "application/oebps-package+xml";
@@ -298,7 +298,7 @@ impl LocalName for Node<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::format::epub::archive::zip_bytes;
+    use crate::format::zipbook::zip_bytes;
 
     const CONTAINER: &[u8] = br#"<?xml version="1.0"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
@@ -329,7 +329,7 @@ mod tests {
             ("META-INF/container.xml", CONTAINER),
             ("OEBPS/content.opf", OPF),
         ]);
-        let mut archive = Archive::open(&data).unwrap();
+        let mut archive = Archive::open(&data, "EPUB").unwrap();
         let package = read(&mut archive).unwrap();
         assert_eq!(
             package.spine,
@@ -360,10 +360,10 @@ mod tests {
     #[test]
     fn missing_container_or_package_is_an_error() {
         let data = zip_bytes(&[("mimetype", b"application/epub+zip")]);
-        let err = read(&mut Archive::open(&data).unwrap()).unwrap_err();
+        let err = read(&mut Archive::open(&data, "EPUB").unwrap()).unwrap_err();
         assert!(err.message.contains("container.xml"), "{err}");
         let data = zip_bytes(&[("META-INF/container.xml", CONTAINER)]);
-        let err = read(&mut Archive::open(&data).unwrap()).unwrap_err();
+        let err = read(&mut Archive::open(&data, "EPUB").unwrap()).unwrap_err();
         assert!(err.message.contains("OEBPS/content.opf"), "{err}");
     }
 }

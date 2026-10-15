@@ -1,7 +1,8 @@
 //! Decoding FB2 bytes to UTF-8 text before XML parsing.
 //!
 //! `roxmltree` parses only `&str` and ignores the `encoding` attribute of the XML
-//! declaration, so the raw bytes are decoded first, in this order:
+//! declaration, so the raw bytes are decoded first. The shared steps of
+//! [`format::encoding`](crate::format::encoding) run with two FB2 steps in between:
 //!
 //! 1. A byte order mark (UTF-8, UTF-16 LE/BE) wins; it is removed from the text.
 //! 2. UTF-16 without a BOM is recognized by the `<?` pattern of its first two characters.
@@ -16,58 +17,19 @@
 //! 4. No usable declaration: (mostly) valid UTF-8 → UTF-8, otherwise the encoding
 //!    guessed by `chardetng` (which never guesses UTF-8 here).
 //!
-//! "Mostly valid UTF-8" means valid multi-byte characters outnumber invalid sequences
-//! at least [`MOSTLY_UTF8_RATIO`] to 1: a UTF-8 book with a few stray bytes is decoded
-//! as UTF-8 with replacements instead of being misread entirely as a legacy encoding.
-//! Legacy-encoded Cyrillic text consists almost entirely of invalid sequences.
+//! "Mostly valid UTF-8" is defined in [`format::encoding`](crate::format::encoding)
+//! (see [`MOSTLY_UTF8_RATIO`]).
 //!
 //! Decoding never fails: malformed sequences become U+FFFD and are reported in
 //! [`Decoded::had_errors`] so the caller can log or reject the book.
 
-use std::borrow::Cow;
-
-use chardetng::{EncodingDetector, Iso2022JpDetection, Utf8Detection};
 use encoding_rs::{Encoding, UTF_8, UTF_16BE, UTF_16LE};
 
-/// Minimum ratio of valid multi-byte UTF-8 characters to invalid sequences for bytes
-/// to be decoded as UTF-8 despite errors.
-pub const MOSTLY_UTF8_RATIO: usize = 10;
+pub use crate::format::encoding::{Decoded, Detection, MOSTLY_UTF8_RATIO};
+use crate::format::encoding::{Utf8Quality, decode_bom, finish, guess};
 
 /// How many leading bytes are searched for the XML declaration.
 const DECLARATION_SEARCH_LIMIT: usize = 1024;
-
-/// The decoded text of an FB2 file and how its encoding was determined.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Decoded<'a> {
-    /// The text, without a BOM. The XML declaration is left as it was.
-    pub text: Cow<'a, str>,
-    /// The encoding used for decoding.
-    pub encoding: &'static Encoding,
-    /// How [`Decoded::encoding`] was chosen.
-    pub detection: Detection,
-    /// The `encoding` label of the XML declaration, if there was one (even if unused).
-    pub declared_label: Option<String>,
-    /// Whether malformed input was replaced with U+FFFD.
-    pub had_errors: bool,
-}
-
-/// How the encoding of a file was determined.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Detection {
-    /// From a byte order mark.
-    Bom,
-    /// UTF-16 without BOM, recognized by its first characters.
-    Utf16Pattern,
-    /// From the XML declaration.
-    Declaration,
-    /// The bytes are valid UTF-8 (no usable declaration, or one that was contradicted).
-    ValidUtf8,
-    /// The bytes are mostly valid UTF-8 and invalid sequences were replaced (no usable
-    /// declaration, or one that was contradicted).
-    MostlyUtf8,
-    /// Guessed by the statistical detector.
-    Guessed,
-}
 
 /// Decodes the raw bytes of an FB2 file to text (see the [module docs](self)).
 ///
@@ -85,8 +47,8 @@ pub enum Detection {
 /// assert!(decoded.text.contains("Привет"));
 /// ```
 pub fn decode(bytes: &[u8]) -> Decoded<'_> {
-    if let Some((encoding, bom_len)) = Encoding::for_bom(bytes) {
-        return finish(encoding, &bytes[bom_len..], Detection::Bom, None);
+    if let Some(decoded) = decode_bom(bytes) {
+        return decoded;
     }
     if let Some(encoding) = utf16_pattern(bytes) {
         return finish(encoding, bytes, Detection::Utf16Pattern, None);
@@ -110,52 +72,6 @@ pub fn decode(bytes: &[u8]) -> Decoded<'_> {
         (None, Utf8Quality::Invalid) => (guess(bytes), Detection::Guessed),
     };
     finish(encoding, bytes, detection, declared_label)
-}
-
-/// How well bytes match UTF-8.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Utf8Quality {
-    /// Entirely valid UTF-8.
-    Valid,
-    /// Valid multi-byte characters outnumber invalid sequences by [`MOSTLY_UTF8_RATIO`].
-    Mostly,
-    /// Not UTF-8.
-    Invalid,
-}
-
-impl Utf8Quality {
-    fn of(bytes: &[u8]) -> Self {
-        let mut multibyte = 0usize;
-        let mut invalid = 0usize;
-        for chunk in bytes.utf8_chunks() {
-            multibyte += chunk.valid().chars().filter(|c| !c.is_ascii()).count();
-            invalid += usize::from(!chunk.invalid().is_empty());
-        }
-        if invalid == 0 {
-            Self::Valid
-        } else if multibyte >= MOSTLY_UTF8_RATIO * invalid {
-            Self::Mostly
-        } else {
-            Self::Invalid
-        }
-    }
-}
-
-/// Decodes `bytes` (without BOM) with `encoding` and assembles the result.
-fn finish<'a>(
-    encoding: &'static Encoding,
-    bytes: &'a [u8],
-    detection: Detection,
-    declared_label: Option<String>,
-) -> Decoded<'a> {
-    let (text, had_errors) = encoding.decode_without_bom_handling(bytes);
-    Decoded {
-        text,
-        encoding,
-        detection,
-        declared_label,
-        had_errors,
-    }
 }
 
 /// UTF-16 without BOM: the file starts with `<?` (or `<` plus another ASCII character)
@@ -195,17 +111,11 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
-/// The legacy encoding `chardetng` considers most likely for `bytes`.
-fn guess(bytes: &[u8]) -> &'static Encoding {
-    let mut detector = EncodingDetector::new(Iso2022JpDetection::Deny);
-    detector.feed(bytes, true);
-    detector.guess(None, Utf8Detection::Deny)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use encoding_rs::{IBM866, KOI8_R, KOI8_U, WINDOWS_1251, WINDOWS_1252};
+    use std::borrow::Cow;
 
     /// License-free Russian sample text, long enough for the statistical detector.
     const RUSSIAN: &str = "Старый маяк стоял на краю скалистого берега. Каждый вечер \
@@ -411,25 +321,6 @@ mod tests {
             };
             assert_eq!(decoded.detection, expected, "{declaration:?}");
         }
-    }
-
-    #[test]
-    fn utf8_quality() {
-        assert_eq!(Utf8Quality::of(b"ascii"), Utf8Quality::Valid);
-        let mut mostly = "аааааааааа".as_bytes().to_vec();
-        mostly.push(0xff);
-        assert_eq!(Utf8Quality::of(&mostly), Utf8Quality::Mostly);
-        mostly.extend_from_slice(b" \xff");
-        assert_eq!(Utf8Quality::of(&mostly), Utf8Quality::Invalid);
-        assert_eq!(Utf8Quality::of(b"\xff\xfe plain"), Utf8Quality::Invalid);
-        assert_eq!(
-            Utf8Quality::of(&encode(WINDOWS_1251, RUSSIAN)),
-            Utf8Quality::Invalid
-        );
-        assert_eq!(
-            Utf8Quality::of(&encode(KOI8_R, RUSSIAN)),
-            Utf8Quality::Invalid
-        );
     }
 
     #[test]

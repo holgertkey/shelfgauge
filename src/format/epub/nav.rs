@@ -3,11 +3,11 @@
 
 use roxmltree::Node;
 
-use super::archive::Archive;
 use super::package::{LocalName, Package};
 use super::paths::resolve;
 use super::xml::{OPS_NS, with_document};
 use crate::format::xml::normalize_space;
+use crate::format::zipbook::ZipBook as Archive;
 
 /// At most this many entries are read.
 const MAX_ENTRIES: usize = 20_000;

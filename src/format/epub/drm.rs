@@ -9,11 +9,11 @@
 
 use std::collections::HashSet;
 
-use super::archive::Archive;
 use super::package::LocalName;
 use super::paths::resolve;
 use super::xml::with_document;
 use crate::format::ParseError;
+use crate::format::zipbook::ZipBook as Archive;
 
 /// Font obfuscation algorithms (EPUB 3.3 §4.4.5 and Adobe's predecessor).
 const FONT_OBFUSCATION: &[&str] = &[
@@ -87,7 +87,7 @@ pub(super) fn detect(archive: &mut Archive<'_>) -> Result<Protection, ParseError
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::format::epub::archive::zip_bytes;
+    use crate::format::zipbook::zip_bytes;
 
     fn encryption(algorithm: &str, uri: &str) -> Vec<u8> {
         format!(
@@ -101,7 +101,7 @@ mod tests {
 
     fn detect_in(entries: &[(&str, &[u8])]) -> Protection {
         let data = zip_bytes(entries);
-        detect(&mut Archive::open(&data).unwrap()).unwrap()
+        detect(&mut Archive::open(&data, "EPUB").unwrap()).unwrap()
     }
 
     #[test]

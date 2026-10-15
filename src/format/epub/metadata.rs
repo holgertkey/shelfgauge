@@ -14,13 +14,13 @@
 //!   item whose id names a cover. Only known raster types; an encrypted cover is
 //!   skipped.
 
-use super::archive::Archive;
 use super::content;
 use super::drm::Protection;
 use super::package::Package;
 use super::xml::with_document;
 use crate::format::model::{Annotation, Block, BookMetadata, Image, Person, Series};
 use crate::format::xml::{normalize_space, sniff_image_mime};
+use crate::format::zipbook::ZipBook as Archive;
 
 /// At most this many subjects are kept.
 const MAX_SUBJECTS: usize = 20;
