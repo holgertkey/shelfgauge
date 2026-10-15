@@ -274,9 +274,9 @@ pub fn render(book: &ExportBook, annotations: &[Annotation], base_url: &str) -> 
                 }
                 section = Some(title);
             }
-            let _ = writeln!(out, "{}\n", mark.quote.text.trim());
+            let _ = writeln!(out, "{}\n", plain(mark.quote.text.trim()));
             if let Some(note) = mark.note() {
-                let _ = writeln!(out, "{}\n", note.trim());
+                let _ = writeln!(out, "{}\n", plain(note.trim()));
             }
             let place = if mark.anchor_lost {
                 "place not found"
@@ -292,9 +292,16 @@ pub fn render(book: &ExportBook, annotations: &[Annotation], base_url: &str) -> 
     out
 }
 
-/// Text for a single Markdown line (headings, list items): line breaks become spaces.
+/// Text for a single Markdown line (headings, list items): line breaks and other
+/// whitespace, no-break spaces included, become single spaces.
 fn inline(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Multi-line text (quotes, notes) with no-break spaces replaced by plain ones: some
+/// editors show them as visible characters.
+fn plain(text: &str) -> String {
+    text.replace(['\u{a0}', '\u{202f}'], " ")
 }
 
 #[cfg(test)]
@@ -360,6 +367,21 @@ mod tests {
             "no block quotes: {md}"
         );
         assert!(!md.contains("## Bookmarks"), "{md}");
+    }
+
+    #[test]
+    fn no_break_spaces_become_plain_spaces() {
+        let mut quote = sample("Word\u{a0}— word\nsecond\u{202f}line", Some("a\u{a0}note"));
+        quote.section_title = Some("Chapter\u{a0}1".into());
+        let mut bookmark = sample("", None);
+        bookmark.section_title = Some("Part\u{a0}2".into());
+        let md = render(&book("The\u{a0}Book"), &[quote, bookmark], "http://h");
+        assert!(!md.contains(['\u{a0}', '\u{202f}']), "{md:?}");
+        assert!(
+            md.contains("### Chapter 1\n\nWord — word\nsecond line\n\na note\n"),
+            "{md}"
+        );
+        assert!(md.contains("# The Book\n"), "{md}");
     }
 
     #[test]

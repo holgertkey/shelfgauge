@@ -16,7 +16,8 @@ Build numbers (`+NNN`) do not get their own sections.
 ### Changed
 
 - The Markdown export writes quotes, notes and the "place not found" notice as plain
-  text paragraphs instead of `>` block quotes.
+  text paragraphs instead of `>` block quotes, and replaces no-break spaces with plain
+  ones (some editors show them as visible characters).
 
 ### Fixed
 
