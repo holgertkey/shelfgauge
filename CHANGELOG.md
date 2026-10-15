@@ -18,8 +18,10 @@ Build numbers (`+NNN`) do not get their own sections.
 - The Markdown export writes quotes, notes and the "place not found" notice as plain
   text paragraphs instead of `>` block quotes, and replaces no-break spaces with plain
   ones (some editors show them as visible characters).
-- The paragraph reached from the status line's track, a bookmark or a quote is
-  highlighted only briefly: the highlight fades out instead of staying.
+- The paragraph a link leads to (contents, bookmarks, quotes, the status line's track)
+  is highlighted only briefly: the highlight fades out instead of staying.
+- Contents marks only the current section (the one at the top of the screen, followed
+  while scrolling) instead of every entry of the current part.
 - The Quote button on a text selection uses the accent color.
 
 ### Fixed

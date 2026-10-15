@@ -990,16 +990,10 @@ button.small.primary {
   scroll-margin-top: calc(var(--topbar-height) + 1rem);
 }
 
+/* The block a link leads to (contents, bookmark, quote, the status line's track)
+   flashes: the highlight fades out. */
 .text :target {
-  background: var(--active-bg);
   border-radius: 4px;
-  transition: background 2s;
-}
-
-/* A place reached from the status line's track, a bookmark or a quote only flashes:
-   the highlight fades out. */
-.text.flash-target :target {
-  background: none;
   animation: target-flash 2s ease-out;
 }
 

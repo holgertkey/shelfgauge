@@ -620,12 +620,61 @@
     });
   }
 
+  // ---------- Contents ----------
+
+  // The server marks the section the part starts in; while scrolling the mark follows
+  // the section of the block at the top of the screen (when scrolled to the end of the
+  // page, of the last block, so a short last section can be reached). Block ids grow in document
+  // order, like the entries.
+  function setupContents() {
+    const entries = [];
+    for (const link of document.querySelectorAll(".toc a")) {
+      const id = decodeURIComponent(new URL(link.href).hash.slice(1));
+      if (BLOCK_ID.test(id)) {
+        entries.push({ link, n: Number(id.slice(1)) });
+      }
+    }
+    if (!entries.length) {
+      return;
+    }
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const atEnd =
+        window.scrollY > 0 &&
+        window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2;
+      const all = leaves();
+      const block = atEnd ? all[all.length - 1] : topBlock();
+      if (!block) {
+        return;
+      }
+      const n = Number(block.id.slice(1));
+      let current = null;
+      for (const entry of entries) {
+        if (entry.n > n) {
+          break;
+        }
+        current = entry.link;
+      }
+      for (const { link } of entries) {
+        link.classList.toggle("active", link === current);
+      }
+    };
+    const schedule = () => {
+      if (!frame) {
+        frame = requestAnimationFrame(update);
+      }
+    };
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    update();
+  }
+
   // ---------- Reading position ----------
 
   // A page opened from a bookmark or quote (`from=mark`) never saves the position;
   // prev/next links do not carry it, so reading on resumes saving.
-  const openedFrom = new URLSearchParams(window.location.search).get("from");
-  let suspended = openedFrom === "mark";
+  let suspended = new URLSearchParams(window.location.search).get("from") === "mark";
   let candidate = null;
   let since = 0;
   let lastSaved = null;
@@ -972,9 +1021,7 @@
   // bookmark ticks (from the Bookmarks list, so they follow its changes), the read part
   // and the current position. A click jumps to that place: within this part by
   // scrolling to the block (a fragment link, so Back returns), elsewhere through
-  // `?progress=`. On a touch screen the first tap only shows the place. The block
-  // reached from the track, a bookmark or a quote only flashes as a `:target` (the
-  // highlight fades); other fragment links keep their highlight.
+  // `?progress=`. On a touch screen the first tap only shows the place.
   const SCALE = 10000;
   let updateStatus = () => {};
   let drawBookmarks = () => {};
@@ -996,8 +1043,6 @@
     let frame = 0;
     let fill = null;
     let point = null;
-    // The block id whose `:target` highlight fades (track, bookmark or quote).
-    let flashed = null;
 
     // Characters of the main text before each leaf block of the part (built lazily).
     function counts() {
@@ -1097,28 +1142,8 @@
       } else if (window.location.hash === `#${block.id}`) {
         block.scrollIntoView();
       } else {
-        flashTarget(block.id);
         window.location.hash = block.id;
       }
-    }
-
-    // Opened through `?progress=` (the server redirects with `from=track`) or from a
-    // bookmark or quote (`from=mark`).
-    function setupFlashTarget() {
-      if (openedFrom === "track" || openedFrom === "mark") {
-        flashTarget(decodeURIComponent(window.location.hash.slice(1)));
-      }
-      window.addEventListener("hashchange", () => {
-        if (decodeURIComponent(window.location.hash.slice(1)) !== flashed) {
-          flashed = null;
-          text.classList.remove("flash-target");
-        }
-      });
-    }
-
-    function flashTarget(id) {
-      flashed = id;
-      text.classList.add("flash-target");
     }
 
     function setupTrack() {
@@ -1215,7 +1240,6 @@
       });
     }
 
-    setupFlashTarget();
     if (track) {
       setupTrack();
     }
@@ -1233,6 +1257,7 @@
   setupStatus();
   setupSettings();
   setupSidebar();
+  setupContents();
   setupMarks();
   setupBookmarks();
   setupPosition();

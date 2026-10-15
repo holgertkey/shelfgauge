@@ -177,28 +177,9 @@ impl Urls {
     /// assert_eq!(Urls::new("/").read_from_mark(3, 2), "/book/3/read?part=2&from=mark");
     /// ```
     pub fn read_from_mark(&self, id: i64, part: usize) -> String {
-        self.read_from(id, part, "mark")
-    }
-
-    /// Reading mode: 1-based `part`, opened from the status line's track
-    /// (`from=track`): the target block is not highlighted, the place is only rough.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use shelfgauge::web::Urls;
-    ///
-    /// assert_eq!(Urls::new("/").read_from_track(3, 1), "/book/3/read?from=track");
-    /// assert_eq!(Urls::new("/").read_from_track(3, 2), "/book/3/read?part=2&from=track");
-    /// ```
-    pub fn read_from_track(&self, id: i64, part: usize) -> String {
-        self.read_from(id, part, "track")
-    }
-
-    fn read_from(&self, id: i64, part: usize, from: &str) -> String {
         let url = self.read(id, part);
         let separator = if url.contains('?') { '&' } else { '?' };
-        format!("{url}{separator}from={from}")
+        format!("{url}{separator}from=mark")
     }
 
     /// A book's annotations: `POST` creates one (JSON), `GET` is the reader's lists as

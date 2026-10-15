@@ -189,7 +189,8 @@ Key design points to keep in mind when implementing:
     so `base_path` keeps working).
   - Scan progress is polled (`/scan/status`, JSON), not streamed: an open SSE
     connection would hold up the graceful shutdown.
-  - *Reading mode*: sidebar shows the book's TOC; main area shows one part of the book as
+  - *Reading mode*: sidebar shows the book's TOC (one entry marked: the section at the
+    top of the screen, followed while scrolling); main area shows one part of the book as
     HTML, rendered from `BookContent` (never directly from FB2). Splitting into parts is
     configured in `[reader]` (`none` / `section` / `size`, cut at block boundaries).
     A part is a contiguous range of block IDs, cut only between whole top-level blocks
@@ -264,9 +265,8 @@ Code: `src/annotations/` (`text`, `anchor`, `store`, `export`, `attach`),
   part change and on leaving the page, never inside notes bodies and only after a dwell
   time (stray jumps do not overwrite it); a page view opened from a bookmark or quote
   link (`from=mark`) never saves it until the reader moves on with prev/next; last
-  write wins. A deep link highlights its target block; for a bookmark, a quote or a
-  place picked on the status line's track (`from=track`) the highlight only flashes
-  and fades. The book card offers
+  write wins. A deep link's target block flashes (the highlight fades). The book card
+  offers
   "Continue reading" / "Read from the start" and shows progress; an explicit `?at=`
   always wins. `[reader] remember_position` turns it off.
 - **Currently reading** (library page): the unfinished books with a position, most

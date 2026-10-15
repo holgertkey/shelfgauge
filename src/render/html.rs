@@ -423,7 +423,8 @@ fn safe_url(url: &str) -> Option<&str> {
 }
 
 /// Renders the table of contents: the titled sections as nested lists linking to
-/// their first block; entries in the current part are marked `class="active"`.
+/// their first block. One entry is marked `class="active"`: the section the current
+/// part starts in (the reader moves the mark along while scrolling).
 pub fn render_toc(
     content: &BookContent,
     parts: &[Part],
@@ -469,9 +470,14 @@ pub fn render_toc(
         }
     }
 
+    // Entries are in document order, and block ids grow in document order.
+    let active = parts
+        .get(current)
+        .and_then(|part| entries.iter().rposition(|entry| entry.id <= part.start));
+
     let mut out = String::from("<nav class=\"toc\" aria-label=\"Contents\">");
     let mut open = 0usize; // currently open <ul> levels
-    for entry in &entries {
+    for (index, entry) in entries.iter().enumerate() {
         let depth = entry.depth.min(open); // never skip a level
         if depth + 1 > open {
             out.push_str("<ul>");
@@ -488,7 +494,7 @@ pub fn render_toc(
         out.push_str("<li><a href=\"");
         escape_into(&href, &mut out);
         out.push('"');
-        if part == current {
+        if Some(index) == active {
             out.push_str(" class=\"active\"");
         }
         out.push('>');
@@ -508,7 +514,6 @@ pub fn render_toc(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
 
     use super::*;
     use crate::config::{ReaderConfig, SplitMode};
@@ -760,7 +765,7 @@ mod tests {
     }
 
     #[test]
-    fn toc_nests_titled_sections_and_marks_the_current_part() {
+    fn toc_nests_titled_sections_and_marks_the_section_of_the_current_part() {
         let content = crate::render::split::tests::book();
         let parts = split(
             &content,
@@ -790,11 +795,20 @@ mod tests {
         );
         assert_eq!(toc.matches("<ul>").count(), toc.matches("</ul>").count());
         assert_eq!(toc.matches("<li>").count(), toc.matches("</li>").count());
-        let active: BTreeSet<&str> = toc
-            .split("class=\"active\">")
-            .skip(1)
-            .filter_map(|s| s.split("</a>").next())
-            .collect();
-        assert_eq!(active, BTreeSet::from(["Chapter 2", "Section 2.1"]));
+        // One entry only: the section the part starts in, not its subsections.
+        let active = |current: usize| -> Vec<String> {
+            render_toc(&content, &parts, current, &Links)
+                .split("class=\"active\">")
+                .skip(1)
+                .filter_map(|s| s.split("</a>").next())
+                .map(str::to_owned)
+                .collect()
+        };
+        // The first part starts before any titled section (the epigraph).
+        let all: Vec<Vec<String>> = (0..parts.len()).map(active).collect();
+        assert_eq!(
+            all,
+            [vec![], vec!["Chapter 2"], vec!["Chapter 3"], vec!["Notes"]]
+        );
     }
 }
