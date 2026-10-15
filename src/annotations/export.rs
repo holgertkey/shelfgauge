@@ -227,6 +227,7 @@ fn sanitize(name: &str) -> String {
 
 /// The Markdown of a book's annotations: title and authors, the bookmarks, then the
 /// marks grouped by section, each a quote with its note and a link to the reader.
+/// Quotes and notes are plain text paragraphs, not Markdown block quotes.
 pub fn render(book: &ExportBook, annotations: &[Annotation], base_url: &str) -> String {
     let link = |block: BlockId| {
         format!(
@@ -244,7 +245,7 @@ pub fn render(book: &ExportBook, annotations: &[Annotation], base_url: &str) -> 
     if book.orphan {
         let _ = writeln!(
             out,
-            "> **Place in the book not found:** the book's file has changed or is no \
+            "**Place in the book not found:** the book's file has changed or is no \
              longer in the library. The quotes are kept; the links may not work.\n"
         );
     }
@@ -273,14 +274,7 @@ pub fn render(book: &ExportBook, annotations: &[Annotation], base_url: &str) -> 
                 }
                 section = Some(title);
             }
-            for line in mark.quote.text.lines() {
-                if line.is_empty() {
-                    out.push_str(">\n");
-                } else {
-                    let _ = writeln!(out, "> {line}");
-                }
-            }
-            out.push('\n');
+            let _ = writeln!(out, "{}\n", mark.quote.text.trim());
             if let Some(note) = mark.note() {
                 let _ = writeln!(out, "{}\n", note.trim());
             }
@@ -345,18 +339,26 @@ mod tests {
             ),
             "{md}"
         );
-        assert!(md.contains("### Chapter 1\n\n> First line\n> second line\n\nMy note\n\n[open](http://127.0.0.1:8742/book/12/read?at=b40&from=mark)"), "{md}");
+        assert!(md.contains("### Chapter 1\n\nFirst line\nsecond line\n\nMy note\n\n[open](http://127.0.0.1:8742/book/12/read?at=b40&from=mark)"), "{md}");
         assert!(
-            md.contains("### Chapter 2\n\n> Elsewhere\n\n[place not found]("),
+            md.contains("### Chapter 2\n\nElsewhere\n\n[place not found]("),
             "{md}"
         );
         assert!(!md.contains("not found:**"), "not an orphan");
+        assert!(
+            !md.lines().any(|l| l.starts_with('>')),
+            "no block quotes: {md}"
+        );
         assert!(md.ends_with(")\n"), "{md:?}");
 
         let mut orphan = book("The Book");
         orphan.orphan = true;
         let md = render(&orphan, &[sample("x", None)], "http://h");
-        assert!(md.contains("Place in the book not found"), "{md}");
+        assert!(md.contains("\n**Place in the book not found:**"), "{md}");
+        assert!(
+            !md.lines().any(|l| l.starts_with('>')),
+            "no block quotes: {md}"
+        );
         assert!(!md.contains("## Bookmarks"), "{md}");
     }
 

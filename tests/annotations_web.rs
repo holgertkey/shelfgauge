@@ -394,7 +394,7 @@ async fn marks_bookmarks_notes_and_export() {
     );
     assert!(md.find("## Bookmarks").unwrap() < md.find("## Quotes").unwrap());
     assert!(
-        md.contains("### Chapter 1\n\n> the sly fox\n\n<b>bold</b> & note\n"),
+        md.contains("### Chapter 1\n\nthe sly fox\n\n<b>bold</b> & note\n"),
         "{md}"
     );
     assert!(md.contains(&format!(

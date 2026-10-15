@@ -13,6 +13,11 @@ Build numbers (`+NNN`) do not get their own sections.
 - `shelfgauge errors [PATH]` lists the books that could not be read at the last scan,
   one `path: reason` line per book.
 
+### Changed
+
+- The Markdown export writes quotes, notes and the "place not found" notice as plain
+  text paragraphs instead of `>` block quotes.
+
 ### Fixed
 
 - Plain text books in UTF-16 without a byte order mark (LE or BE) are recognized by
