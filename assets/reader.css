@@ -165,7 +165,8 @@ mark.sg-mark {
   cursor: pointer;
 }
 
-.mark-popup button[type="submit"] {
+.mark-popup button[type="submit"],
+.mark-popup button.mark-button {
   color: #ffffff;
   background: var(--accent);
   border-color: var(--accent);

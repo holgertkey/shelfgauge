@@ -464,6 +464,7 @@
     popup.className = "mark-popup";
     const button = document.createElement("button");
     button.type = "button";
+    button.className = "mark-button";
     button.textContent = "Quote";
     button.title = "Keep this text as a quote (with a note if you like)";
     // Keep the selection: a mousedown on the button would collapse it.
