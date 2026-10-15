@@ -345,7 +345,7 @@ async fn marks_bookmarks_notes_and_export() {
         "note escaped: {read}"
     );
     assert!(!read.contains("<b>bold</b>"));
-    assert!(read.contains(&format!("href=\"/book/{id}/read?at={p12}&#38;from=mark\"")));
+    assert!(read.contains(&format!("href=\"/book/{id}/read?at={p12}&#38;from=quote\"")));
     assert!(read.contains(&format!("href=\"/book/{id}/read?at={p21}&#38;from=mark\"")));
     assert!(
         read.contains("Chapter 2 — Paragraph 2.1: the brown fox"),
@@ -383,9 +383,10 @@ async fn marks_bookmarks_notes_and_export() {
     );
     assert!(!card.contains("<b>bold"));
     assert!(card.contains(&format!("action=\"/annotation/{mark}/note\"")));
-    assert!(card.contains(&format!("href=\"/book/{id}/read?at={p12}&#38;from=mark\"")));
+    assert!(card.contains(&format!("href=\"/book/{id}/read?at={p12}&#38;from=quote\"")));
 
-    // The export: bookmarks first, the quote with its note and a `from=mark` link.
+    // The export: bookmarks first (`from=mark` links), the quote with its note and a
+    // `from=quote` link.
     let md = lib.export_text();
     assert!(md.starts_with(MARKER));
     assert!(
@@ -398,7 +399,7 @@ async fn marks_bookmarks_notes_and_export() {
         "{md}"
     );
     assert!(md.contains(&format!(
-        "http://127.0.0.1:8742/book/{id}/read?at={p12}&from=mark"
+        "http://127.0.0.1:8742/book/{id}/read?at={p12}&from=quote"
     )));
     assert!(lib.export_files()[0].starts_with("Writer Anna — The Book ("));
 
@@ -565,7 +566,7 @@ async fn write_routes_need_an_allowed_origin() {
 }
 
 #[tokio::test]
-async fn from_mark_survives_the_redirect() {
+async fn from_mark_and_quote_survive_the_redirect() {
     let lib = TestLibrary::new();
     lib.write("book.fb2", &book("The Book", "Writer", 3, false, &[]));
     lib.scan();
@@ -579,6 +580,14 @@ async fn from_mark_survives_the_redirect() {
     assert_eq!(
         reply.location(),
         format!("/book/{id}/read?part=2&from=mark#{p21}")
+    );
+    // A quote's `from=quote` too (the reader does not highlight the block either).
+    let reply = server
+        .get(&format!("/book/{id}/read?at={p21}&from=quote"))
+        .await;
+    assert_eq!(
+        reply.location(),
+        format!("/book/{id}/read?part=2&from=quote#{p21}")
     );
     let reply = server.get(&format!("/book/{id}/read?at={p21}")).await;
     assert_eq!(reply.location(), format!("/book/{id}/read?part=2#{p21}"));
@@ -706,7 +715,7 @@ async fn annotations_follow_moves_and_reattach_across_containers() {
     assert_eq!(marks[0].book_id, zip_id);
     let md = lib.export_text();
     assert!(!md.contains("Place in the book not found"), "{md}");
-    assert!(md.contains(&format!("/book/{zip_id}/read?at={p32}&from=mark")));
+    assert!(md.contains(&format!("/book/{zip_id}/read?at={p32}&from=quote")));
 }
 
 #[tokio::test]

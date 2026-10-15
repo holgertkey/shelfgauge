@@ -996,8 +996,9 @@ button.small.primary {
   transition: background 2s;
 }
 
-/* A place picked on the status line's track is only rough: no highlight. */
-.text.track-target :target {
+/* No highlight for a place picked on the status line's track (it is only rough) or
+   opened from a quote (the quote itself is highlighted). */
+.text.quiet-target :target {
   background: none;
 }
 

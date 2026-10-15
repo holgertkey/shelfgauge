@@ -44,9 +44,10 @@ pub(crate) struct Params {
     at: Option<String>,
     /// A place to open (reading mode): a share of the main text in ten-thousandths.
     progress: Option<String>,
-    /// `mark` when the page is opened from a bookmark or mark (reading mode): the
-    /// reading position is not saved for this page view. `track` when it is opened
-    /// from the status line's track: the target block is not highlighted.
+    /// `mark` when the page is opened from a bookmark (reading mode): the reading
+    /// position is not saved for this page view. `quote`: opened from a quote, the
+    /// same, and the target block is not highlighted (the quote is). `track`: opened
+    /// from the status line's track, the target block is not highlighted.
     from: Option<String>,
 }
 

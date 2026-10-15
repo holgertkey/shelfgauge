@@ -262,9 +262,11 @@ Code: `src/annotations/` (`text`, `anchor`, `store`, `export`, `attach`),
   row per book in `userdata.sqlite` (topmost visible block + fingerprint, progress),
   same re-attaching and cleanup rules. Saved by `reader.js` after scrolling stops, on
   part change and on leaving the page, never inside notes bodies and only after a dwell
-  time (stray jumps do not overwrite it); a page view opened from a bookmark or mark
-  link (`from=mark`) never saves it until the reader moves on with prev/next; last
-  write wins. The book card offers
+  time (stray jumps do not overwrite it); a page view opened from a bookmark or quote
+  link (`from=mark`, `from=quote`) never saves it until the reader moves on with
+  prev/next; last write wins. A deep link highlights its target block, except for a
+  quote (the quote itself is highlighted) and a place picked on the status line's track
+  (`from=track`, only a rough place). The book card offers
   "Continue reading" / "Read from the start" and shows progress; an explicit `?at=`
   always wins. `[reader] remember_position` turns it off.
 - **Currently reading** (library page): the unfinished books with a position, most
