@@ -64,6 +64,7 @@ fn main() -> anyhow::Result<()> {
         Mode::Scan => scan(&library, &config),
         Mode::Serve { scan } => serve(library, &config, scan),
         Mode::ExportAnnotations => export_annotations(&library, &config),
+        Mode::Errors => errors(&library),
     }
 }
 
@@ -89,6 +90,22 @@ fn export_annotations(library: &Library, config: &Config) -> anyhow::Result<()> 
         library.annotations_dir().display(),
         summary.removed
     );
+    Ok(())
+}
+
+/// `shelfgauge errors`: lists the books that could not be parsed, one per line.
+fn errors(library: &Library) -> anyhow::Result<()> {
+    let index = shelfgauge::storage::open_writer(&library.db_path())
+        .with_context(|| format!("cannot open the index {}", library.db_path().display()))?;
+    let failed = shelfgauge::storage::books::failed_books(&index)?;
+    for book in &failed {
+        println!("{}: {}", book.path, book.message);
+    }
+    match failed.len() {
+        0 => println!("No books with errors."),
+        1 => println!("1 book could not be read."),
+        n => println!("{n} books could not be read."),
+    }
     Ok(())
 }
 

@@ -310,12 +310,37 @@ fn scan_indexes_books_and_reports_a_summary() {
     assert!(out.contains("(0 parsed)"), "{out}");
 }
 
+#[test]
+fn errors_lists_the_books_that_could_not_be_read() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("book.fb2"),
+        include_bytes!("fixtures/fb2/minimal.fb2"),
+    )
+    .unwrap();
+    assert!(run(dir.path(), &["scan", "."]).status.success());
+    let output = run(dir.path(), &["errors"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(stdout(&output).trim(), "No books with errors.");
+
+    std::fs::write(dir.path().join("broken.epub"), "not a zip archive").unwrap();
+    let out = stdout(&run(dir.path(), &["scan"]));
+    assert!(out.contains("1 errors"), "{out}");
+    let output = run(dir.path(), &["errors", "."]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let out = stdout(&output);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 2, "{out}");
+    assert!(lines[0].starts_with("broken.epub: "), "{out}");
+    assert_eq!(lines[1], "1 book could not be read.");
+}
+
 /// Regression: `shelfgauge -v` in an arbitrary directory used to create
 /// `.shelfgauge/config.toml` there. Without an explicit PATH, nothing is created.
 #[test]
 fn no_library_is_created_without_an_explicit_path() {
     let dir = tempfile::tempdir().unwrap();
-    for args in [&[][..], &["-v"], &["scan"], &["--no-scan"]] {
+    for args in [&[][..], &["-v"], &["scan"], &["--no-scan"], &["errors"]] {
         let output = run(dir.path(), args);
         assert!(!output.status.success(), "{args:?}");
         let err = stderr(&output);

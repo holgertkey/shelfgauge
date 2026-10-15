@@ -37,6 +37,7 @@ cargo build --release
 ```sh
 shelfgauge [PATH]        # serve the library at PATH (default: current directory)
 shelfgauge scan [PATH]   # update the library index and exit
+shelfgauge errors [PATH] # list the books that could not be read, with the reason
 shelfgauge annotations export [PATH]   # rewrite the Markdown export of bookmarks and quotes
 ```
 
@@ -52,6 +53,12 @@ directory must already be a library.
 library in the background while serving the existing index. Only changed files are read
 again; moved or renamed books keep their identity. Ctrl+C stops the server; a running
 scan keeps what it has indexed so far, and the next scan completes it.
+
+Books that could not be read are counted as errors in the scan summary and marked
+`error` in the library lists. `shelfgauge errors` lists them, one `path: reason` line
+per book (`archive.zip/entry.fb2` for a book inside an archive). Files that could not be
+opened at all (I/O errors) are not recorded: `scan` logs them as warnings and reads them
+again at the next scan.
 
 ### Formats
 

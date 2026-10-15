@@ -446,6 +446,43 @@ pub fn count_books(conn: &Connection) -> Result<u64, StorageError> {
     Ok(count as u64)
 }
 
+/// A book that could not be parsed, for the `shelfgauge errors` report.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FailedBook {
+    /// Book id.
+    pub id: i64,
+    /// The path relative to the library root; for a zip entry, the archive path and the
+    /// entry path joined with `/`.
+    pub path: String,
+    /// Why the book could not be parsed.
+    pub message: String,
+}
+
+/// Books with status `error`, ordered by path.
+pub fn failed_books(conn: &Connection) -> Result<Vec<FailedBook>, StorageError> {
+    let mut stmt = conn.prepare(
+        "SELECT b.id, c.path, b.entry_path, b.error_message
+         FROM books b JOIN containers c ON c.id = b.container_id
+         WHERE b.status = 'error'
+         ORDER BY c.path, b.entry_index, b.id",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        let container: String = row.get(1)?;
+        let entry: Option<String> = row.get(2)?;
+        Ok(FailedBook {
+            id: row.get(0)?,
+            path: match entry {
+                Some(entry) => format!("{container}/{entry}"),
+                None => container,
+            },
+            message: row
+                .get::<_, Option<String>>(3)?
+                .unwrap_or_else(|| "unknown error".to_owned()),
+        })
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
 /// Books in a container (any status), ordered by entry index.
 pub fn books_in_container(
     conn: &Connection,

@@ -7,7 +7,7 @@ use shelfgauge::storage::authors::{
     author_by_id, author_index, books_by_author, count_authors, list_authors,
 };
 use shelfgauge::storage::books::{
-    BookRecord, BookStatus, EntryRecord, book_by_id, books_in_container, count_books,
+    BookRecord, BookStatus, EntryRecord, book_by_id, books_in_container, count_books, failed_books,
     find_by_content_hash, find_by_entry_identity, find_live_at, mark_removed, relocate,
     upsert_book,
 };
@@ -426,6 +426,50 @@ fn error_books_keep_their_location() {
         book_by_id(&db.conn, id).unwrap().unwrap().status,
         BookStatus::Error
     );
+}
+
+#[test]
+fn failed_books_are_listed_by_path_with_their_message() {
+    let db = db();
+    let file = container(&db.conn, "b/broken.fb2");
+    let zip = container(&db.conn, "a/pack.zip");
+    let ok = container(&db.conn, "c/fine.fb2");
+    upsert_book(
+        &db.conn,
+        &BookRecord::failed(file, None, None, "fb2", "broken", "invalid XML: oops"),
+    )
+    .unwrap();
+    let entry_id = upsert_book(
+        &db.conn,
+        &BookRecord::failed(
+            zip,
+            Some(entry("dir/bad.epub", 7)),
+            None,
+            "epub",
+            "bad",
+            "no package document",
+        ),
+    )
+    .unwrap();
+    upsert_book(&db.conn, &book(ok, None, "Fine", Vec::new())).unwrap();
+
+    let failed = failed_books(&db.conn).unwrap();
+    let listed: Vec<(&str, &str)> = failed
+        .iter()
+        .map(|b| (b.path.as_str(), b.message.as_str()))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("a/pack.zip/dir/bad.epub", "no package document"),
+            ("b/broken.fb2", "invalid XML: oops"),
+        ]
+    );
+    assert_eq!(failed[0].id, entry_id);
+
+    // A removed book is no longer an error of the library.
+    mark_removed(&db.conn, entry_id).unwrap();
+    assert_eq!(failed_books(&db.conn).unwrap().len(), 1);
 }
 
 #[test]

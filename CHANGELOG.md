@@ -8,6 +8,11 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+### Added
+
+- `shelfgauge errors [PATH]` lists the books that could not be read at the last scan,
+  one `path: reason` line per book.
+
 ### Fixed
 
 - Plain text books in UTF-16 without a byte order mark (LE or BE) are recognized by

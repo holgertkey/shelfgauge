@@ -58,6 +58,14 @@ pub enum Command {
         /// Library directory (default: the current directory).
         path: Option<PathBuf>,
     },
+    /// List the books that could not be read at the last scan, with the reason.
+    ///
+    /// Files that could not be opened at all (I/O errors) are not recorded: they are
+    /// logged by `scan` and tried again at the next scan.
+    Errors {
+        /// Library directory (default: the current directory).
+        path: Option<PathBuf>,
+    },
     /// Work with bookmarks and marks.
     #[command(subcommand)]
     Annotations(AnnotationsCommand),
@@ -85,6 +93,8 @@ pub enum Mode {
     Scan,
     /// Rewrite the annotation export and exit.
     ExportAnnotations,
+    /// List the books that could not be parsed and exit.
+    Errors,
 }
 
 /// The resolved invocation: mode, library root and config overrides.
@@ -108,6 +118,12 @@ impl Cli {
             Some(Command::Scan { path }) => Invocation {
                 mode: Mode::Scan,
                 explicit_path: path.is_some(),
+                path: path.unwrap_or_else(current_dir),
+                overrides: ConfigOverrides::default(),
+            },
+            Some(Command::Errors { path }) => Invocation {
+                mode: Mode::Errors,
+                explicit_path: false,
                 path: path.unwrap_or_else(current_dir),
                 overrides: ConfigOverrides::default(),
             },
@@ -237,6 +253,15 @@ mod tests {
             PathBuf::from(".")
         );
         assert!(parse(&["annotations"]).is_err());
+    }
+
+    #[test]
+    fn errors_never_creates_a_library() {
+        let inv = parse(&["errors", "books"]).unwrap();
+        assert_eq!(inv.mode, Mode::Errors);
+        assert_eq!(inv.path, PathBuf::from("books"));
+        assert!(!inv.explicit_path, "only an existing library is reported");
+        assert_eq!(parse(&["errors"]).unwrap().path, PathBuf::from("."));
     }
 
     #[test]
