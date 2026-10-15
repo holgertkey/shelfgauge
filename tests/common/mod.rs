@@ -244,3 +244,52 @@ pub fn with_entry(
     }
     entries
 }
+
+/// A lib.ru-style plain text book (indented paragraphs, hard-wrapped), as UTF-8 text:
+/// a title, a rule, two chapters of a part with a name line, verse and a scene break.
+pub fn txt_libru() -> String {
+    let paragraph = "     Несколько  лет  тому  назад  в  одном  из своих  поместий жил старинный\n\
+                     русской барин, Кирила Петрович Троекуров. Его богатство, знатный род и связи\n\
+                     давали ему большой вес в губерниях, где находилось его имение.\n";
+    let mut text = String::from(
+        "Александр Пушкин. Дубровский\n\n\
+         ---------------------------------------------------------------\n\
+          Текст по изданию 1936 года\n\
+         ---------------------------------------------------------------\n\n\
+         * ЧАСТЬ ПЕРВАЯ *\n\n\
+         ГЛАВА I.\n\
+         Троекуров\n\n",
+    );
+    text.push_str(&paragraph.repeat(4));
+    text.push_str(
+        "          Мороз и солнце; день чудесный!\n\
+         \x20         Еще ты дремлешь, друг прелестный -\n\
+         \x20         Пора, красавица, проснись.\n",
+    );
+    text.push_str(&paragraph.repeat(2));
+    text.push_str("\n                              * * *\n\n");
+    text.push_str(&paragraph.repeat(2));
+    text.push_str("     - Да.\n     - Нет.\n\nГЛАВА II.\n\n");
+    text.push_str(&paragraph.repeat(5));
+    text
+}
+
+/// A Project Gutenberg-style plain text book (blank-line separated, hard-wrapped
+/// blocks) with a table of contents of chapter lines.
+pub fn txt_gutenberg() -> String {
+    let block = "It is a truth universally acknowledged, that a single man in possession\n\
+                 of a good fortune, must be in want of a wife. However little known the\n\
+                 feelings or views of such a man may be on his first entering a\n\
+                 neighbourhood, this truth is so well fixed in the minds of the\n\
+                 surrounding families, that he is considered as the rightful property\n\
+                 of some one or other of their daughters. My dear Mr. Bennet, said his\n\
+                 lady to him one day, have you heard that Netherfield Park is let at\n\
+                 last? Mr. Bennet replied that he had not.\n\n";
+    format!(
+        "PRIDE AND PREJUDICE\nBy Jane Austen\n\nContents\n\nCHAPTER I\n\nCHAPTER II\n\n\
+         CHAPTER I\n\n{}*       *       *       *       *\n\n{}CHAPTER II\n\n{}",
+        block.repeat(3),
+        block.repeat(2),
+        block.repeat(4)
+    )
+}

@@ -34,6 +34,9 @@
 //!   elements (`div`, `section`, ...) are not blocks; a run of inline content outside a
 //!   paragraph is one paragraph. Footnotes (`aside` and other elements typed as notes)
 //!   and non-linear spine documents form a notes body after it, one section per note.
+//! - TXT has one main body; sections come only from heading-like lines (part and
+//!   chapter lines, cut with the EPUB section rules). It produces paragraphs (verse as a
+//!   paragraph with line breaks) and rules, nothing else.
 //!
 //! Numbering happens in [`BookContent::new`] and [`Annotation::new`], so parsers cannot
 //! forget it. Any change to the numbering or to the model requires bumping
@@ -51,7 +54,7 @@ use serde::{Deserialize, Serialize};
 /// constant invalidates every cache. Bump it whenever the model, a parser's output or
 /// the block numbering rule changes (the golden numbering test in this module failing is
 /// a signal to do so).
-pub const PARSER_VERSION: u32 = 2;
+pub const PARSER_VERSION: u32 = 3;
 
 /// A block's ordinal in document order, shown as `b<n>` (see the [module docs](self)).
 #[derive(

@@ -27,6 +27,8 @@ mod package;
 mod paths;
 mod xml;
 
+pub(crate) use metadata::person;
+
 /// The EPUB parser.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct EpubParser;

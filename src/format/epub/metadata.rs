@@ -87,7 +87,7 @@ fn authors(package: &Package) -> Vec<Person> {
 ///
 /// Parenthesized parts (`A. I. (Aleksandr Ivanovich)`) and parts after a second comma
 /// (`Tolstoy, Leo, graf`) are dropped from the sort name.
-pub(super) fn person(name: &str, file_as: Option<&str>) -> Option<Person> {
+pub(crate) fn person(name: &str, file_as: Option<&str>) -> Option<Person> {
     let some = |s: &str| (!s.is_empty()).then(|| s.to_owned());
     if let Some((last, rest)) = file_as.and_then(|f| f.split_once(',')) {
         let last = without_parentheses(last);

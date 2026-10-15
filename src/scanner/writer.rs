@@ -44,6 +44,9 @@ pub(super) enum Outcome {
     Parsed(Box<BookMetadata>),
     /// Why the book could not be parsed.
     Failed(String),
+    /// The file is not a book: nothing is recorded, and a book recorded at the location
+    /// before is removed.
+    NotABook,
 }
 
 /// One change to the index.
@@ -150,8 +153,16 @@ impl Writer {
             } => {
                 let container_id = self.container_id(conn, &container)?;
                 let entry_name = entry.as_ref().map_or(&[][..], |e| &e.name[..]);
-                let existed = find_live_at(conn, container_id, entry_name)?.is_some();
+                let live = find_live_at(conn, container_id, entry_name)?;
+                let existed = live.is_some();
                 let (record, cover) = match outcome {
+                    Outcome::NotABook => {
+                        if let Some(id) = live {
+                            mark_removed(conn, id)?;
+                            self.stats.removed += 1;
+                        }
+                        return Ok(());
+                    }
                     Outcome::Parsed(metadata) => (
                         BookRecord::parsed(
                             container_id,

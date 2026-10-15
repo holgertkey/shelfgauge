@@ -11,6 +11,7 @@ use shelfgauge::config::{ReaderConfig, SplitMode};
 use shelfgauge::format::epub::EpubParser;
 use shelfgauge::format::fb2::Fb2Parser;
 use shelfgauge::format::model::{BlockId, BookContent};
+use shelfgauge::format::txt::TxtParser;
 use shelfgauge::format::{BookParser, run_with_parser_stack};
 use shelfgauge::render::html::{ReaderLinks, render_part};
 use shelfgauge::render::split::split;
@@ -173,6 +174,26 @@ fn epub_block_text_equals_rendered_text_content() {
             Default::default(),
         );
         check_book(&content);
+    });
+}
+
+#[test]
+fn txt_block_text_equals_rendered_text_content() {
+    run_with_parser_stack(|| {
+        for text in [common::txt_libru(), common::txt_gutenberg()] {
+            let content = TxtParser.parse_content(text.as_bytes()).unwrap();
+            check_book(&content);
+        }
+        let content = TxtParser
+            .parse_content(common::txt_libru().as_bytes())
+            .unwrap();
+        let book = BookText::new(&content);
+        let verse = book.text(BlockId::new(12).unwrap()).unwrap();
+        assert!(
+            verse.starts_with("Мороз и солнце; день чудесный!Еще ты")
+                || verse.starts_with("Мороз и солнце; день чудесный!\nЕще ты"),
+            "{verse:?}"
+        );
     });
 }
 

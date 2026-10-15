@@ -183,7 +183,7 @@ mod tests {
             "b.fb2",
             "a/z.FB2",
             "a/y.zip",
-            "a/notes.txt",
+            "a/notes.md",
             ".shelfgauge/hidden.fb2",
             "skip/x.fb2",
             "keep/tmp.fb2",

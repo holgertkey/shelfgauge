@@ -40,6 +40,9 @@ base_path = "/"
 [scan]
 # Gitignore-style patterns of paths to skip, in addition to .shelfgauge/ itself.
 exclude = []
+# Book formats to index: "fb2" (also .fbz), "epub", "txt". Text files that are too
+# short or named like readme.txt are not books and are skipped.
+formats = ["fb2", "epub", "txt"]
 
 [library]
 # Number of entries per sidebar/list page.
@@ -117,11 +120,38 @@ impl Default for ServerConfig {
 }
 
 /// The `[scan]` section: what the scanner indexes.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ScanConfig {
     /// Gitignore-style patterns of paths to skip, in addition to `.shelfgauge/`.
     pub exclude: Vec<String>,
+    /// The book formats to index ([`FORMATS`](crate::format::FORMATS)); normalized to
+    /// lowercase without repeats by [`Config::validate`].
+    pub formats: Vec<String>,
+}
+
+impl Default for ScanConfig {
+    fn default() -> Self {
+        Self {
+            exclude: Vec::new(),
+            formats: crate::format::DEFAULT_FORMATS
+                .iter()
+                .map(|&f| f.to_owned())
+                .collect(),
+        }
+    }
+}
+
+impl ScanConfig {
+    /// The registry of the enabled formats.
+    ///
+    /// # Panics
+    ///
+    /// If a format is unknown: call it on a [validated](Config::validate) config.
+    pub fn registry(&self) -> crate::format::Registry {
+        crate::format::Registry::with_formats(&self.formats)
+            .expect("formats are validated with the config")
+    }
 }
 
 /// The `[library]` section: library-mode UI settings.
@@ -351,6 +381,26 @@ impl Config {
         }
         self.server.base_path = normalize_base_path(&self.server.base_path)
             .map_err(|message| ConfigError::new("server.base_path", message))?;
+        let mut formats: Vec<String> = Vec::new();
+        for name in &self.scan.formats {
+            let normalized = name.trim().to_ascii_lowercase();
+            if !crate::format::FORMATS.contains(&normalized.as_str()) {
+                return Err(ConfigError::new(
+                    "scan.formats",
+                    crate::format::UnknownFormat { name: name.clone() },
+                ));
+            }
+            if !formats.contains(&normalized) {
+                formats.push(normalized);
+            }
+        }
+        if formats.is_empty() {
+            return Err(ConfigError::new(
+                "scan.formats",
+                "must list at least one format",
+            ));
+        }
+        self.scan.formats = formats;
         if self.library.page_size == 0 {
             return Err(ConfigError::new(
                 "library.page_size",
@@ -611,6 +661,27 @@ mod tests {
         let before = config.clone();
         config.apply_overrides(&ConfigOverrides::default()).unwrap();
         assert_eq!(config, before);
+    }
+
+    #[test]
+    fn scan_formats_are_validated_and_normalized() {
+        let (config, _) = parse("[scan]\nformats = [\"TXT\", \" fb2\", \"txt\"]").unwrap();
+        assert_eq!(config.scan.formats, ["txt", "fb2"]);
+        assert_eq!(config.scan.registry().formats(), ["txt", "fb2"]);
+        assert_eq!(Config::default().scan.formats, ["fb2", "epub", "txt"]);
+        assert_eq!(
+            invalid_key("[scan]\nformats = [\"fb2\", \"mobi\"]"),
+            "scan.formats"
+        );
+        assert_eq!(invalid_key("[scan]\nformats = [\"html\"]"), "scan.formats");
+        assert_eq!(invalid_key("[scan]\nformats = []"), "scan.formats");
+        match parse("[scan]\nformats = [\"mobi\"]").unwrap_err() {
+            Error::InvalidConfig { error, .. } => assert_eq!(
+                error.message,
+                r#"unknown format "mobi" (known formats: fb2, epub, txt)"#
+            ),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

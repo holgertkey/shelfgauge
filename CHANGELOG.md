@@ -8,6 +8,32 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-15
+
+### Added
+
+- Plain text books (`.txt`), plain and inside `.zip` archives, indexed by default. The
+  encoding is detected (UTF-8 with or without a BOM, UTF-16 with a BOM, windows-1251,
+  KOI8-R, CP866 and other code pages). Paragraphs are found per file: indented
+  paragraphs (lib.ru), blank-line separated hard-wrapped blocks (Project Gutenberg) or
+  one paragraph per line; verse keeps its line breaks and `* * *` lines become rules.
+  Lines such as `Глава 1`, `CHAPTER IV`, `ЧАСТЬ ПЕРВАЯ` or `FIRST EPILOGUE` become
+  chapters and parts (a table of contents made of such lines stays text); a book
+  without them is split by size for reading. The title, and the author for
+  `Author - Title.txt`, come from the file name.
+- Zipped FB2 books: `.fbz` files, and `.fb2` files that are really zip archives.
+- `[scan] formats` lists the formats to index (default `["fb2", "epub", "txt"]`); books
+  of a format taken off the list are removed at the next scan and come back with their
+  ids when it is listed again.
+- Files that are not books — text files under 2 000 characters or named like
+  `readme.txt`, `license.txt` — are skipped without an error; `shelfgauge scan` reports
+  them as "not books".
+
+### Changed
+
+- Books that failed to parse are parsed again once by the new parser version (zipped
+  `.fb2` files that used to fail now open).
+
 ## [0.8.0] - 2026-10-15
 
 ### Added

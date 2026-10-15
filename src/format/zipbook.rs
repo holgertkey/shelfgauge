@@ -34,6 +34,8 @@ pub(crate) struct ZipBook<'a> {
     zip: ZipArchive<Cursor<&'a [u8]>>,
     /// The format name used in error messages (`EPUB`).
     label: &'static str,
+    /// Entry names (files only) in central directory order, each once.
+    order: Vec<String>,
     /// Entry index by exact name.
     names: HashMap<String, usize>,
     /// Entry index by lowercase name, for books whose links differ in case.
@@ -60,6 +62,7 @@ impl<'a> ZipBook<'a> {
                 zip.len()
             )));
         }
+        let mut order = Vec::new();
         let mut names = HashMap::new();
         let mut folded = HashMap::new();
         for index in 0..zip.len() {
@@ -71,11 +74,15 @@ impl<'a> ZipBook<'a> {
             }
             let name = String::from_utf8_lossy(file.name_raw()).into_owned();
             folded.entry(name.to_lowercase()).or_insert(index);
+            if !names.contains_key(&name) {
+                order.push(name.clone());
+            }
             names.entry(name).or_insert(index);
         }
         Ok(Self {
             zip,
             label,
+            order,
             names,
             folded,
             total: 0,
@@ -88,6 +95,11 @@ impl<'a> ZipBook<'a> {
             .get(path)
             .or_else(|| self.folded.get(&path.to_lowercase()))
             .copied()
+    }
+
+    /// The names of the file entries in central directory order.
+    pub(crate) fn names(&self) -> &[String] {
+        &self.order
     }
 
     /// Whether the container has an entry at `path`.
@@ -185,6 +197,7 @@ mod tests {
         );
         assert!(archive.read("missing").unwrap().is_none());
         assert!(archive.contains("mimetype"));
+        assert_eq!(archive.names(), ["OEBPS/Text/Ch1.xhtml", "mimetype"]);
     }
 
     #[test]

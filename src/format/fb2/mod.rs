@@ -5,6 +5,10 @@
 //! the parser panic. A document whose only problem is unbalanced tags (a stray close
 //! tag, unclosed elements) is repaired and parsed again (see `format::repair`). Only input that
 //! is not XML, or not FictionBook, is an error.
+//!
+//! A zipped FB2 (`.fbz`, or a `.fb2` file that is really a zip) is unzipped in memory
+//! with the limits of the EPUB container (`format::zipbook`): the first `.fb2`
+//! entry in central directory order is the book, or else the first entry.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::{GeneralPurpose, PAD_INDIFFERENT};
@@ -12,6 +16,7 @@ use roxmltree::{Document, Node, ParsingOptions};
 
 use super::model::{BookContent, BookMetadata, Image};
 use super::xml::{MAX_XML_DEPTH, NODES_LIMIT, nesting_exceeds, normalize_space, sniff_image_mime};
+use super::zipbook::ZipBook;
 use super::{BookParser, ParseError, repair};
 
 mod content;
@@ -40,7 +45,7 @@ impl BookParser for Fb2Parser {
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["fb2"]
+        &["fb2", "fbz"]
     }
 
     /// Parses `<description>/<title-info>` and the cover image; bodies are not converted.
@@ -57,8 +62,36 @@ impl BookParser for Fb2Parser {
     }
 }
 
-/// Decodes and parses `data`, then calls `f` with the `<FictionBook>` root element.
+/// The signature at the start of a zip file.
+const ZIP_SIGNATURE: &[u8] = b"PK\x03\x04";
+
+/// The FB2 document of a zipped FB2 (see the [module docs](self)).
+fn unzip(data: &[u8]) -> Result<Vec<u8>, ParseError> {
+    let mut zip = ZipBook::open(data, "zipped FB2")?;
+    let name = zip
+        .names()
+        .iter()
+        .find(|name| {
+            name.rsplit_once('.')
+                .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("fb2"))
+        })
+        .or_else(|| zip.names().first())
+        .cloned()
+        .ok_or_else(|| ParseError::new("the zipped FB2 is empty"))?;
+    zip.read(&name)?
+        .ok_or_else(|| ParseError::new("the zipped FB2 is empty"))
+}
+
+/// Decodes and parses `data` (unzipped first if it is a zip), then calls `f` with the
+/// `<FictionBook>` root element.
 fn with_root<T>(data: &[u8], f: impl FnOnce(Node<'_, '_>) -> T) -> Result<T, ParseError> {
+    let unzipped;
+    let data = if data.starts_with(ZIP_SIGNATURE) {
+        unzipped = unzip(data)?;
+        &unzipped[..]
+    } else {
+        data
+    };
     let decoded = encoding::decode(data);
     if decoded.had_errors {
         tracing::warn!(
@@ -240,6 +273,52 @@ mod tests {
             "<section>".repeat(MAX_XML_DEPTH + 10)
         );
         assert!(Fb2Parser.parse_content(xml.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn zipped_fb2_is_unzipped() {
+        use crate::format::zipbook::zip_bytes;
+        let book = b"<FictionBook><description><title-info><book-title>Zipped</book-title>\
+                     </title-info></description><body><section><p>Text</p></section></body>\
+                     </FictionBook>";
+        // The `.fb2` entry wins over earlier entries; without one the first entry.
+        for entries in [
+            &[("cover.jpg", &b"jpeg"[..]), ("Book.FB2", &book[..])][..],
+            &[("book.xml", &book[..]), ("other.txt", &b"x"[..])][..],
+        ] {
+            let data = zip_bytes(entries);
+            assert_eq!(Fb2Parser.parse_metadata(&data).unwrap().title, "Zipped");
+            let text: Vec<String> = Fb2Parser
+                .parse_content(&data)
+                .unwrap()
+                .blocks()
+                .iter()
+                .map(|b| b.plain_text())
+                .collect();
+            assert_eq!(text, ["Text"]);
+        }
+    }
+
+    #[test]
+    fn zipped_fb2_errors() {
+        use crate::format::zipbook::zip_bytes;
+        let err = Fb2Parser
+            .parse_metadata(&zip_bytes(&[("notes.txt", b"plain text")]))
+            .unwrap_err();
+        assert!(err.message.starts_with("invalid XML"), "{err}");
+        let err = Fb2Parser.parse_metadata(b"PK\x03\x04broken").unwrap_err();
+        assert!(err.message.starts_with("not a zipped FB2"), "{err}");
+        let empty = zip_bytes(&[]);
+        assert!(Fb2Parser.parse_metadata(&empty).is_err());
+        // A zip inside the zip is not unzipped again.
+        let inner = zip_bytes(&[("book.fb2", b"<FictionBook/>")]);
+        let err = Fb2Parser
+            .parse_metadata(&zip_bytes(&[("book.fb2", &inner)]))
+            .unwrap_err();
+        assert!(err.message.starts_with("invalid XML"), "{err}");
+        let bomb = zip_bytes(&[("book.fb2", &vec![b' '; 3 * 1024 * 1024])]);
+        let err = Fb2Parser.parse_metadata(&bomb).unwrap_err();
+        assert!(err.message.contains("compressed"), "{err}");
     }
 
     #[test]

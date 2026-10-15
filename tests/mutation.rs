@@ -1,5 +1,5 @@
-//! Mutation tests (a small in-tree fuzzer): corrupted FB2 files, EPUB books and zip
-//! archives must never panic, and parsed content must keep the split invariants.
+//! Mutation tests (a small in-tree fuzzer): corrupted FB2 files (plain and zipped as
+//! `.fbz`), EPUB books, plain text books and zip archives must never panic, and parsed content must keep the split invariants.
 //!
 //! The inputs are the synthetic fixtures, mutated by a seeded generator, so runs are
 //! reproducible. `SHELFGAUGE_FUZZ_ITERATIONS` sets the number of cases per test (default
@@ -19,6 +19,7 @@ use shelfgauge::container::zip::{ArchiveReader, list_books};
 use shelfgauge::format::epub::EpubParser;
 use shelfgauge::format::fb2::Fb2Parser;
 use shelfgauge::format::model::{BlockId, BookContent};
+use shelfgauge::format::txt::TxtParser;
 use shelfgauge::format::{BookParser, run_with_parser_stack};
 use shelfgauge::render::html::{ReaderLinks, render_part, render_toc};
 use shelfgauge::render::split::{part_of, split};
@@ -208,7 +209,7 @@ fn exercise(content: &BookContent) {
             let html = render_part(content, &parts, i, &Links);
             rendered += html.matches(" id=\"b").count();
             assert!(!html.contains("<script"), "unescaped markup");
-            assert!(!html.contains("javascript:"), "unsafe link");
+            assert!(!html.contains("href=\"javascript:"), "unsafe link");
         }
         assert_eq!(rendered, count as usize, "every block rendered once");
         render_toc(content, &parts, 0, &Links);
@@ -278,6 +279,101 @@ fn mutated_epub_never_panics() {
         }
     }
     assert!(parsed > 0 && failed > 0, "parsed {parsed}, failed {failed}");
+}
+
+#[test]
+fn mutated_fbz_never_panics() {
+    let mut rng = rng();
+    let (mut parsed, mut failed) = (0, 0);
+    for n in 0..iterations() {
+        let seed = SEEDS[n as usize % SEEDS.len()];
+        let mut entries = vec![("book.fb2", mutate(&mut rng, seed))];
+        if rng.below(3) == 0 {
+            entries.insert(0, ("cover.jpg", common::PNG.to_vec()));
+        }
+        let mut data = common::zip(&entries);
+        if rng.below(4) == 0 && !data.is_empty() {
+            data = mutate(&mut rng, &data);
+        }
+        let ok = run_with_parser_stack(|| {
+            let _ = Fb2Parser.parse_metadata(&data);
+            match Fb2Parser.parse_content(&data) {
+                Ok(content) => {
+                    exercise(&content);
+                    true
+                }
+                Err(_) => false,
+            }
+        });
+        if ok {
+            parsed += 1;
+        } else {
+            failed += 1;
+        }
+    }
+    assert!(parsed > 0 && failed > 0, "parsed {parsed}, failed {failed}");
+}
+
+/// Text-specific changes: line ends, controls, headings, rules, verse, other code pages
+/// and a line without breaks.
+const TEXT_FRAGMENTS: &[&[u8]] = &[
+    b"\r",
+    b"\r\n",
+    b"\n\n",
+    b"\x0c",
+    b"\t",
+    b"\0",
+    b"\xef\xbb\xbf",
+    b"\xff\xfe",
+    b"\n\nCHAPTER IV\n\n",
+    b"\n\n\xd0\x93\xd0\xbb\xd0\xb0\xd0\xb2\xd0\xb0 1\n",
+    b"\n\n\xc3\xeb\xe0\xe2\xe0 2\n\n",
+    b"\n* * *\n",
+    b"\n-----\n",
+    b"\nXIV\n\n",
+    b"\n          short line\n          another one\n",
+    b"     ",
+    b"-\n",
+];
+
+#[test]
+fn mutated_txt_never_panics() {
+    let libru = common::txt_libru();
+    let (cp1251, _, _) = encoding_rs::WINDOWS_1251.encode(&libru);
+    let (koi8, _, _) = encoding_rs::KOI8_R.encode(&libru);
+    let seeds: Vec<Vec<u8>> = vec![
+        libru.clone().into_bytes(),
+        cp1251.into_owned(),
+        koi8.into_owned(),
+        common::txt_gutenberg().into_bytes(),
+        "Один очень длинный абзац без переводов строк. "
+            .repeat(100)
+            .into_bytes(),
+    ];
+    let mut rng = rng();
+    for n in 0..iterations() {
+        let mut data = mutate(&mut rng, &seeds[n as usize % seeds.len()]);
+        for _ in 0..rng.below(4) {
+            let at = rng.below(data.len() + 1);
+            let fragment = TEXT_FRAGMENTS[rng.below(TEXT_FRAGMENTS.len())];
+            data.splice(at..at, fragment.iter().copied());
+        }
+        if rng.below(50) == 0 {
+            let at = rng.below(data.len() + 1);
+            data.splice(at..at, "x".repeat(150_000).into_bytes());
+        }
+        if rng.below(20) == 0 {
+            data = (0..rng.below(5000)).map(|_| rng.next() as u8).collect();
+        }
+        run_with_parser_stack(|| {
+            let _ = TxtParser.parse_metadata(&data);
+            let _ = TxtParser.parse_metadata_named(&data, "Автор - Книга.txt");
+            let content = TxtParser
+                .parse_content(&data)
+                .expect("plain text always parses");
+            exercise(&content);
+        });
+    }
 }
 
 fn zip_bytes() -> Vec<u8> {

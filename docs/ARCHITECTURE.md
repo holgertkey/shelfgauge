@@ -1,11 +1,11 @@
 # shelfgauge — Architecture
 
 > Status: v1 implemented (scanner, storage, web server, library and reading mode,
-> hardening), annotations (0.6.0), reader settings (0.7.0) and EPUB (0.8.0). The V2 hub
-> below is designed, not built.
+> hardening), annotations (0.6.0), reader settings (0.7.0), EPUB (0.8.0), plain text
+> and `.fbz` (0.9.0). The V2 hub below is designed, not built.
 
-`shelfgauge` is a single-binary Rust app that indexes a directory tree of ebook files (FB2 and
-EPUB, plain files and `.zip` archives with any number of books inside) into a local SQLite DB
+`shelfgauge` is a single-binary Rust app that indexes a directory tree of ebook files (FB2
+(also `.fbz`), EPUB and TXT, plain files and `.zip` archives with any number of books inside) into a local SQLite DB
 and serves a browsable, server-rendered web library on a fixed `localhost` port. License: MIT.
 Key design points to keep in mind when implementing:
 
@@ -28,14 +28,27 @@ Key design points to keep in mind when implementing:
   aborts a scan (it's recorded with an error status). Zip entries are identified by raw
   name bytes (old archives use CP866 names without the UTF-8 flag; display names are
   decoded UTF-8 → CP866 → windows-1251 → CP437). Nested archives are
-  skipped; an `.epub` inside a `.zip` is a book (EPUB is a book file whose zip structure
-  the EPUB parser reads itself, not an archive container). Each archive records the
+  skipped; an `.epub` or `.fbz` inside a `.zip` is a book (a book file whose zip
+  structure its parser reads itself, not an archive container; only `.zip` is an
+  archive, so `.fb2.zip` stays an ordinary archive). Each archive records the
   formats it was listed for (`containers.listed_formats`, schema v3): when a format is
   added, unchanged archives are listed again (central directory only), so their books of
   the new format are found while known entries are not parsed again. Removed books get status `removed` instead of being deleted.
   An archive's entries are parsed in parallel jobs, at most `threads × 4` per archive:
   every job opens the archive and parses its central directory, so many small jobs on a
   huge archive would be quadratic.
+- **Enabled formats**: `[scan] formats` (default `fb2`, `epub`, `txt`) builds the
+  scanner's registry (`Registry::with_formats`; unknown names are a config error).
+  Taking a format off the list makes its files invisible to the walk, so their books
+  are marked removed (annotations survive by the usual retention); putting it back finds
+  them again (moved-book matching keeps their ids), and archives are listed again thanks
+  to `listed_formats`.
+- **"Not a book" is an outcome, not an error**: a parser returns
+  `ParseErrorKind::NotABook` for a file of its format that is not a book (a short text,
+  `readme.txt`). The scanner records nothing for it (`ScanSummary::not_books` counts
+  it); a plain file's container row is kept without a book, so an unchanged file is not
+  read again. A book that later turns out not to be a book is marked removed. Parsers
+  get the file name for this (`BookParser::parse_metadata_named`).
 - **Parser upgrades reach failed books**: each book row records the `PARSER_VERSION`
   that wrote it (`books.parser_version`, schema v2). A book that failed with an older
   parser is parsed again by the next scan even if its file is unchanged; books that
@@ -66,8 +79,10 @@ Key design points to keep in mind when implementing:
   and a stack overflow aborts the whole process, so the XML-based parsers (FB2, EPUB
   documents) reject nesting deeper than 256 levels, and every thread that runs a parser (rayon pool, blocking workers) is
   created with `format::PARSER_STACK_SIZE` (16 MB) of stack.
-- **FB2 encoding detection** before XML parsing: BOM → UTF-16 pattern → XML declaration
-  (`encoding_rs`) → fallback (valid UTF-8, else `chardetng`). The declaration is not
+- **Encoding detection** (`format::encoding`): BOM → (mostly) valid UTF-8 →
+  `chardetng` (windows-1251, CP866 and KOI8 recognized; KOI8-R is reported as KOI8-U,
+  which decodes Russian identically). FB2 inserts its own steps: BOM → UTF-16 pattern →
+  XML declaration (`encoding_rs`) → fallback (valid UTF-8, else `chardetng`). The declaration is not
   trusted blindly: it is overridden when the bytes contradict it. `roxmltree` ignores the
   declared encoding, so the decoded text is parsed as is.
 - **Unbalanced tags are repaired**: when strict parsing fails only on the tag structure
@@ -75,17 +90,26 @@ Key design points to keep in mind when implementing:
   rebalanced (stray close tags dropped, unclosed elements closed; comments, CDATA and
   attribute values untouched) and the text is parsed again under the same limits.
 - **Robustness tests**: `tests/mutation.rs` is an in-tree mutation fuzzer (seeded, no
-  extra dependencies) that runs corrupted FB2 files and EPUB books (mutated documents
-  re-zipped, or a corrupted container) through parse → split → render and corrupted zip
+  extra dependencies) that runs corrupted FB2 files (plain and as `.fbz`), EPUB books
+  (mutated documents re-zipped, or a corrupted container) and plain text (mixed
+  encodings, control characters, huge lines) through parse → split → render and corrupted zip
   archives through listing and reading; long runs via
   `SHELFGAUGE_FUZZ_ITERATIONS`.
 - **Format abstraction is two layers, and must stay that way as formats are added**:
   - *Container layer*: resolves raw bytes to parse (bare file vs. one entry of a `.zip`),
     independent of ebook format.
-  - *Format layer*: a `BookParser` trait (one impl per format: FB2, EPUB) producing a
+  - *Format layer*: a `BookParser` trait (one impl per format: FB2, EPUB, TXT) producing a
     common `BookMetadata` / `BookContent` representation. The viewer must only depend on
     `BookContent`/`BookMetadata`, never on format-specific details.
-  - Fixed-page-layout formats (PDF/DjVu) are explicitly out of scope.
+  - Shared pieces of the format layer: `format::zipbook` (the limited in-memory reader
+    of zipped books: entry count, per-entry size and ratio, total size), used by EPUB
+    and `.fbz`; `format::encoding`; `format::sections` (a flat list of items and cuts →
+    the section tree with the rules for titles, used by EPUB and TXT).
+  - The format set is final: FB2 (+ `.fbz`), EPUB, TXT and (0.10.0, opt-in) HTML.
+    Fixed-page-layout formats (PDF/DjVu), MOBI/AZW3, FB3, DOCX/RTF/ODT and comics are
+    out of scope.
+- **FB2 zipped** (`.fbz`, or a `.fb2` whose bytes start with a zip signature): the FB2
+  parser unzips the first `.fb2` entry (else the first entry) with `format::zipbook`.
 - **EPUB** (`src/format/epub/`, EPUB 2.0.1 and 3.x): the parser opens the OCF zip from
   the bytes it is given, with its own limits (entries, per-entry size and compression
   ratio, total unpacked size), follows `META-INF/container.xml` to the package document
@@ -105,6 +129,21 @@ Key design points to keep in mind when implementing:
   images are kept (SVG never). The model gained lists, list items (containers),
   preformatted text, rules and line breaks; FB2 never produces them, so its numbering
   is unchanged.
+- **TXT** (`src/format/txt/`): decoded with `format::encoding` (no declaration step),
+  line ends normalized, controls dropped (a form feed is a paragraph break). One
+  paragraph *style* per file from statistics: *indented* (lib.ru: a paragraph at each
+  indented line), *blocks* (Gutenberg: blank-line separated, hard-wrapped lines joined)
+  or *lines* (one paragraph per line); runs of short non-prose lines become verse (one
+  paragraph with line breaks), `* * *`-like lines rules, paragraphs over 100 000
+  characters are split at sentence ends. Heading-like lines (`Часть|Книга|Том|Part|Book|
+  Volume` + number: rank 1; `Глава|Chapter` + number, prologues and the like, lone
+  numerals when there are 3+: rank 2; set apart by blank lines; a following short line
+  is the chapter's name) cut sections through `format::sections`; candidates with no
+  text before the next heading of the same or a higher rank are a table of contents and
+  stay text. Metadata only from the file name (`Author - Title`); less than 2 000
+  characters of text or a name like `readme`/`license` → not a book. Only existing
+  block kinds are produced, so FB2 and EPUB numbering are untouched; a golden test pins
+  the TXT mapping.
 - **UI is server-rendered** (askama templates, hand-written CSS/JS, assets embedded in the
   binary; no SPA, no Node). Layout is inspired by mdBook: collapsible left sidebar + main
   area + top bar + color themes. **Nothing is copied from mdBook** (MPL-2.0) — only the
@@ -373,7 +412,8 @@ in the reader (content loading refuses them before reading the file), never publ
 into a versioned wire format, so the model must be extended for EPUB (lists, `pre`,
 rules, sections from the navigation document and headings, inline EPUB3 footnotes)
 while a change still costs only a `PARSER_VERSION` bump. FB2 block numbering stays
-unchanged (its golden test must not change). TXT any time; MOBI/AZW3 later or never.
+unchanged (its golden test must not change). TXT and `.fbz` followed in 0.9.0, HTML
+(opt-in) is planned for 0.10.0; no other formats (decided 2026-10-15).
 
 ## Planned tech stack
 
@@ -387,9 +427,9 @@ unchanged (its golden test must not change). TXT any time; MOBI/AZW3 later or ne
 | DB access from async | read pool (`r2d2_sqlite`) + `spawn_blocking` |
 | Config | serde + toml |
 | XML parsing (FB2, EPUB) | roxmltree (read-only DOM) |
-| Encoding detection | encoding_rs (+ chardetng fallback) |
+| Encoding detection | encoding_rs (+ chardetng fallback; FB2, TXT) |
 | Directory walking | walkdir + ignore |
-| Archives | `zip` crate (`.zip` libraries, EPUB containers) |
+| Archives | `zip` crate (`.zip` libraries, EPUB containers, `.fbz`) |
 | Parallel parsing | rayon |
 
 ## Out of scope for v1

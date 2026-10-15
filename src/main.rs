@@ -14,7 +14,7 @@ use shelfgauge::annotations::export::Exporter;
 use shelfgauge::annotations::store::UserData;
 use shelfgauge::config::Config;
 use shelfgauge::container::ReadLimits;
-use shelfgauge::format::{PARSER_STACK_SIZE, Registry};
+use shelfgauge::format::PARSER_STACK_SIZE;
 use shelfgauge::library::Library;
 use shelfgauge::scanner::{BackgroundScan, ScanPhase, ScanProgress, Scanner};
 use shelfgauge::web;
@@ -116,15 +116,15 @@ fn serve(library: Library, config: &Config, scan: bool) -> anyhow::Result<()> {
             (library.clone(), Arc::clone(&userdata), exporter.clone());
         let retention = config.annotations.removed_book_retention_days;
         Arc::new(
-            BackgroundScan::new(library.clone(), config.scan.exclude.clone()).after_complete_scan(
-                move || {
+            BackgroundScan::new(library.clone(), config.scan.exclude.clone())
+                .with_registry(config.scan.registry())
+                .after_complete_scan(move || {
                     if let Err(e) =
                         attach::cleanup_library(&library, &userdata, &exporter, retention)
                     {
                         tracing::error!("cannot clean up the annotations of removed books: {e}");
                     }
-                },
-            ),
+                }),
         )
     };
     let state = web::AppState::new(library, config, pool, Arc::clone(&background))
@@ -205,7 +205,7 @@ fn announce_shutdown() {
 fn scan(library: &Library, config: &Config) -> anyhow::Result<()> {
     let mut conn = shelfgauge::storage::open_writer(&library.db_path())
         .with_context(|| format!("cannot open the index {}", library.db_path().display()))?;
-    let registry = Registry::with_builtin_formats();
+    let registry = config.scan.registry();
     let progress = ScanProgress::default();
     let cancel = AtomicBool::new(false);
     let scanner = Scanner {
@@ -239,7 +239,7 @@ fn scan(library: &Library, config: &Config) -> anyhow::Result<()> {
     }
     println!(
         "Scanned {} in {:.1} s: {} added, {} updated, {} moved, {} removed, {} unchanged, \
-         {} errors ({} parsed){}.",
+         {} errors ({} parsed){}{}.",
         library.root().display(),
         started.elapsed().as_secs_f64(),
         summary.added,
@@ -249,6 +249,11 @@ fn scan(library: &Library, config: &Config) -> anyhow::Result<()> {
         summary.unchanged,
         summary.errors,
         summary.parsed,
+        if summary.not_books > 0 {
+            format!(", {} not books", summary.not_books)
+        } else {
+            String::new()
+        },
         if summary.skipped > 0 {
             format!(", {} skipped (non-UTF-8 paths)", summary.skipped)
         } else {

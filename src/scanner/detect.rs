@@ -6,6 +6,9 @@
 //!   stat changed.
 //! - A changed archive's central directory is listed (no decompression); entries whose
 //!   `(size, CRC32)` equal the recorded ones are unchanged.
+//! - A plain file without a book whose stat is unchanged was found not to be a book
+//!   ([`ParseErrorKind::NotABook`](crate::format::ParseErrorKind::NotABook)) and is
+//!   skipped; it is looked at again once it changes.
 //! - A book that failed to parse with an older parser
 //!   ([`LocatedBook::retry_parse`]) is parsed again even if its file is unchanged.
 //! - Books are considered vanished only when it is certain that their file is gone:
@@ -92,6 +95,10 @@ pub(super) fn plan(
                 let reparse = book.is_some_and(|b| b.retry_parse());
                 if unchanged_stat && book.is_some() && !reparse {
                     plan.unchanged_books += 1;
+                    continue;
+                }
+                if unchanged_stat && book.is_none() {
+                    // Not a book: its container is recorded without a book.
                     continue;
                 }
                 plan.files.push(FileJob {

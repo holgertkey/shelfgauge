@@ -1,6 +1,8 @@
 //! Library-mode UI tests: pages, sidebar fragments, search, covers and pagination on a
 //! scanned temporary library.
 
+mod common;
+
 use std::io::Write;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -780,4 +782,67 @@ async fn base_path_applies_to_pages_fragments_and_data_urls() {
         server.get("/sidebar/authors").await.status,
         StatusCode::NOT_FOUND
     );
+}
+
+#[tokio::test]
+async fn archives_mixing_formats_and_text_books() {
+    let lib = TestLibrary::new();
+    let long =
+        "Строка текста без глав, которая повторяется очень много раз подряд. ".repeat(12_000);
+    lib.zip(
+        "mixed.zip",
+        &[
+            ("a.fb2", Book::new("Из FB2", "Чехов", "Антон").fb2()),
+            ("b.epub", common::epub3()),
+            ("Пушкин - Дубровский.txt", common::txt_libru().into_bytes()),
+            ("long.txt", long.into_bytes()),
+            ("readme.txt", common::txt_libru().into_bytes()),
+        ],
+    );
+    lib.scan();
+    let server = lib.server("/", 100);
+    let archive = server.ok("/folder?zip=mixed.zip").await;
+    let main = archive.main();
+    for title in ["Из FB2", "Дубровский", "long"] {
+        assert!(main.contains(title), "{title} in {main}");
+    }
+    assert!(!main.contains("readme"), "not a book: {main}");
+    assert_eq!(main.matches("<li><a href=\"/book/").count(), 4, "{main}");
+
+    let id = lib.id_of("Дубровский");
+    let card = server.ok(&format!("/book/{id}")).await;
+    assert!(
+        card.main().contains("<dt>Format</dt><dd>TXT</dd>"),
+        "{}",
+        card.main()
+    );
+    assert!(card.main().contains("Пушкин"));
+    let read = server.ok(&format!("/book/{id}/read")).await;
+    assert!(read.body.contains("ГЛАВА I."), "{}", read.body);
+
+    // A long text without headings is read in pieces.
+    let id = lib.id_of("long");
+    let read = server.ok(&format!("/book/{id}/read")).await;
+    assert!(read.body.contains("Строка текста без глав"));
+    assert!(read.body.contains("(1/"), "titled pieces: {}", read.main());
+}
+
+/// Files that are not books leave a container row without a book; folders holding only
+/// such files are not shown.
+#[tokio::test]
+async fn folders_with_only_non_books_are_not_listed() {
+    let lib = TestLibrary::new();
+    lib.write("docs/readme.txt", common::txt_libru().as_bytes());
+    lib.write("mixed/readme.txt", common::txt_libru().as_bytes());
+    lib.write("mixed/book.fb2", &Book::new("Книга", "Автор", "А").fb2());
+    lib.scan();
+    let server = lib.server("/", 100);
+    let root = server.ok("/folder").await;
+    assert!(root.main().contains("mixed"), "{}", root.main());
+    assert!(!root.main().contains("docs"), "{}", root.main());
+    let sidebar = server.ok("/sidebar/folder").await;
+    assert!(!sidebar.body.contains("docs"), "{}", sidebar.body);
+    let mixed = server.ok("/folder?path=mixed").await;
+    assert_eq!(mixed.main().matches("<li><a href=\"/book/").count(), 1);
+    assert!(!mixed.main().contains("readme"));
 }

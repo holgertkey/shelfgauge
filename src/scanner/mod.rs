@@ -204,6 +204,10 @@ pub struct ScanSummary {
     pub errors: u64,
     /// Files skipped because their path is not valid UTF-8.
     pub skipped: u64,
+    /// Files of a book format that are not books (a `readme.txt`; see
+    /// [`ParseErrorKind::NotABook`](crate::format::ParseErrorKind::NotABook)): not
+    /// recorded as books, and not counted again while they stay unchanged.
+    pub not_books: u64,
     /// Whether the scan was cancelled (then nothing was removed).
     pub cancelled: bool,
 }
@@ -235,6 +239,7 @@ struct Run<'a> {
     parsed: AtomicU64,
     errors: AtomicU64,
     unchanged: AtomicU64,
+    not_books: AtomicU64,
     file_candidates: HashMap<Vec<u8>, Vec<i64>>,
     deferred: Mutex<Vec<(Vec<u8>, Found)>>,
 }
@@ -327,6 +332,7 @@ impl Scanner<'_> {
                 parsed: AtomicU64::new(0),
                 errors: AtomicU64::new(plan.errors),
                 unchanged: AtomicU64::new(plan.unchanged_books),
+                not_books: AtomicU64::new(0),
                 file_candidates,
                 deferred: Mutex::new(Vec::new()),
             };
@@ -428,6 +434,7 @@ impl Scanner<'_> {
                 parsed,
                 errors,
                 unchanged,
+                not_books,
                 ..
             } = run;
             drop(tx);
@@ -435,12 +442,13 @@ impl Scanner<'_> {
                 unchanged.into_inner(),
                 parsed.into_inner(),
                 errors.into_inner(),
+                not_books.into_inner(),
             );
             (writer.join(), counters)
         });
         progress.set_phase(ScanPhase::Done);
         let stats = stats.map_err(|_| ScanError::WriterPanicked)??;
-        let (unchanged, parsed, errors) = counters;
+        let (unchanged, parsed, errors, not_books) = counters;
 
         Ok(ScanSummary {
             added: stats.added,
@@ -451,6 +459,7 @@ impl Scanner<'_> {
             parsed,
             errors: errors + stats.failed_books,
             skipped: walk.skipped_non_utf8,
+            not_books,
             cancelled: self.cancelled(),
         })
     }
@@ -532,7 +541,7 @@ impl Run<'_> {
         // Parser log lines (e.g. a repaired book) name the book.
         let outcome = {
             let _book = tracing::info_span!("book", path = %found.path).entered();
-            self.parse(parser, &data)
+            self.parse(parser, &data, file_name(&found.path))
         };
         self.send(Op::Book {
             container: ContainerRef::File(file_record(found, Some(hash.clone()))),
@@ -579,7 +588,7 @@ impl Run<'_> {
                     let _book =
                         tracing::info_span!("book", path = %format!("{}/{}", archive.path, entry.path))
                             .entered();
-                    self.parse(parser, &data)
+                    self.parse(parser, &data, file_name(&entry.path))
                 }
                 Err(error) if is_transient(&error) => {
                     tracing::warn!(
@@ -607,11 +616,17 @@ impl Run<'_> {
         complete
     }
 
-    /// Parses metadata, turning errors and panics into [`Outcome::Failed`].
-    fn parse(&self, parser: &dyn BookParser, data: &[u8]) -> Outcome {
+    /// Parses metadata, turning errors and panics into [`Outcome::Failed`] and files
+    /// that are not books into [`Outcome::NotABook`].
+    fn parse(&self, parser: &dyn BookParser, data: &[u8], name: &str) -> Outcome {
         self.parsed.fetch_add(1, Ordering::Relaxed);
-        match catch_unwind(AssertUnwindSafe(|| parser.parse_metadata(data))) {
+        match catch_unwind(AssertUnwindSafe(|| parser.parse_metadata_named(data, name))) {
             Ok(Ok(metadata)) => Outcome::Parsed(Box::new(metadata)),
+            Ok(Err(error)) if error.is_not_a_book() => {
+                tracing::debug!("not a book: {}", error.message);
+                self.not_books.fetch_add(1, Ordering::Relaxed);
+                Outcome::NotABook
+            }
             Ok(Err(error)) => Outcome::Failed(error.message),
             Err(panic) => {
                 let message = panic
@@ -660,9 +675,14 @@ fn file_record(found: &Found, content_hash: Option<Vec<u8>>) -> ContainerRecord 
     }
 }
 
+/// The last component of a library path (`/`-separated, an archive entry may use `\\`).
+fn file_name(path: &str) -> &str {
+    path.rsplit(['/', '\\']).next().unwrap_or(path)
+}
+
 /// The title used when a book has none: its file name without the extension.
 fn fallback_title(path: &str) -> String {
-    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    let name = file_name(path);
     match name.rsplit_once('.') {
         Some((stem, _)) if !stem.is_empty() => stem.to_owned(),
         _ => name.to_owned(),
@@ -681,6 +701,13 @@ mod tests {
         assert_eq!(chunk_size(200_000, 4), 12_500);
         assert_eq!(200_000usize.div_ceil(chunk_size(200_000, 4)), 16);
         assert_eq!(chunk_size(1_000, 0), 250, "0 threads count as 1");
+    }
+
+    #[test]
+    fn file_names() {
+        assert_eq!(file_name("a/b/readme.txt"), "readme.txt");
+        assert_eq!(file_name("dir\\Автор - Книга.txt"), "Автор - Книга.txt");
+        assert_eq!(file_name("book.txt"), "book.txt");
     }
 
     #[test]

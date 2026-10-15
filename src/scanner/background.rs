@@ -20,6 +20,7 @@ use super::{ProgressSnapshot, ScanError, ScanProgress, ScanSummary, Scanner};
 pub struct BackgroundScan {
     library: Library,
     exclude: Vec<String>,
+    registry: Arc<Registry>,
     progress: Arc<ScanProgress>,
     cancel: Arc<AtomicBool>,
     thread: Mutex<Option<JoinHandle<()>>>,
@@ -38,18 +39,29 @@ impl std::fmt::Debug for AfterScan {
 }
 
 impl BackgroundScan {
-    /// Creates the controller for `library` with the `[scan].exclude` patterns; nothing
-    /// runs until [`BackgroundScan::start`].
+    /// Creates the controller for `library` with the `[scan].exclude` patterns and the
+    /// [default formats](crate::format::DEFAULT_FORMATS); nothing runs until
+    /// [`BackgroundScan::start`].
     pub fn new(library: Library, exclude: Vec<String>) -> Self {
         Self {
             library,
             exclude,
+            registry: Arc::new(
+                Registry::with_formats(crate::format::DEFAULT_FORMATS)
+                    .expect("default formats are known"),
+            ),
             progress: Arc::new(ScanProgress::default()),
             cancel: Arc::new(AtomicBool::new(false)),
             thread: Mutex::new(None),
             last: Arc::new(Mutex::new(None)),
             after_complete: None,
         }
+    }
+
+    /// Indexes the formats of `registry` (`[scan].formats`) instead of the defaults.
+    pub fn with_registry(mut self, registry: Registry) -> Self {
+        self.registry = Arc::new(registry);
+        self
     }
 
     /// Sets a hook that runs on the scan thread after every scan that completed without
@@ -71,6 +83,7 @@ impl BackgroundScan {
         }
         let library = self.library.clone();
         let exclude = self.exclude.clone();
+        let registry = Arc::clone(&self.registry);
         let progress = Arc::clone(&self.progress);
         let cancel = Arc::clone(&self.cancel);
         let last = Arc::clone(&self.last);
@@ -79,20 +92,21 @@ impl BackgroundScan {
             .name("scan".to_owned())
             .spawn(move || {
                 tracing::info!("scanning {}", library.root().display());
-                let result = run(&library, &exclude, &progress, &cancel);
+                let result = run(&library, &exclude, &registry, &progress, &cancel);
                 match &result {
                     Ok(summary) if summary.cancelled => {
                         tracing::info!("scan cancelled; changes found so far are saved");
                     }
                     Ok(summary) => tracing::info!(
                         "scan finished: {} added, {} updated, {} moved, {} removed, \
-                         {} unchanged, {} errors",
+                         {} unchanged, {} errors, {} not books",
                         summary.added,
                         summary.updated,
                         summary.moved,
                         summary.removed,
                         summary.unchanged,
-                        summary.errors
+                        summary.errors,
+                        summary.not_books
                     ),
                     Err(e) => tracing::error!("scan failed: {e}"),
                 }
@@ -162,15 +176,15 @@ fn run_after_complete(result: &Result<ScanSummary, ScanError>, hook: Option<&Aft
 fn run(
     library: &Library,
     exclude: &[String],
+    registry: &Registry,
     progress: &ScanProgress,
     cancel: &AtomicBool,
 ) -> Result<ScanSummary, ScanError> {
     let mut conn = open_writer(&library.db_path())?;
-    let registry = Registry::with_builtin_formats();
     Scanner {
         library,
         exclude,
-        registry: &registry,
+        registry,
         limits: ReadLimits::default(),
         threads: 0,
         progress,

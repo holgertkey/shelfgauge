@@ -178,7 +178,14 @@ fn first_scan_and_rescan_without_changes() {
     lib.write(".shelfgauge/ignored.fb2", &fb2("Скрытая", "Никто"));
     lib.write("notes.txt", b"not a book");
 
-    assert_eq!(lib.scan(), summary(4, 0, 0, 0, 0, 4));
+    // The two text files are read, but they are not books.
+    assert_eq!(
+        lib.scan(),
+        ScanSummary {
+            not_books: 2,
+            ..summary(4, 0, 0, 0, 0, 6)
+        }
+    );
     assert_eq!(lib.live_titles(), ["Два", "Один", "Три", "Четыре"]);
     let id = lib.id_of("Три");
     assert_eq!(lib.path_of(id), "c.zip::x/three.fb2");
@@ -655,4 +662,199 @@ fn archives_are_listed_again_when_formats_are_added() {
         summary(0, 0, 0, 0, 2, 0),
         "listed once, then unchanged"
     );
+}
+
+/// A `.note` format for scanner tests: a file starting with `skip` is not a book, any
+/// other file is a book titled with its first line.
+struct NoteParser;
+
+impl shelfgauge::format::BookParser for NoteParser {
+    fn format(&self) -> &'static str {
+        "note"
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["note"]
+    }
+
+    fn parse_metadata(
+        &self,
+        data: &[u8],
+    ) -> Result<shelfgauge::format::model::BookMetadata, shelfgauge::format::ParseError> {
+        let text = String::from_utf8_lossy(data);
+        if text.starts_with("skip") {
+            return Err(shelfgauge::format::ParseError::not_a_book("a note"));
+        }
+        Ok(shelfgauge::format::model::BookMetadata {
+            title: text.lines().next().unwrap_or_default().to_owned(),
+            ..Default::default()
+        })
+    }
+
+    fn parse_content(
+        &self,
+        _: &[u8],
+    ) -> Result<shelfgauge::format::model::BookContent, shelfgauge::format::ParseError> {
+        Err(shelfgauge::format::ParseError::new("not needed"))
+    }
+}
+
+fn notes_registry() -> Registry {
+    let mut registry = Registry::with_builtin_formats();
+    registry.register(Box::new(NoteParser));
+    registry
+}
+
+#[test]
+fn files_that_are_not_books_are_skipped_silently() {
+    let mut lib = TestLibrary::new();
+    let registry = notes_registry();
+    lib.write("a/readme.note", b"skip me");
+    lib.write("a/book.note", b"A Book");
+    lib.zip(
+        "pack.zip",
+        &[
+            ("x.note", b"skip too".to_vec()),
+            ("y.note", b"Zipped".to_vec()),
+        ],
+    );
+    let s = lib.scan_registry(&registry, &[], false);
+    assert_eq!(
+        (s.added, s.parsed, s.errors, s.not_books),
+        (2, 4, 0, 2),
+        "{s:?}"
+    );
+    assert_eq!(lib.live_titles(), ["A Book", "Zipped"]);
+    assert_eq!(
+        lib.books().len(),
+        2,
+        "nothing recorded for the skipped files"
+    );
+
+    let s = lib.scan_registry(&registry, &[], false);
+    assert_eq!(s, summary(0, 0, 0, 0, 2, 0), "the rescan stays silent");
+}
+
+#[test]
+fn a_book_that_becomes_not_a_book_is_removed_and_back() {
+    let mut lib = TestLibrary::new();
+    let registry = notes_registry();
+    lib.write("book.note", b"Once a book");
+    lib.zip("pack.zip", &[("in.note", b"Zipped book".to_vec())]);
+    lib.scan_registry(&registry, &[], false);
+    let id = lib.id_of("Once a book");
+
+    lib.write("book.note", b"skip now");
+    lib.set_mtime("book.note", 1_000_000);
+    lib.zip("pack.zip", &[("in.note", b"skip as well".to_vec())]);
+    lib.set_mtime("pack.zip", 1_000_000);
+    let s = lib.scan_registry(&registry, &[], false);
+    assert_eq!((s.removed, s.not_books, s.errors), (2, 2, 0), "{s:?}");
+    assert!(lib.live_titles().is_empty());
+    assert_eq!(
+        lib.scan_registry(&registry, &[], false),
+        summary(0, 0, 0, 0, 0, 0)
+    );
+
+    lib.write("book.note", b"A book again");
+    lib.set_mtime("book.note", 2_000_000);
+    let s = lib.scan_registry(&registry, &[], false);
+    assert_eq!((s.added, s.not_books), (1, 0), "{s:?}");
+    assert_eq!(lib.live_titles(), ["A book again"]);
+    assert_ne!(
+        lib.id_of("A book again"),
+        id,
+        "a removed book is not revived"
+    );
+}
+
+/// A zip of `(name, data)` entries in memory.
+fn zipped(entries: &[(&str, Vec<u8>)]) -> Vec<u8> {
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for (name, data) in entries {
+        writer
+            .start_file(*name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(data).unwrap();
+    }
+    writer.finish().unwrap().into_inner()
+}
+
+#[test]
+fn zipped_fb2_books() {
+    let mut lib = TestLibrary::new();
+    lib.write("plain.fbz", &zipped(&[("book.fb2", fb2("Сжатая", "А"))]));
+    lib.write(
+        "really-zip.fb2",
+        &zipped(&[("x.fb2", fb2("Тайный архив", "Б"))]),
+    );
+    lib.write("empty.fbz", &zipped(&[("notes.txt", b"no book".to_vec())]));
+    lib.zip(
+        "pack.zip",
+        &[("inner.FBZ", zipped(&[("in.fb2", fb2("Внутри", "В"))]))],
+    );
+    let s = lib.scan();
+    assert_eq!((s.added, s.errors), (4, 1), "{s:?}");
+    assert_eq!(
+        lib.live_titles(),
+        ["empty", "Внутри", "Сжатая", "Тайный архив"]
+    );
+    let broken = lib
+        .books()
+        .into_iter()
+        .find(|(_, title, _)| title == "empty")
+        .unwrap();
+    assert_eq!(broken.2, BookStatus::Error);
+    let details = book_by_id(&lib.conn, lib.id_of("Внутри")).unwrap().unwrap();
+    assert_eq!(details.format, "fb2");
+    assert_eq!(lib.path_of(details.id), "pack.zip::inner.FBZ");
+}
+
+#[test]
+fn text_books_take_title_and_author_from_the_name() {
+    let mut lib = TestLibrary::new();
+    let book = common::txt_libru();
+    let (cp1251, _, _) = encoding_rs::WINDOWS_1251.encode(&book);
+    lib.write("ru/Пушкин - Дубровский.txt", &cp1251);
+    lib.write("ru/readme.txt", book.as_bytes());
+    lib.zip(
+        "mixed.zip",
+        &[
+            ("a.fb2", fb2("Из архива", "Г")),
+            ("b.epub", common::epub3()),
+            ("Austen - Pride.txt", common::txt_gutenberg().into_bytes()),
+            ("note.txt", b"too short".to_vec()),
+        ],
+    );
+    let s = lib.scan();
+    assert_eq!((s.added, s.errors, s.not_books), (4, 0, 2), "{s:?}");
+    let id = lib.id_of("Дубровский");
+    let details = book_by_id(&lib.conn, id).unwrap().unwrap();
+    assert_eq!(details.format, "txt");
+    assert_eq!(details.authors.len(), 1);
+    assert_eq!(details.language, None);
+    assert!(lib.live_titles().contains(&"Pride".to_owned()));
+}
+
+#[test]
+fn formats_taken_off_the_list_are_removed_and_come_back() {
+    let mut lib = TestLibrary::new();
+    lib.write("a.fb2", &fb2("Книга", "А"));
+    lib.write("Автор - Текст.txt", common::txt_libru().as_bytes());
+    lib.zip(
+        "pack.zip",
+        &[("in.txt", common::txt_gutenberg().into_bytes())],
+    );
+    let all = Registry::with_formats(&["fb2", "epub", "txt"]).unwrap();
+    let no_txt = Registry::with_formats(&["fb2", "epub"]).unwrap();
+    assert_eq!(lib.scan_registry(&all, &[], false).added, 3);
+    let text_id = lib.id_of("Текст");
+
+    let s = lib.scan_registry(&no_txt, &[], false);
+    assert_eq!((s.removed, s.unchanged), (2, 1), "{s:?}");
+    assert_eq!(lib.live_titles(), ["Книга"]);
+
+    let s = lib.scan_registry(&all, &[], false);
+    assert_eq!((s.moved, s.added, s.unchanged), (2, 0, 1), "{s:?}");
+    assert_eq!(lib.id_of("Текст"), text_id, "the same book comes back");
 }
