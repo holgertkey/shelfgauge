@@ -38,9 +38,9 @@ Build numbers (`+NNN`) do not get their own sections.
   while scrolling) instead of every entry of the current part.
 - The Quote button on a text selection uses the accent color.
 - A book without a table of contents has no Contents tab.
-- The reader's sidebar tabs are a bit smaller, so four fit in a row with `‹ ›`
-  buttons that page through the open tab (like Page Up / Page Down); the tab row stays
-  at the top while the sidebar scrolls.
+- The reader's sidebar tabs are a bit smaller, so four fit in a row. The book link and
+  the tabs stay at the top while the sidebar scrolls, and `‹ ›` buttons next to the
+  book link page through the open tab (like Page Up / Page Down).
 - In reading mode the top bar's search field searches the open book (on library pages
   it searches the library as before).
 

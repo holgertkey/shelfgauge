@@ -275,7 +275,7 @@
     drawBookmarks();
   }
 
-  // The tab row's ‹ › buttons page through the open tab (the sidebar scrolls) like
+  // The ‹ › buttons next to the book link page through the open tab (the sidebar scrolls) like
   // Page Up / Page Down; each is disabled at its end.
   let syncPager = () => {};
 
@@ -295,7 +295,7 @@
       if (button) {
         // The visible part below the sticky tab row, less a little overlap, like the
         // browser's Page Down.
-        const row = pager.closest(".reader-tabs").getBoundingClientRect().height;
+        const row = pager.closest(".sidebar-head").getBoundingClientRect().height;
         const page = Math.max(sidebar.clientHeight - row - 40, 40);
         sidebar.scrollBy({ top: Number(button.dataset.page) * page, behavior: "smooth" });
       }

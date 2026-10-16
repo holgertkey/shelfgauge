@@ -32,7 +32,15 @@
   </button>
 {%- endblock %}
 {% block sidebar %}
-<p class="toc-book"><a href="{{ card_href }}">‹ {{ book_title }}</a></p>
+{#- The book link with the pager and the tabs; reader.js keeps it at the top. #}
+<div class="sidebar-head">
+<div class="toc-book"><a href="{{ card_href }}">‹ {{ book_title }}</a>
+  {#- reader.js: page through the open tab like Page Up / Page Down. #}
+  <span class="tab-pager" hidden lang="en">
+    <button type="button" class="icon-button" data-page="-1" title="Page up" aria-label="Page up">‹</button>
+    <button type="button" class="icon-button" data-page="1" title="Page down" aria-label="Page down">›</button>
+  </span>
+</div>
 <nav class="reader-tabs" aria-label="Sidebar" lang="en">
   {%- if !toc.is_empty() %}
   <a href="#tab-toc" data-tab="toc">Contents</a>
@@ -41,12 +49,8 @@
   <a href="#tab-marks" data-tab="marks">Quotes</a>
   {#- Only while there is a query (reader.js shows it for the live search). #}
   <a href="#tab-find" data-tab="find"{% if find.results.is_none() %} hidden{% endif %}>Search</a>
-  {#- reader.js: page through the open tab like Page Up / Page Down. #}
-  <span class="tab-pager" hidden>
-    <button type="button" class="icon-button" data-page="-1" title="Page up" aria-label="Page up">‹</button>
-    <button type="button" class="icon-button" data-page="1" title="Page down" aria-label="Page down">›</button>
-  </span>
 </nav>
+</div>
 {#- With results (no scripts: the form's answer) the Search panel comes first. #}
 {%- if find.results.is_some() %}
 {% include "partials/find_panel.html" %}

@@ -1,7 +1,7 @@
 /* shelfgauge reader: sidebar tabs, bookmark and mark lists, highlights, the mark
    popup. Loaded on read pages only. */
 
-/* Four tabs and the pager fit the default sidebar; a narrower one wraps them. */
+/* Four tabs fit a narrow sidebar; a still narrower one wraps them. */
 .reader-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -9,33 +9,56 @@
   border-bottom: 1px solid var(--border);
 }
 
-/* With reader.js the tab row (and its pager) stays at the top of the scrolling
-   sidebar. */
-.tabbed .reader-tabs {
+/* With reader.js the book link, the pager and the tabs stay at the top of the
+   scrolling sidebar. */
+.tabbed .sidebar-head {
   position: sticky;
   top: -0.75rem;
   z-index: 1;
-  margin: 0 -0.5rem 0.75rem -0.75rem;
-  padding: 0 0.5rem 0 0.75rem;
+  margin: -0.75rem -0.5rem 0.75rem -0.75rem;
+  padding: 0.75rem 0.5rem 0 0.75rem;
   background: var(--sidebar-bg);
 }
 
+.tabbed .sidebar-head .reader-tabs {
+  margin-bottom: 0;
+}
+
+.toc-book {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.toc-book > a {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .reader-tabs a {
-  padding: 0.3rem 0.2rem;
-  font-size: 0.85rem;
+  padding: 0.3rem 0.35rem;
+  font-size: 0.9rem;
   color: var(--muted);
   border-bottom: 2px solid transparent;
 }
 
-/* Page up / page down for the open tab, at the end of the tab row. */
+/* Page up / page down for the open tab, next to the book link. */
 .tab-pager {
   display: flex;
+  flex: none;
   align-items: center;
-  margin-left: auto;
+  font-weight: 400;
+}
+
+.tab-pager[hidden] {
+  display: none;
 }
 
 .tab-pager .icon-button {
-  width: 1rem;
+  width: 1.5rem;
   height: 1.6rem;
   padding: 0;
   font-size: 1.15rem;

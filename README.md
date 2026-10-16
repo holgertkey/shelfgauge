@@ -127,8 +127,9 @@ again at the next scan.
   and closes the tab. Following a result does not move your reading position. The
   library search (on library pages) covers titles, authors, series and descriptions,
   not the books' text.
-- While reading, the sidebar's tab row stays at its top; its `‹` `›` buttons page
-  through the open tab (contents, bookmarks, quotes or search results).
+- While reading, the book link and the tabs stay at the top of the sidebar; the `‹` `›`
+  buttons next to the book link page through the open tab (contents, bookmarks, quotes
+  or search results).
 - Keys: `/` or `s` search, `t` next theme, `m` sidebar mode, `Esc` leave the search
   field; while reading, `/` or `s` search in the book, `n` / `Shift+N` next / previous
   result, `←`/`→` previous/next part, `b` bookmark, `f` focus mode, `-`/`+`
