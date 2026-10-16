@@ -16,6 +16,7 @@
 //! [`render_part`]: crate::render::html::render_part
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use crate::format::model::{Block, BlockId, BlockKind, BodyKind, BookContent, Inline, Section};
 
@@ -180,6 +181,8 @@ pub struct BookText {
     main_before: HashMap<BlockId, u64>,
     main_total: u64,
     last_main: Option<BlockId>,
+    /// The normalized text for searching, built on the first search.
+    find_index: OnceLock<super::find::BookIndex>,
 }
 
 impl BookText {
@@ -193,6 +196,7 @@ impl BookText {
             main_before: HashMap::new(),
             main_total: 0,
             last_main: None,
+            find_index: OnceLock::new(),
         };
         for body in content.bodies() {
             let notes = body.kind == BodyKind::Notes;
@@ -390,6 +394,18 @@ impl BookText {
     /// The last leaf block of the main text.
     pub fn last_main_block(&self) -> Option<BlockId> {
         self.last_main
+    }
+
+    /// The index of the innermost titled section around block `id`: blocks of the same
+    /// section have the same index (unlike titles, which may repeat).
+    pub(crate) fn section_index(&self, id: BlockId) -> Option<usize> {
+        self.info(id)?.section
+    }
+
+    /// The normalized text that [`find`](super::find::find) searches.
+    pub(super) fn find_index(&self) -> &super::find::BookIndex {
+        self.find_index
+            .get_or_init(|| super::find::BookIndex::new(self))
     }
 }
 

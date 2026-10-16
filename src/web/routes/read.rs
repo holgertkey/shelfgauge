@@ -7,6 +7,7 @@ use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Redirect, Response};
 
 use super::annotations::{Lists, book_annotations};
+use super::find::FindResults;
 use super::{Params, parse_id, render};
 use crate::annotations::attach;
 use crate::annotations::text::BookText;
@@ -136,6 +137,20 @@ struct ReadPage {
     position_href: String,
     max_text: u32,
     max_note: u32,
+    /// The Search tab.
+    find: FindPanel,
+}
+
+/// The Search tab: its form and, with a `find` parameter, the results.
+struct FindPanel {
+    /// The form's target: the read page (the part goes in a hidden field).
+    action: String,
+    /// The live search's URL, without the query.
+    href: String,
+    /// The current 1-based part.
+    part: usize,
+    query: String,
+    results: Option<FindResults>,
 }
 
 /// The book's language as an HTML `lang` value: a BCP 47 tag such as `ru` or `en-GB`
@@ -188,7 +203,7 @@ pub(crate) async fn read(
     }
 }
 
-async fn book(state: &AppState, id: i64) -> Result<BookDetails, AppError> {
+pub(super) async fn book(state: &AppState, id: i64) -> Result<BookDetails, AppError> {
     let book = state
         .db(move |conn| book_by_id(conn, id)?.ok_or(AppError::NotFound))
         .await?;
@@ -199,7 +214,7 @@ async fn book(state: &AppState, id: i64) -> Result<BookDetails, AppError> {
 }
 
 fn page(state: &AppState, book: &BookDetails, params: &Params) -> Result<Outcome, AppError> {
-    let content = state.content(book)?;
+    let (content, text) = state.book_text(book)?;
     let parts = split(&content, state.reader());
     let urls = state.urls();
     let links = Links {
@@ -214,7 +229,7 @@ fn page(state: &AppState, book: &BookDetails, params: &Params) -> Result<Outcome
             .ok()
             .filter(|&share| share <= SCALE)
             .ok_or(AppError::NotFound)?;
-        let block = BookText::new(&content)
+        let block = text
             .block_at_share(share, SCALE)
             .ok_or(AppError::NotFound)?;
         let part = part_of(&parts, block).ok_or(AppError::NotFound)?;
@@ -261,7 +276,6 @@ fn page(state: &AppState, book: &BookDetails, params: &Params) -> Result<Outcome
     } else {
         book.title.clone()
     };
-    let text = BookText::new(&content);
     let progress = PartProgress::of(&text, &parts, index);
     Ok(Outcome::Page(Box::new(ReadPage {
         layout: Layout::new(state, title, SidebarView::default())
@@ -287,6 +301,20 @@ fn page(state: &AppState, book: &BookDetails, params: &Params) -> Result<Outcome
         },
         max_text: state.annotations().max_text_length,
         max_note: state.annotations().max_note_length,
+        find: FindPanel {
+            action: urls.read(book.id, 1),
+            href: urls.find(book.id, ""),
+            part: index + 1,
+            results: params
+                .find
+                .as_deref()
+                .filter(|query| !query.trim().is_empty())
+                .map(|query| {
+                    let hit = params.hit.as_deref().and_then(|hit| hit.parse().ok());
+                    FindResults::new(urls, book.id, &parts, &text, query, hit)
+                }),
+            query: params.find.clone().unwrap_or_default(),
+        },
     })))
 }
 

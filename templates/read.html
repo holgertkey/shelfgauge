@@ -9,6 +9,8 @@
 <meta name="author" content="{{ book_authors }}">
 {%- endif %}
 {%- endblock %}
+{#- `/` searches in the book here. #}
+{% block search_title %}Search the library (s){% endblock %}
 {% block topbar %}
   <button type="button" class="icon-button bookmark-button" title="Bookmark the place at the top of the page (b)" aria-label="Bookmark this place" hidden>
     <svg class="icon" aria-hidden="true"><use href="#i-bookmark"></use></svg>
@@ -28,7 +30,12 @@
   {%- endif %}
   <a href="#tab-bookmarks" data-tab="bookmarks">Bookmarks</a>
   <a href="#tab-marks" data-tab="marks">Quotes</a>
+  <a href="#tab-find" data-tab="find" title="Search in this book (/)">Search</a>
 </nav>
+{#- With results (no scripts: the form's answer) the Search panel comes first. #}
+{%- if find.results.is_some() %}
+{% include "partials/find_panel.html" %}
+{%- endif %}
 {#- A book without contents has no Contents tab. #}
 {%- if !toc.is_empty() %}
 <section class="tab-panel" id="tab-toc" data-tab="toc" aria-label="Contents">
@@ -36,6 +43,9 @@
 </section>
 {%- endif %}
 {% include "partials/annotation_lists.html" %}
+{%- if find.results.is_none() %}
+{% include "partials/find_panel.html" %}
+{%- endif %}
 {% endblock %}
 {% block main %}
 <article class="reader" data-annotations="{{ annotations_href }}" data-position="{{ position_href }}" data-max-text="{{ max_text }}" data-max-note="{{ max_note }}"

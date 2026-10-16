@@ -17,6 +17,7 @@ use crate::storage::folders::FolderPath;
 
 pub(crate) mod annotations;
 pub(crate) mod book;
+pub(crate) mod find;
 pub(crate) mod library;
 pub(crate) mod read;
 pub(crate) mod scan;
@@ -47,6 +48,10 @@ pub(crate) struct Params {
     /// `mark` when the page is opened from a bookmark or mark (reading mode): the
     /// reading position is not saved for this page view.
     from: Option<String>,
+    /// A query to search the book for (reading mode).
+    find: Option<String>,
+    /// The 1-based number of the search result followed (reading mode).
+    hit: Option<String>,
 }
 
 impl Params {

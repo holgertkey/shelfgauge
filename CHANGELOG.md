@@ -8,8 +8,19 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-16
+
 ### Added
 
+- Search within the open book: a **Search** tab in the reader's sidebar (`/` opens it)
+  finds a word or phrase anywhere in the book as you type, ignoring case, `ё`/`е`, soft
+  hyphens and line breaks. Results are grouped by chapter (notes as "Notes"), show the
+  text around each match and lead to the place, where the matches on the page are
+  highlighted; `n` / `Shift+N` go to the next or previous result across parts, `Esc`
+  leaves the search field and then clears the search. At most 500 results are listed, all are counted. Following a
+  result does not move the reading position. Works without JavaScript too (the form
+  opens the read page with the results). Full-text search across the library is not
+  planned.
 - `shelfgauge errors [PATH]` lists the books that could not be read at the last scan,
   one `path: reason` line per book.
 - `--trace` as the long form of `-vv` (trace logging).
@@ -24,6 +35,8 @@ Build numbers (`+NNN`) do not get their own sections.
 - Contents marks only the current section (the one at the top of the screen, followed
   while scrolling) instead of every entry of the current part.
 - The Quote button on a text selection uses the accent color.
+- A book without a table of contents has no Contents tab.
+- The reader's sidebar tabs are a bit smaller, so four fit in a row.
 
 ### Fixed
 

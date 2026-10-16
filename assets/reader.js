@@ -225,7 +225,7 @@
 
   const sidebar = document.getElementById("sidebar");
 
-  function showTab(name) {
+  function showTab(name, remember = true) {
     if (!sidebar) {
       return;
     }
@@ -244,7 +244,7 @@
       tab.classList.toggle("active", active);
       tab.setAttribute("aria-current", active ? "true" : "false");
     }
-    if (known) {
+    if (known && remember) {
       storageSet(TAB_KEY, name);
     }
   }
@@ -261,10 +261,12 @@
     const template = document.createElement("template");
     template.innerHTML = (await response.text()).trim();
     const replacement = template.content.firstElementChild;
+    const active = sidebar.querySelector(".reader-tabs a.active");
     if (replacement) {
       lists.replaceWith(replacement);
     }
-    showTab(storageGet(TAB_KEY) || "toc");
+    // The replaced panels lost their state: show the same tab again.
+    showTab(active ? active.dataset.tab : storageGet(TAB_KEY) || "toc", false);
     highlight();
     drawBookmarks();
   }
@@ -383,7 +385,7 @@
 
   // Without the Custom Highlight API: wrap the text nodes of a range in <mark>
   // (textContent and the offsets stay the same).
-  function wrapRange(range) {
+  function wrapRange(range, className = "sg-mark") {
     const walker = document.createTreeWalker(range.commonAncestorContainer, NodeFilter.SHOW_TEXT);
     const nodes = [];
     for (let node = walker.currentNode; node; node = walker.nextNode()) {
@@ -404,7 +406,7 @@
         node = node.splitText(start);
       }
       const mark = document.createElement("mark");
-      mark.className = "sg-mark";
+      mark.className = className;
       node.replaceWith(mark);
       mark.append(node);
     }
@@ -677,9 +679,11 @@
 
   // ---------- Reading position ----------
 
-  // A page opened from a bookmark or quote (`from=mark`) never saves the position;
-  // prev/next links do not carry it, so reading on resumes saving.
-  let suspended = new URLSearchParams(window.location.search).get("from") === "mark";
+  // A page opened from a bookmark or quote (`from=mark`) or from a search result
+  // (`hit=`) never saves the position; prev/next links do not carry them, so reading
+  // on resumes saving.
+  const opened = new URLSearchParams(window.location.search);
+  let suspended = opened.get("from") === "mark" || opened.has("hit");
   let candidate = null;
   let since = 0;
   let lastSaved = null;
@@ -778,6 +782,385 @@
           }
         });
       }
+    }
+  }
+
+  // ---------- Search in the book ----------
+
+  // The server searches the whole book (`/book/{id}/find?q=`) and lists the results
+  // in the Search tab; each links to `read?part=<n>&find=<query>&hit=<k>#<block>`.
+  // Here the matches of the query in this part are highlighted, with the same
+  // normalization as the server (src/annotations/find.rs; both are tested with
+  // tests/fixtures/find/normalize.json): one code point at a time lowercased, ё → е,
+  // ς → σ, ’ and ʼ → ', soft hyphens and zero-width characters dropped, whitespace
+  // runs → one space. Offsets count code points, like anchors.
+  const FIND_DEBOUNCE_MS = 250;
+  const FIND_MIN = 2;
+  const FIND_MAX = 100;
+  const FIND_MAX_RAW = 1000;
+
+  function findDropped(c) {
+    return c === 0xad || (c >= 0x200b && c <= 0x200d) || c === 0x2060 || c === 0xfeff;
+  }
+
+  // The same explicit list as the server (JavaScript's `\s` differs from Rust's).
+  function findSpace(c) {
+    return (
+      (c >= 0x09 && c <= 0x0d) ||
+      c === 0x20 ||
+      c === 0xa0 ||
+      c === 0x1680 ||
+      (c >= 0x2000 && c <= 0x200a) ||
+      c === 0x2028 ||
+      c === 0x2029 ||
+      c === 0x202f ||
+      c === 0x205f ||
+      c === 0x3000
+    );
+  }
+
+  // The normalized text, and for each of its UTF-16 units the original code point
+  // range it comes from.
+  function findNormalize(s) {
+    let out = "";
+    const starts = [];
+    const ends = [];
+    let inSpace = false;
+    let i = 0;
+    for (const ch of s) {
+      const c = ch.codePointAt(0);
+      if (findDropped(c)) {
+        i += 1;
+        continue;
+      }
+      if (findSpace(c)) {
+        if (inSpace) {
+          ends[ends.length - 1] = i + 1;
+        } else {
+          out += " ";
+          starts.push(i);
+          ends.push(i + 1);
+          inSpace = true;
+        }
+        i += 1;
+        continue;
+      }
+      inSpace = false;
+      let lower = "";
+      if (c === 0x2019 || c === 0x2bc) {
+        lower = "'";
+      } else if (c < 0x80) {
+        lower = ch.toLowerCase();
+      } else {
+        // One code point at a time: no context rules (final sigma).
+        for (const l of ch.toLowerCase()) {
+          lower += l === "ё" ? "е" : l === "ς" ? "σ" : l;
+        }
+      }
+      for (let k = 0; k < lower.length; k += 1) {
+        starts.push(i);
+        ends.push(i + 1);
+      }
+      out += lower;
+      i += 1;
+    }
+    return { text: out, starts, ends };
+  }
+
+  // The normalized, trimmed query, or null if it is not searched.
+  function findQuery(raw) {
+    if (cpLength(raw) > FIND_MAX_RAW) {
+      return null;
+    }
+    const query = findNormalize(raw).text.replace(/^ +| +$/g, "");
+    const length = cpLength(query);
+    return length >= FIND_MIN && length <= FIND_MAX ? query : null;
+  }
+
+  // The code point ranges of the matches of `query` (normalized) in `s`: left to
+  // right, without overlaps.
+  function findMatches(s, query) {
+    const n = findNormalize(s);
+    const hits = [];
+    let from = 0;
+    for (;;) {
+      const at = n.text.indexOf(query, from);
+      if (at < 0) {
+        break;
+      }
+      hits.push([n.starts[at], n.ends[at + query.length - 1]]);
+      from = at + query.length;
+    }
+    return hits;
+  }
+
+  // For the browser test of the shared table.
+  window.shelfgaugeFind = {
+    normalize: (s) => findNormalize(s).text,
+    query: findQuery,
+    matches: findMatches,
+  };
+
+  const findForm = sidebar && sidebar.querySelector(".find-form");
+  const findInput = findForm && findForm.querySelector(".find-input");
+  // The query whose matches are highlighted ("" for none).
+  let findShown = "";
+
+  function clearFindMarks() {
+    for (const mark of text.querySelectorAll("mark.sg-find")) {
+      mark.replaceWith(...mark.childNodes);
+    }
+    text.normalize();
+  }
+
+  // The result followed to this page: its list item, if it is in this part.
+  function currentFindItem() {
+    return sidebar ? sidebar.querySelector(".find-hits li.current") : null;
+  }
+
+  // Highlights the matches of `raw` in this part; the followed result stronger.
+  function highlightFind(raw) {
+    const query = raw ? findQuery(raw) : null;
+    findShown = query ? raw : "";
+    if (!canHighlight) {
+      clearFindMarks();
+    }
+    const ranges = [];
+    let current = null;
+    if (query) {
+      const item = currentFindItem();
+      for (const leaf of leaves()) {
+        for (const [start, end] of findMatches(blockText(leaf), query)) {
+          const a = domPoint(leaf, start);
+          const b = domPoint(leaf, end);
+          const range = document.createRange();
+          range.setStart(a.node, a.offset);
+          range.setEnd(b.node, b.offset);
+          if (
+            item &&
+            !current &&
+            item.dataset.block === leaf.id &&
+            Number(item.dataset.start) === start
+          ) {
+            current = range;
+          } else {
+            ranges.push(range);
+          }
+        }
+      }
+    }
+    if (canHighlight) {
+      CSS.highlights.set("sg-find", new Highlight(...ranges));
+      CSS.highlights.set("sg-find-current", new Highlight(...(current ? [current] : [])));
+    } else {
+      // All ranges first, then wrap from the end so earlier ranges stay valid.
+      const all = ranges.map((range) => [range, "sg-find"]);
+      if (current) {
+        all.push([current, "sg-find current"]);
+      }
+      all.sort((x, y) => x[0].compareBoundaryPoints(Range.START_TO_START, y[0]));
+      for (const [range, className] of all.reverse()) {
+        wrapRange(range, className);
+      }
+    }
+  }
+
+  // The page URL with the query (none for an empty one) and without a followed result.
+  function setFindUrl(raw) {
+    const url = new URL(window.location.href);
+    if (raw.trim()) {
+      url.searchParams.set("find", raw);
+    } else {
+      url.searchParams.delete("find");
+    }
+    url.searchParams.delete("hit");
+    history.replaceState(history.state, "", url);
+  }
+
+  // Clears the search: field, results, highlights and URL. Whether there was one.
+  let clearFind = () => false;
+  // Goes to the next (1) or previous (-1) result; whether there was one.
+  let stepFind = () => false;
+
+  function setupFind() {
+    if (!findForm || !findInput) {
+      return;
+    }
+    const results = () => sidebar.querySelector(".find-results");
+    const steps = Array.from(findForm.querySelectorAll(".find-step"));
+    findForm.querySelector(".find-submit").hidden = true;
+    for (const button of steps) {
+      button.hidden = false;
+    }
+    let controller = null;
+    let timer = null;
+
+    function replaceResults(html) {
+      const template = document.createElement("template");
+      template.innerHTML = html.trim();
+      const replacement = template.content.firstElementChild;
+      if (replacement) {
+        results().replaceWith(replacement);
+      }
+      syncSteps();
+    }
+
+    function syncSteps() {
+      const any = Boolean(sidebar.querySelector(".find-hits li"));
+      for (const button of steps) {
+        button.disabled = !any;
+      }
+    }
+
+    async function search(raw) {
+      clearTimeout(timer);
+      if (controller) {
+        controller.abort();
+        controller = null;
+      }
+      setFindUrl(raw);
+      if (!raw.trim()) {
+        replaceResults('<div class="find-results"></div>');
+        highlightFind("");
+        return;
+      }
+      controller = new AbortController();
+      const url = `${findForm.dataset.href}?q=${encodeURIComponent(raw)}`;
+      try {
+        const response = await fetch(url, {
+          headers: { Accept: "text/html" },
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`${response.status}`);
+        }
+        replaceResults(await response.text());
+        highlightFind(raw);
+      } catch (e) {
+        if (e.name !== "AbortError") {
+          toast(`Could not search: ${e.message}`);
+        }
+      }
+    }
+
+    clearFind = () => {
+      if (!findShown && !findInput.value) {
+        return false;
+      }
+      findInput.value = "";
+      search("");
+      return true;
+    };
+
+    // Without a followed result: the first result after the top of the screen (or
+    // the last one before it).
+    function nextFrom(items, delta) {
+      const part = Number(findForm.dataset.part) || 1;
+      const top = topBlock();
+      const here = top ? Number(top.id.slice(1)) : 0;
+      const after = (item) => {
+        const p = Number(item.dataset.part);
+        const n = Number(item.dataset.block.slice(1));
+        return p > part || (p === part && n >= here);
+      };
+      if (delta > 0) {
+        return items.find(after) || null;
+      }
+      const before = items.filter((item) => !after(item));
+      return before[before.length - 1] || null;
+    }
+
+    stepFind = (delta) => {
+      const items = Array.from(sidebar.querySelectorAll(".find-hits li[data-hit]"));
+      if (!items.length) {
+        return false;
+      }
+      const current = items.indexOf(currentFindItem());
+      const target = current >= 0 ? items[current + delta] : nextFrom(items, delta);
+      if (!target) {
+        toast(delta > 0 ? "No more matches." : "This is the first match.");
+        return true;
+      }
+      window.location.href = target.querySelector("a").href;
+      return true;
+    };
+
+    findForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      search(findInput.value);
+    });
+    findInput.addEventListener("input", () => {
+      clearTimeout(timer);
+      const raw = findInput.value;
+      if (!raw.trim()) {
+        search("");
+      } else {
+        timer = setTimeout(() => search(raw), FIND_DEBOUNCE_MS);
+      }
+    });
+    // Esc in the field only leaves it (app.js blurs it), so that `n` works next; a
+    // second Esc clears the search. Chrome would clear a search field instead.
+    findInput.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+      }
+    });
+    findForm.addEventListener("click", (event) => {
+      const step = event.target.closest(".find-step");
+      if (step) {
+        stepFind(Number(step.dataset.step));
+      }
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) {
+        return;
+      }
+      const target = event.target;
+      const typing =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        (target instanceof HTMLElement && target.isContentEditable);
+      if (typing) {
+        return;
+      }
+      if (event.key === "/") {
+        // app.js leaves `/` alone once it is handled here.
+        event.preventDefault();
+        openFind();
+      } else if (event.key === "n" || event.key === "N") {
+        if (stepFind(event.key === "n" ? 1 : -1)) {
+          event.preventDefault();
+        }
+      }
+    });
+
+    // Opens the sidebar on the Search tab (leaving focus mode) and focuses the field.
+    function openFind() {
+      const toggle = document.querySelector(".sidebar-toggle");
+      const focusMode = document.documentElement.classList.contains("reading-focus");
+      if (toggle && (focusMode || toggle.getAttribute("aria-expanded") !== "true")) {
+        // In focus mode the click leaves it (see setupSettings).
+        toggle.click();
+      }
+      showTab("find");
+      findInput.focus();
+      findInput.select();
+    }
+
+    syncSteps();
+    const raw = opened.get("find") || "";
+    if (raw.trim()) {
+      showTab("find", false);
+      highlightFind(raw);
+      // After app.js has scrolled the sidebar to the current Contents entry.
+      document.addEventListener("DOMContentLoaded", () => {
+        const item = currentFindItem();
+        if (item) {
+          const offset = item.getBoundingClientRect().top - sidebar.getBoundingClientRect().top;
+          sidebar.scrollTop += offset - sidebar.clientHeight / 3;
+        }
+      });
     }
   }
 
@@ -982,12 +1365,13 @@
       switch (event.key) {
         case "Escape":
           // An open panel or mark popup closes first (the panel may already have
-          // closed itself on this key).
+          // closed itself on this key), then the search, then focus mode.
           if (
-            focused() &&
             !panelOpen() &&
             Date.now() - closedAt > 100 &&
-            !document.querySelector(".mark-popup")
+            !document.querySelector(".mark-popup") &&
+            !clearFind() &&
+            focused()
           ) {
             setFocus(false);
           }
@@ -1262,6 +1646,7 @@
   setupStatus();
   setupSettings();
   setupSidebar();
+  setupFind();
   setupContents();
   setupMarks();
   setupBookmarks();

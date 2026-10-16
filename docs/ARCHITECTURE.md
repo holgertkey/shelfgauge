@@ -2,7 +2,8 @@
 
 > Status: v1 implemented (scanner, storage, web server, library and reading mode,
 > hardening), annotations (0.6.0), reader settings (0.7.0), EPUB (0.8.0), plain text
-> and `.fbz` (0.9.0), HTML (0.10.0, opt-in). The V2 hub below is designed, not built.
+> and `.fbz` (0.9.0), HTML (0.10.0, opt-in), search within the book (0.11.0). The V2
+> hub below is designed, not built.
 
 `shelfgauge` is a single-binary Rust app that indexes a directory tree of ebook files (FB2
 (also `.fbz`), EPUB, TXT and opt-in HTML, plain files and `.zip` archives with any number of books inside) into a local SQLite DB
@@ -203,11 +204,28 @@ Key design points to keep in mind when implementing:
     share, so no short remainder is left; in `size` mode a part shorter than a quarter
     of `part_size` joins its neighbour.
     `?at=b<n>` redirects to the part URL with `#b<n>`.
+  - *Search within the book* (0.11.0): a fourth sidebar tab, **Search**. No index: the
+    query and the rendered text of every leaf block are normalized (lowercase one code
+    point at a time, `ё` → `е`, `ς` → `σ`, `’ʼ` → `'`, soft hyphens and zero-width
+    characters dropped, whitespace runs → one space; `src/annotations/find.rs`) and
+    matched as plain substrings, never across two blocks; a map leads back to the
+    original code points. The normalized text of the whole book is built on its first
+    search and kept in the book's `BookText`, which stays in memory with the parsed
+    book. At most 500 results are listed (all are counted), grouped by section (notes
+    as "Notes"), each a snippet linking to `read?part=<n>&find=<query>&hit=<k>#<block>`.
+    `GET /book/<id>/find?q=` returns the results as a fragment for the live search;
+    without scripts the form submits to the read page, which renders them. The reader
+    highlights the part's matches with the same rules (`assets/reader.js`; both sides
+    are tested with `tests/fixtures/find/normalize.json`), and a page reached from a
+    result does not move the reading position. Queries are not logged. Full-text
+    search across the library is out of scope: indexing every book's text would cost
+    far more than it gives.
   - Content comes from `.shelfgauge/content/` (keyed by the indexed content identity:
     a plain file's hash, a zip entry's size + CRC32), else the book is read, verified
     against that identity (a mismatch asks for a rescan) and parsed; loading, splitting
     and rendering run on a thread with the parser stack. A few parsed books are kept in
-    memory for part changes and images. Source-format anchors are resolved to block
+    memory for part changes and images, each with its rendered text (`BookText`,
+    built when first needed). Source-format anchors are resolved to block
     IDs and never emitted as HTML ids.
   - **Block IDs** are the block's ordinal in document order (`b1234`), counting every
     block (the exact rule is documented in `src/format/model.rs` and pinned by a golden

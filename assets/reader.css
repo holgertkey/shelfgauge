@@ -1,15 +1,17 @@
 /* shelfgauge reader: sidebar tabs, bookmark and mark lists, highlights, the mark
    popup. Loaded on read pages only. */
 
+/* Four tabs fit a narrow sidebar; a still narrower one wraps them. */
 .reader-tabs {
   display: flex;
-  gap: 0.25rem;
+  flex-wrap: wrap;
   margin: 0 0 0.75rem;
   border-bottom: 1px solid var(--border);
 }
 
 .reader-tabs a {
-  padding: 0.3rem 0.6rem;
+  padding: 0.3rem 0.35rem;
+  font-size: 0.9rem;
   color: var(--muted);
   border-bottom: 2px solid transparent;
 }
@@ -113,6 +115,109 @@ mark.sg-mark {
 
 :root {
   --mark-bg: rgb(255 212 0 / 0.35);
+}
+
+/* ---------- Search in the book ---------- */
+
+.find-form {
+  display: flex;
+  gap: 0.25rem;
+  align-items: center;
+  margin: 0 0 0.5rem;
+}
+
+.find-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.find-step {
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.find-count {
+  margin: 0.25rem 0 0.5rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.find-section {
+  margin: 0.75rem 0 0.25rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.find-hits {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.find-hits a {
+  display: block;
+  padding: 0.3rem;
+  color: var(--fg);
+  font-size: 0.9rem;
+  border-radius: 4px;
+}
+
+.find-hits a:hover {
+  text-decoration: none;
+  background: var(--hover);
+}
+
+.find-hits .current a {
+  background: var(--active-bg);
+}
+
+.find-hits mark {
+  color: inherit;
+  background-color: var(--find-bg);
+}
+
+/* Matches in the text: the CSS Custom Highlight API, or <mark> as a fallback. The
+   result followed to the page is stronger. */
+::highlight(sg-find) {
+  background-color: var(--find-bg);
+}
+
+::highlight(sg-find-current) {
+  background-color: var(--find-current-bg);
+}
+
+mark.sg-find {
+  color: inherit;
+  background-color: var(--find-bg);
+}
+
+mark.sg-find.current {
+  background-color: var(--find-current-bg);
+}
+
+:root {
+  --find-bg: rgb(0 140 255 / 0.22);
+  --find-current-bg: rgb(255 128 0 / 0.5);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --find-bg: rgb(80 160 255 / 0.32);
+    --find-current-bg: rgb(255 150 50 / 0.5);
+  }
+}
+
+:root[data-theme="dark"],
+:root[data-theme="navy"],
+:root[data-theme="black"] {
+  --find-bg: rgb(80 160 255 / 0.32);
+  --find-current-bg: rgb(255 150 50 / 0.5);
+}
+
+:root[data-theme="sepia"] {
+  --find-bg: rgb(40 110 160 / 0.2);
+  --find-current-bg: rgb(220 110 0 / 0.42);
 }
 
 .mark-popup {

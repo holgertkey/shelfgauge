@@ -14,7 +14,7 @@
 use std::collections::VecDeque;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -23,6 +23,7 @@ use axum::routing::{get, post};
 
 use crate::annotations::export::Exporter;
 use crate::annotations::store::UserData;
+use crate::annotations::text::BookText;
 use crate::config::{AnnotationsConfig, Config, ReaderConfig, ServerConfig};
 use crate::container::ReadLimits;
 use crate::format::Registry;
@@ -101,8 +102,12 @@ struct Inner {
     recent: Mutex<VecDeque<RecentBook>>,
 }
 
-/// A parsed book kept in memory: `(book id, content key, content)`.
-type RecentBook = (i64, Vec<u8>, Arc<BookContent>);
+/// A parsed book kept in memory: `(book id, content key, content, its text)`; the
+/// text is built when first asked for (images do not need it).
+type RecentBook = (i64, Vec<u8>, Arc<BookContent>, LazyText);
+
+/// A book's text, shared by the requests that need it.
+type LazyText = Arc<OnceLock<Arc<BookText>>>;
 
 /// The number of parsed books kept in memory (images and part changes reuse them).
 const RECENT_BOOKS: usize = 4;
@@ -221,13 +226,30 @@ impl AppState {
     ///
     /// Parses and decodes recursively: call it on a thread with the parser stack.
     pub(crate) fn content(&self, book: &BookDetails) -> Result<Arc<BookContent>, AppError> {
+        self.loaded(book).map(|(content, _)| content)
+    }
+
+    /// The content of `book` and its rendered text, kept in memory with the content.
+    ///
+    /// Parses and decodes recursively: call it on a thread with the parser stack.
+    pub(crate) fn book_text(
+        &self,
+        book: &BookDetails,
+    ) -> Result<(Arc<BookContent>, Arc<BookText>), AppError> {
+        let (content, text) = self.loaded(book)?;
+        let text = Arc::clone(text.get_or_init(|| Arc::new(BookText::new(&content))));
+        Ok((content, text))
+    }
+
+    fn loaded(&self, book: &BookDetails) -> Result<(Arc<BookContent>, LazyText), AppError> {
         let key = load::content_key(book);
         let lock = || self.0.recent.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(key) = &key
-            && let Some((_, _, content)) =
-                lock().iter().find(|(id, k, _)| *id == book.id && k == key)
+            && let Some((_, _, content, text)) = lock()
+                .iter()
+                .find(|(id, k, _, _)| *id == book.id && k == key)
         {
-            return Ok(Arc::clone(content));
+            return Ok((Arc::clone(content), Arc::clone(text)));
         }
         let content = load::load(
             self.library(),
@@ -244,15 +266,16 @@ impl AppState {
             load::LoadError::Protected(scheme) => AppError::Protected(scheme),
         })?;
         let content = Arc::new(content);
+        let text = Arc::new(OnceLock::new());
         if let Some(key) = key {
             let mut recent = lock();
-            recent.retain(|(id, _, _)| *id != book.id);
-            recent.push_back((book.id, key, Arc::clone(&content)));
+            recent.retain(|(id, _, _, _)| *id != book.id);
+            recent.push_back((book.id, key, Arc::clone(&content), Arc::clone(&text)));
             while recent.len() > RECENT_BOOKS {
                 recent.pop_front();
             }
         }
-        Ok(content)
+        Ok((content, text))
     }
 
     /// Runs `f` with a pooled read connection on a blocking thread.
@@ -324,6 +347,7 @@ pub fn router(state: AppState) -> Router {
         .route(&urls.path("/book/{id}"), get(routes::book::card))
         .route(&urls.path("/cover/{id}"), get(routes::book::cover))
         .route(&urls.path("/book/{id}/read"), get(routes::read::read))
+        .route(&urls.path("/book/{id}/find"), get(routes::find::find))
         .route(
             &urls.path("/book/{id}/annotations"),
             get(routes::annotations::lists),

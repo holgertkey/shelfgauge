@@ -1,0 +1,36 @@
+{
+  "comment": "In-book search normalization, shared by the Rust core (src/annotations/find.rs) and its JavaScript port (assets/reader.js, checked by .debug/TESTS/find_smoke.mjs). Offsets count code points. Dropped: U+00AD, U+200B-U+200D, U+2060, U+FEFF. Whitespace: U+0009-U+000D, U+0020, U+00A0, U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, U+3000.",
+  "normalize": [
+    ["Hello World", "hello world"],
+    ["ЁЛКА и ёж", "елка и еж"],
+    ["при­мер", "пример"],
+    ["a​b‌c‍d⁠e﻿f", "abcdef"],
+    ["a  \t\n b", "a b"],
+    ["a　 b c", "a b c"],
+    ["  lead and trail  ", " lead and trail "],
+    ["don’t ʼn’", "don't 'n'"],
+    ["ΟΔΟΣ οδος", "οδοσ οδοσ"],
+    ["İstanbul", "i̇stanbul"],
+    ["a ­ b", "a b"],
+    ["😀 Smile", "😀 smile"]
+  ],
+  "query": [
+    ["  Ab  ", "ab"],
+    ["a", null],
+    ["­ a ­", null],
+    ["Ё!", "е!"],
+    ["one  two", "one two"]
+  ],
+  "match": [
+    {"text": "Ёлка, ёлочка", "query": "ел", "hits": [[0, 2], [6, 8]]},
+    {"text": "ааа", "query": "аа", "hits": [[0, 2]]},
+    {"text": "при­мер", "query": "пример", "hits": [[0, 7]]},
+    {"text": "one  \n two", "query": "one two", "hits": [[0, 10]]},
+    {"text": "İstanbul", "query": "i̇st", "hits": [[0, 3]]},
+    {"text": "İstanbul", "query": "stan", "hits": [[1, 5]]},
+    {"text": "😀 don’t", "query": "don't", "hits": [[2, 7]]},
+    {"text": "a x  y", "query": " x y ", "hits": [[2, 6]]},
+    {"text": "ΟΔΟΣ", "query": "οδοσ", "hits": [[0, 4]]},
+    {"text": "nothing here", "query": "zz", "hits": []}
+  ]
+}

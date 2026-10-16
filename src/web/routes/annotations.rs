@@ -280,8 +280,7 @@ pub(crate) async fn create(
             let (book, snapshot) = readable_book(index, id)?;
             let note = request.note.as_deref().filter(|n| !n.trim().is_empty());
             check_note(state, note)?;
-            let content = state.content(&book)?;
-            let text = BookText::new(&content);
+            let (content, text) = state.book_text(&book)?;
             let bad = |e: AnchorError| AppError::BadRequest(e.to_string());
             let (anchor, quote) = match &request.block {
                 Some(block) => {
@@ -512,8 +511,7 @@ pub(crate) async fn position(
         .user_db(move |state, index| {
             let (book, snapshot) = readable_book(index, id)?;
             let block = parse_block(&request.block)?;
-            let content = state.content(&book)?;
-            let text = BookText::new(&content);
+            let (_, text) = state.book_text(&book)?;
             let quote = anchor::bookmark_quote(&text, block)
                 .map_err(|e| AppError::BadRequest(e.to_string()))?;
             let Some(progress) = text.progress(block) else {
@@ -632,13 +630,13 @@ pub(crate) async fn lists(
             let (book, snapshot) = readable_book(index, id)?;
             let annotations = store::for_book(&state.userdata().lock(), &snapshot.key)?;
             // Without the content (e.g. a missing file) the items carry no progress.
-            let text = state.content(&book).ok().map(|c| BookText::new(&c));
+            let text = state.book_text(&book).ok().map(|(_, text)| text);
             Ok((annotations, text))
         })
         .await?;
     let urls = state.urls();
     let fragment = ListsFragment {
-        lists: Lists::new(urls, id, &annotations, urls.read(id, 1), text.as_ref()),
+        lists: Lists::new(urls, id, &annotations, urls.read(id, 1), text.as_deref()),
     };
     Ok((
         [(header::CACHE_CONTROL, "no-store")],

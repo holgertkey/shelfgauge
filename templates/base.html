@@ -31,7 +31,7 @@
   <a class="brand" href="{{ layout.urls.home() }}">Shelfgauge</a>
   <form class="search" action="{{ layout.urls.search("", 1) }}" method="get" role="search">
     <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg>
-    <input type="search" name="q" value="{{ layout.query }}" placeholder="Search title, author, series…" aria-label="Search" title="Search (/ or s)">
+    <input type="search" name="q" value="{{ layout.query }}" placeholder="Search title, author, series…" aria-label="Search" title="{% block search_title %}Search (/ or s){% endblock %}">
   </form>
   {%- block topbar %}{% endblock %}
   <select class="theme-select" aria-label="Theme" title="Theme (t)">

@@ -471,7 +471,8 @@ function setupKeys() {
     switch (event.key) {
       case "/":
       case "s":
-        if (search) {
+        // In reading mode reader.js takes `/` for the search within the book.
+        if (search && !event.defaultPrevented) {
           event.preventDefault();
           search.focus();
           search.select();

@@ -1,0 +1,17 @@
+<section class="tab-panel" id="tab-find" data-tab="find" aria-label="Search in the book">
+  <h2 class="panel-title">Search in the book</h2>
+  <form class="find-form" method="get" action="{{ find.action }}" role="search" data-href="{{ find.href }}" data-part="{{ find.part }}">
+    {%- if find.part > 1 %}
+    <input type="hidden" name="part" value="{{ find.part }}">
+    {%- endif %}
+    <input type="search" name="find" class="find-input" value="{{ find.query }}" placeholder="Search in this book" aria-label="Search in this book" title="Search in this book (/)" maxlength="1000" autocomplete="off" spellcheck="false">
+    <button type="submit" class="small find-submit">Find</button>
+    <button type="button" class="icon-button find-step" data-step="-1" title="Previous match (Shift+N)" aria-label="Previous match" hidden>‹</button>
+    <button type="button" class="icon-button find-step" data-step="1" title="Next match (n)" aria-label="Next match" hidden>›</button>
+  </form>
+  {%- if let Some(results) = find.results %}
+  {% include "partials/find_results.html" %}
+  {%- else %}
+  <div class="find-results"></div>
+  {%- endif %}
+</section>

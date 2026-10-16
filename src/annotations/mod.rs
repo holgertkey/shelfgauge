@@ -13,6 +13,7 @@
 //! user data cannot.
 //!
 //! - [`text`]: the rendered text of a book, which offsets count into;
+//! - [`find`]: search within a book's text;
 //! - [`anchor`]: anchors, quotes and the fingerprint search;
 //! - [`store`]: the database;
 //! - [`export`]: the one-way Markdown export;
@@ -21,6 +22,7 @@
 pub mod anchor;
 pub mod attach;
 pub mod export;
+pub mod find;
 pub mod store;
 pub mod text;
 

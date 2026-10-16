@@ -1,0 +1,17 @@
+<div class="find-results">
+  {%- if let Some(message) = results.message %}
+  <p class="hint">{{ message }}</p>
+  {%- else %}
+  <p class="find-count" role="status">{{ results.count }}</p>
+  {%- for group in results.groups %}
+  {%- if !group.title.is_empty() %}
+  <h3 class="find-section">{{ group.title }}</h3>
+  {%- endif %}
+  <ol class="find-hits">
+    {%- for hit in group.hits %}
+    <li{% if hit.current %} class="current" aria-current="true"{% endif %} data-hit="{{ hit.index }}" data-part="{{ hit.part }}" data-block="{{ hit.block }}" data-start="{{ hit.start }}" data-end="{{ hit.end }}"><a href="{{ hit.href }}" data-find-link>{% if hit.snippet.cut_before %}…{% endif %}{{ hit.snippet.before }}<mark>{{ hit.snippet.matched }}</mark>{{ hit.snippet.after }}{% if hit.snippet.cut_after %}…{% endif %}</a></li>
+    {%- endfor %}
+  </ol>
+  {%- endfor %}
+  {%- endif %}
+</div>

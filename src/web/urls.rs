@@ -182,6 +182,45 @@ impl Urls {
         format!("{url}{separator}from=mark")
     }
 
+    /// Search within a book: the results for `query` as an HTML fragment.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use shelfgauge::web::Urls;
+    ///
+    /// assert_eq!(Urls::new("/").find(3, "a b"), "/book/3/find?q=a%20b");
+    /// ```
+    pub fn find(&self, id: i64, query: &str) -> String {
+        self.with_query(&format!("/book/{id}/find"), &[("q", query)], 1)
+    }
+
+    /// Reading mode: 1-based `part` with the matches of `query` highlighted and listed
+    /// in the Search tab; `hit` is the 1-based number of the result followed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use shelfgauge::web::Urls;
+    ///
+    /// let urls = Urls::new("/");
+    /// assert_eq!(urls.read_find(3, 1, "ёж", None), "/book/3/read?find=%D1%91%D0%B6");
+    /// assert_eq!(urls.read_find(3, 2, "x&y", Some(7)), "/book/3/read?part=2&find=x%26y&hit=7");
+    /// ```
+    pub fn read_find(&self, id: i64, part: usize, query: &str, hit: Option<usize>) -> String {
+        let part = if part > 1 {
+            part.to_string()
+        } else {
+            String::new()
+        };
+        let hit = hit.map_or_else(String::new, |hit| hit.to_string());
+        self.with_query(
+            &format!("/book/{id}/read"),
+            &[("part", &part), ("find", query), ("hit", &hit)],
+            1,
+        )
+    }
+
     /// A book's annotations: `POST` creates one (JSON), `GET` is the reader's lists as
     /// an HTML fragment.
     pub fn annotations(&self, id: i64) -> String {
