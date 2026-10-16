@@ -46,6 +46,12 @@ pub(crate) struct FindGroup {
 pub(crate) struct FindResults {
     /// Shown instead of results (a query too short or too long).
     pub(crate) message: Option<String>,
+    /// The number of matches in the book.
+    pub(crate) total: usize,
+    /// The query as typed (trimmed).
+    pub(crate) query: String,
+    /// The library search for the query (titles, authors, series, descriptions).
+    pub(crate) library_href: String,
     /// "3 matches", "500 of 1 234 shown — refine the query".
     pub(crate) count: String,
     pub(crate) groups: Vec<FindGroup>,
@@ -64,6 +70,9 @@ impl FindResults {
     ) -> Self {
         let message = |message: String| Self {
             message: Some(message),
+            total: 0,
+            query: String::new(),
+            library_href: String::new(),
             count: String::new(),
             groups: Vec::new(),
         };
@@ -146,6 +155,9 @@ impl FindResults {
         };
         Self {
             message: None,
+            total: found.total,
+            library_href: urls.search(query, 1),
+            query: query.to_owned(),
             count,
             groups: groups.into_iter().map(|(_, group)| group).collect(),
         }

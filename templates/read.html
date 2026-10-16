@@ -9,8 +9,17 @@
 <meta name="author" content="{{ book_authors }}">
 {%- endif %}
 {%- endblock %}
-{#- `/` searches in the book here. #}
-{% block search_title %}Search the library (s){% endblock %}
+{#- In reading mode the top bar's field searches the book; the results link to the
+    library search. Without scripts the form opens this part with the results. #}
+{% block search %}
+  <form class="search find-form" action="{{ find.action }}" method="get" role="search" data-href="{{ find.href }}" data-part="{{ find.part }}">
+    <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg>
+    {%- if find.part > 1 %}
+    <input type="hidden" name="part" value="{{ find.part }}">
+    {%- endif %}
+    <input type="search" name="find" class="find-input" value="{{ find.query }}" placeholder="Search in this book…" aria-label="Search in this book" title="Search in this book (/ or s)" maxlength="1000" autocomplete="off" spellcheck="false">
+  </form>
+{%- endblock %}
 {% block topbar %}
   <button type="button" class="icon-button bookmark-button" title="Bookmark the place at the top of the page (b)" aria-label="Bookmark this place" hidden>
     <svg class="icon" aria-hidden="true"><use href="#i-bookmark"></use></svg>
@@ -30,7 +39,8 @@
   {%- endif %}
   <a href="#tab-bookmarks" data-tab="bookmarks">Bookmarks</a>
   <a href="#tab-marks" data-tab="marks">Quotes</a>
-  <a href="#tab-find" data-tab="find" title="Search in this book (/)">Search</a>
+  {#- Only while there is a query (reader.js shows it for the live search). #}
+  <a href="#tab-find" data-tab="find"{% if find.results.is_none() %} hidden{% endif %}>Search</a>
 </nav>
 {#- With results (no scripts: the form's answer) the Search panel comes first. #}
 {%- if find.results.is_some() %}

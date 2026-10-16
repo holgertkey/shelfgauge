@@ -324,6 +324,11 @@ async fn markup_in_the_text_and_the_query_is_escaped() {
         reply.body
     );
     assert!(!reply.body.contains("<b>"));
+    assert!(
+        reply
+            .body
+            .contains("Search the library for “&#60;b&#62;bold&#60;/b&#62; claim &#38;” ›")
+    );
     // The read page: the field and the links carry the query escaped.
     let reply = server.ok(&format!("/book/{id}/read?find={query}")).await;
     assert!(
@@ -364,32 +369,61 @@ async fn the_read_page_lists_results_without_scripts() {
     let lib = TestLibrary::new();
     let server = lib.server(by_chapter());
     let id = lib.id_of("chapters.fb2");
-    // Without `find` the Search panel comes last, empty, and its form keeps the part.
+    // Without `find` the Search tab and panel are hidden; the top bar's field searches
+    // the book and keeps the part.
     let reply = server.ok(&format!("/book/{id}/read?part=2")).await;
     assert!(
         reply
             .body
-            .contains("<a href=\"#tab-find\" data-tab=\"find\"")
+            .contains("<a href=\"#tab-find\" data-tab=\"find\" hidden>Search</a>")
+    );
+    assert!(
+        reply
+            .body
+            .contains("id=\"tab-find\" data-tab=\"find\" aria-label=\"Search results\" hidden>")
     );
     let panel = reply.body.find("id=\"tab-find\"").unwrap();
     assert!(panel > reply.body.find("id=\"tab-marks\"").unwrap());
     assert!(reply.body.contains(&format!(
-        "<form class=\"find-form\" method=\"get\" action=\"/book/{id}/read\""
+        "<form class=\"search find-form\" action=\"/book/{id}/read\" method=\"get\""
     )));
     assert!(
         reply
             .body
             .contains("<input type=\"hidden\" name=\"part\" value=\"2\">")
     );
+    assert!(
+        reply
+            .body
+            .contains("title=\"Search in this book (/ or s)\"")
+    );
+    assert!(
+        !reply.body.contains("name=\"q\""),
+        "no library search field in reading mode"
+    );
     assert!(!reply.body.contains("find-count"));
-    // The form's answer: the results first, in the same part.
+    // The form's answer: the results first, in the same part, with a link to the
+    // library search.
     let reply = server
         .ok(&format!("/book/{id}/read?part=2&find=paragraph+3"))
         .await;
     assert_eq!(count(&reply.body), "3 matches");
+    assert!(
+        reply
+            .body
+            .contains("<a href=\"#tab-find\" data-tab=\"find\">Search</a>")
+    );
+    assert!(
+        reply
+            .body
+            .contains("id=\"tab-find\" data-tab=\"find\" aria-label=\"Search results\">")
+    );
     let panel = reply.body.find("id=\"tab-find\"").unwrap();
     assert!(panel < reply.body.find("id=\"tab-toc\"").unwrap());
     assert!(reply.body.contains("value=\"paragraph 3\""));
+    assert!(reply.body.contains(
+        "<a href=\"/search?q=paragraph%203\">Search the library for “paragraph 3” ›</a>"
+    ));
     assert!(
         reply.body.contains("Chapter 2, paragraph 1"),
         "still part 2"
@@ -397,9 +431,8 @@ async fn the_read_page_lists_results_without_scripts() {
     // An empty query shows no results.
     let reply = server.ok(&format!("/book/{id}/read?find=+")).await;
     assert!(!reply.body.contains("find-count"));
-    // `/` is the search in the book here, the library search keeps `s`.
-    assert!(reply.body.contains("title=\"Search the library (s)\""));
-    // Library pages have no Search tab, and `/` is their search.
+    assert!(reply.body.contains("data-tab=\"find\" hidden>"));
+    // Library pages have no Search tab, and their field searches the library.
     for page in ["/".to_owned(), format!("/book/{id}")] {
         let reply = server.ok(&page).await;
         assert!(!reply.body.contains("tab-find"), "{page}");

@@ -204,7 +204,10 @@ Key design points to keep in mind when implementing:
     share, so no short remainder is left; in `size` mode a part shorter than a quarter
     of `part_size` joins its neighbour.
     `?at=b<n>` redirects to the part URL with `#b<n>`.
-  - *Search within the book* (0.11.0): a fourth sidebar tab, **Search**. No index: the
+  - *Search within the book* (0.11.0): in reading mode the top bar's search field
+    searches the open book; the results fill a fourth sidebar tab, **Search**, which
+    exists only while there is a query, and link to the same query as a library
+    search. No index: the
     query and the rendered text of every leaf block are normalized (lowercase one code
     point at a time, `ё` → `е`, `ς` → `σ`, `’ʼ` → `'`, soft hyphens and zero-width
     characters dropped, whitespace runs → one space; `src/annotations/find.rs`) and

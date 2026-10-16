@@ -119,16 +119,16 @@ mark.sg-mark {
 
 /* ---------- Search in the book ---------- */
 
-.find-form {
+/* The tab and its panel exist only while there is a query. */
+.reader-tabs a[hidden],
+.tab-panel[hidden] {
+  display: none !important;
+}
+
+.find-head {
   display: flex;
   gap: 0.25rem;
   align-items: center;
-  margin: 0 0 0.5rem;
-}
-
-.find-input {
-  flex: 1;
-  min-width: 0;
 }
 
 .find-step {
@@ -137,8 +137,14 @@ mark.sg-mark {
 }
 
 .find-count {
-  margin: 0.25rem 0 0.5rem;
+  flex: 1;
+  margin: 0.25rem 0;
   color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.find-library {
+  margin: 0 0 0.5rem;
   font-size: 0.85rem;
 }
 

@@ -12,11 +12,12 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ### Added
 
-- Search within the open book: a **Search** tab in the reader's sidebar (`/` opens it)
+- Search within the open book: in reading mode the top bar's search field (`/` or `s`)
   finds a word or phrase anywhere in the book as you type, ignoring case, `ё`/`е`, soft
-  hyphens and line breaks. Results are grouped by chapter (notes as "Notes"), show the
-  text around each match and lead to the place, where the matches on the page are
-  highlighted; `n` / `Shift+N` go to the next or previous result across parts, `Esc`
+  hyphens and line breaks. Results appear in a **Search** tab of the sidebar (shown only
+  while there is a query), grouped by chapter (notes as "Notes"), with the text around
+  each match and a link to run the query as a library search; they lead to the place,
+  where the matches on the page are highlighted; `n` / `Shift+N` go to the next or previous result across parts, `Esc`
   leaves the search field and then clears the search. At most 500 results are listed, all are counted. Following a
   result does not move the reading position. Works without JavaScript too (the form
   opens the read page with the results). Full-text search across the library is not
@@ -37,6 +38,8 @@ Build numbers (`+NNN`) do not get their own sections.
 - The Quote button on a text selection uses the accent color.
 - A book without a table of contents has no Contents tab.
 - The reader's sidebar tabs are a bit smaller, so four fit in a row.
+- In reading mode the top bar's search field searches the open book; the library
+  search is a link above its results (on library pages nothing changes).
 
 ### Fixed
 

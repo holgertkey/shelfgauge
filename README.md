@@ -116,19 +116,20 @@ again at the next scan.
   you are. Pointing at the line shows the place (percentage and chapter); a click goes
   there (on a touch screen, tap twice), and Back returns. `Esc` or `f`
   leaves it, and it stays on for the next book until you do.
-- **Search in the book**: the **Search** tab in the sidebar (or `/`) finds a word or
-  phrase anywhere in the open book, as you type (at least 2 characters). Case, `ё`/`е`,
+- **Search in the book**: while reading, the search field in the top bar (`/` or `s`)
+  finds a word or phrase anywhere in the open book, as you type (at least 2
+  characters); the results appear in a **Search** tab in the sidebar. Case, `ё`/`е`,
   soft hyphens and line breaks do not matter; it matches any part of a word, so a word
   start finds its forms too. Results are listed by chapter with the text around each
   match (at most 500; refine the query for more) and lead to the place, where every
   match on the page is highlighted. `n` / `Shift+N` (or `‹` `›`) go to the next or
   previous result, also across parts; `Esc` leaves the search field, a second `Esc`
-  clears the search. Following a result does not move your reading position. Search
-  across the whole library covers titles, authors, series and descriptions, not the
-  books' text.
+  clears the search and closes the tab. Following a result does not move your reading
+  position. A link above the results runs the same query as a library search, which
+  covers titles, authors, series and descriptions, not the books' text.
 - Keys: `/` or `s` search, `t` next theme, `m` sidebar mode, `Esc` leave the search
-  field; while reading, `/` search in the book, `n` / `Shift+N` next / previous result,
-  `s` library search, `←`/`→` previous/next part, `b` bookmark, `f` focus mode, `-`/`+`
+  field; while reading, `/` or `s` search in the book, `n` / `Shift+N` next / previous
+  result, `←`/`→` previous/next part, `b` bookmark, `f` focus mode, `-`/`+`
   text size (`0` resets it); in the **Quote** dialog `Ctrl+Enter` saves, `Esc` cancels.
 - **Rescan** (top bar) updates the index while the library stays usable.
 

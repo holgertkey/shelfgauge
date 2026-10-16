@@ -29,10 +29,12 @@
     <svg class="icon" aria-hidden="true"><use href="#i-menu"></use></svg>
   </button>
   <a class="brand" href="{{ layout.urls.home() }}">Shelfgauge</a>
+  {%- block search %}
   <form class="search" action="{{ layout.urls.search("", 1) }}" method="get" role="search">
     <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg>
-    <input type="search" name="q" value="{{ layout.query }}" placeholder="Search title, author, series…" aria-label="Search" title="{% block search_title %}Search (/ or s){% endblock %}">
+    <input type="search" name="q" value="{{ layout.query }}" placeholder="Search title, author, series…" aria-label="Search" title="Search (/ or s)">
   </form>
+  {%- endblock %}
   {%- block topbar %}{% endblock %}
   <select class="theme-select" aria-label="Theme" title="Theme (t)">
     <option value="">Auto</option>

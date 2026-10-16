@@ -229,14 +229,15 @@
     if (!sidebar) {
       return;
     }
-    const panels = sidebar.querySelectorAll(".tab-panel");
+    const all = Array.from(sidebar.querySelectorAll(".tab-panel"));
+    const panels = all.filter((p) => !p.hidden);
     // An unknown tab, or Contents in a book without them: the first tab there is, and
     // the chosen tab stays remembered for the next book.
-    const known = Array.from(panels).some((p) => p.dataset.tab === name);
+    const known = panels.some((p) => p.dataset.tab === name);
     if (!known && panels.length) {
       name = panels[0].dataset.tab;
     }
-    for (const panel of panels) {
+    for (const panel of all) {
       panel.classList.toggle("active", panel.dataset.tab === name);
     }
     for (const tab of sidebar.querySelectorAll(".reader-tabs a")) {
@@ -244,7 +245,8 @@
       tab.classList.toggle("active", active);
       tab.setAttribute("aria-current", active ? "true" : "false");
     }
-    if (known && remember) {
+    // The Search tab comes and goes with the query: never remembered.
+    if (known && remember && name !== "find") {
       storageSet(TAB_KEY, name);
     }
   }
@@ -901,7 +903,8 @@
     matches: findMatches,
   };
 
-  const findForm = sidebar && sidebar.querySelector(".find-form");
+  // The top bar's search field searches the book in reading mode.
+  const findForm = document.querySelector(".topbar .find-form");
   const findInput = findForm && findForm.querySelector(".find-input");
   // The query whose matches are highlighted ("" for none).
   let findShown = "";
@@ -981,19 +984,55 @@
   let clearFind = () => false;
   // Goes to the next (1) or previous (-1) result; whether there was one.
   let stepFind = () => false;
+  // Leaves focus mode (set by setupSettings).
+  let leaveFocus = () => {};
 
   function setupFind() {
-    if (!findForm || !findInput) {
+    if (!findForm || !findInput || !sidebar) {
       return;
     }
     const results = () => sidebar.querySelector(".find-results");
-    const steps = Array.from(findForm.querySelectorAll(".find-step"));
-    findForm.querySelector(".find-submit").hidden = true;
-    for (const button of steps) {
-      button.hidden = false;
-    }
+    const tab = sidebar.querySelector('.reader-tabs a[data-tab="find"]');
+    const panel = document.getElementById("tab-find");
+    // The tab shown before the results, to go back to when the search is cleared.
+    let before = null;
     let controller = null;
     let timer = null;
+
+    // Shows or hides the Search tab: it exists only while there is a query.
+    function showResults(on) {
+      if (!tab || !panel) {
+        return;
+      }
+      if (on && tab.hidden) {
+        const active = sidebar.querySelector(".reader-tabs a.active");
+        before = active && active !== tab ? active.dataset.tab : null;
+      }
+      const wasActive = tab.classList.contains("active");
+      tab.hidden = !on;
+      panel.hidden = !on;
+      if (on) {
+        showTab("find", false);
+      } else if (wasActive) {
+        showTab(before || storageGet(TAB_KEY) || "toc", false);
+      }
+    }
+
+    // The sidebar must be visible for the results (not in focus mode).
+    function openSidebar() {
+      leaveFocus();
+      const toggle = document.querySelector(".sidebar-toggle");
+      if (toggle && toggle.getAttribute("aria-expanded") !== "true") {
+        toggle.click();
+      }
+    }
+
+    // The step buttons work with scripts only.
+    function syncResults() {
+      for (const button of sidebar.querySelectorAll(".find-step")) {
+        button.hidden = false;
+      }
+    }
 
     function replaceResults(html) {
       const template = document.createElement("template");
@@ -1002,14 +1041,7 @@
       if (replacement) {
         results().replaceWith(replacement);
       }
-      syncSteps();
-    }
-
-    function syncSteps() {
-      const any = Boolean(sidebar.querySelector(".find-hits li"));
-      for (const button of steps) {
-        button.disabled = !any;
-      }
+      syncResults();
     }
 
     async function search(raw) {
@@ -1022,6 +1054,7 @@
       if (!raw.trim()) {
         replaceResults('<div class="find-results"></div>');
         highlightFind("");
+        showResults(false);
         return;
       }
       controller = new AbortController();
@@ -1036,6 +1069,8 @@
         }
         replaceResults(await response.text());
         highlightFind(raw);
+        openSidebar();
+        showResults(true);
       } catch (e) {
         if (e.name !== "AbortError") {
           toast(`Could not search: ${e.message}`);
@@ -1044,7 +1079,7 @@
     }
 
     clearFind = () => {
-      if (!findShown && !findInput.value) {
+      if (!findShown && !findInput.value && (!tab || tab.hidden)) {
         return false;
       }
       findInput.value = "";
@@ -1066,8 +1101,8 @@
       if (delta > 0) {
         return items.find(after) || null;
       }
-      const before = items.filter((item) => !after(item));
-      return before[before.length - 1] || null;
+      const earlier = items.filter((item) => !after(item));
+      return earlier[earlier.length - 1] || null;
     }
 
     stepFind = (delta) => {
@@ -1105,7 +1140,7 @@
         event.preventDefault();
       }
     });
-    findForm.addEventListener("click", (event) => {
+    sidebar.addEventListener("click", (event) => {
       const step = event.target.closest(".find-step");
       if (step) {
         stepFind(Number(step.dataset.step));
@@ -1124,10 +1159,13 @@
       if (typing) {
         return;
       }
-      if (event.key === "/") {
-        // app.js leaves `/` alone once it is handled here.
+      if (event.key === "/" || event.key === "s") {
+        // app.js leaves these keys alone once they are handled here.
         event.preventDefault();
-        openFind();
+        // Focus mode hides the top bar with the field.
+        leaveFocus();
+        findInput.focus();
+        findInput.select();
       } else if (event.key === "n" || event.key === "N") {
         if (stepFind(event.key === "n" ? 1 : -1)) {
           event.preventDefault();
@@ -1135,23 +1173,10 @@
       }
     });
 
-    // Opens the sidebar on the Search tab (leaving focus mode) and focuses the field.
-    function openFind() {
-      const toggle = document.querySelector(".sidebar-toggle");
-      const focusMode = document.documentElement.classList.contains("reading-focus");
-      if (toggle && (focusMode || toggle.getAttribute("aria-expanded") !== "true")) {
-        // In focus mode the click leaves it (see setupSettings).
-        toggle.click();
-      }
-      showTab("find");
-      findInput.focus();
-      findInput.select();
-    }
-
-    syncSteps();
+    syncResults();
     const raw = opened.get("find") || "";
     if (raw.trim()) {
-      showTab("find", false);
+      showResults(true);
       highlightFind(raw);
       // After app.js has scrolled the sidebar to the current Contents entry.
       document.addEventListener("DOMContentLoaded", () => {
@@ -1263,6 +1288,11 @@
       updateStatus();
     }
 
+    leaveFocus = () => {
+      if (focused()) {
+        setFocus(false);
+      }
+    };
     if (focusButton) {
       focusButton.hidden = false;
       focusButton.addEventListener("click", () => setFocus(!focused()));
