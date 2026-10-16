@@ -38,6 +38,8 @@ Build numbers (`+NNN`) do not get their own sections.
   while scrolling) instead of every entry of the current part.
 - The Quote button on a text selection uses the accent color.
 - A book without a table of contents has no Contents tab.
+- The Bookmarks tab no longer has a "Bookmark this place" button; `b` and the top-bar
+  button bookmark the place.
 - The reader's sidebar tabs are a bit smaller, so four fit in a row. The book link and
   the tabs stay at the top while the sidebar scrolls, and `‹ ›` buttons next to the
   book link page through the open tab (like Page Up / Page Down).

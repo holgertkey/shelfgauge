@@ -334,10 +334,8 @@ async fn marks_bookmarks_notes_and_export() {
     // The reader's lists (server-rendered, so they work without JS).
     let read = server.ok(&format!("/book/{id}/read")).await;
     assert!(read.contains("id=\"tab-bookmarks\"") && read.contains("id=\"tab-marks\""));
-    assert!(
-        read.contains("class=\"add-bookmark\"")
-            && read.contains("Bookmark this place (or press <kbd>b</kbd>)")
-    );
+    // Bookmarks are made with `b` or the top-bar button, not from the tab.
+    assert!(!read.contains("add-bookmark"));
     assert!(read.contains(&format!("data-id=\"{mark}\"")), "{read}");
     assert!(read.contains("data-text=\"the sly fox\""), "{read}");
     assert!(
