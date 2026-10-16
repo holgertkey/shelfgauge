@@ -424,7 +424,8 @@ fn safe_url(url: &str) -> Option<&str> {
 
 /// Renders the table of contents: the titled sections as nested lists linking to
 /// their first block. One entry is marked `class="active"`: the section the current
-/// part starts in (the reader moves the mark along while scrolling).
+/// part starts in (the reader moves the mark along while scrolling). A book without
+/// titled sections or notes has no contents: the result is then empty.
 pub fn render_toc(
     content: &BookContent,
     parts: &[Part],
@@ -468,6 +469,10 @@ pub fn render_toc(
                 }
             }
         }
+    }
+
+    if entries.is_empty() {
+        return String::new();
     }
 
     // Entries are in document order, and block ids grow in document order.
@@ -762,6 +767,17 @@ mod tests {
             html.contains(r#"<hr id="b8"><p id="b9">1<br>2</p>"#),
             "{html}"
         );
+    }
+
+    #[test]
+    fn toc_of_a_book_without_titled_sections_is_empty() {
+        let untitled = Section {
+            blocks: vec![Block::new(BlockKind::Paragraph(text("Text")))],
+            ..Section::default()
+        };
+        let content = content_with(Vec::new(), vec![untitled]);
+        let parts = split(&content, &ReaderConfig::default());
+        assert_eq!(render_toc(&content, &parts, 0, &Links), "");
     }
 
     #[test]

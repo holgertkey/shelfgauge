@@ -23,13 +23,18 @@
 {% block sidebar %}
 <p class="toc-book"><a href="{{ card_href }}">‹ {{ book_title }}</a></p>
 <nav class="reader-tabs" aria-label="Sidebar" lang="en">
+  {%- if !toc.is_empty() %}
   <a href="#tab-toc" data-tab="toc">Contents</a>
+  {%- endif %}
   <a href="#tab-bookmarks" data-tab="bookmarks">Bookmarks</a>
   <a href="#tab-marks" data-tab="marks">Quotes</a>
 </nav>
+{#- A book without contents has no Contents tab. #}
+{%- if !toc.is_empty() %}
 <section class="tab-panel" id="tab-toc" data-tab="toc" aria-label="Contents">
 {{ toc|safe }}
 </section>
+{%- endif %}
 {% include "partials/annotation_lists.html" %}
 {% endblock %}
 {% block main %}

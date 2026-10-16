@@ -430,6 +430,28 @@ async fn reading_page_has_toc_navigation_and_semantic_html() {
 }
 
 #[tokio::test]
+async fn books_without_contents_have_no_contents_tab() {
+    let lib = TestLibrary::new();
+    let server = lib.server("/", ReaderConfig::default());
+    // One untitled section and no notes.
+    let page = server
+        .ok(&format!("/book/{}/read", lib.id_of("images.fb2")))
+        .await
+        .body;
+    assert!(!page.contains("data-tab=\"toc\""), "{page}");
+    assert!(!page.contains("<nav class=\"toc\""));
+    assert!(page.contains("data-tab=\"bookmarks\""));
+    assert!(page.contains("data-tab=\"marks\""));
+
+    let page = server
+        .ok(&format!("/book/{}/read", lib.id_of("chapters.fb2")))
+        .await
+        .body;
+    assert!(page.contains("<a href=\"#tab-toc\" data-tab=\"toc\">Contents</a>"));
+    assert!(page.contains("<nav class=\"toc\""));
+}
+
+#[tokio::test]
 async fn images_are_served_from_the_content() {
     let lib = TestLibrary::new();
     let id = lib.id_of("images.fb2");

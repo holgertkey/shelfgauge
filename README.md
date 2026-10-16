@@ -126,7 +126,8 @@ again at the next scan.
 - While reading, select text and choose **Quote** to keep it as a quote, with an optional
   note. Press `b` (or the bookmark button in the top bar) to bookmark the place at the
   top of the screen. Saved quotes are highlighted in the text.
-- The reader's sidebar has three tabs: **Contents**, **Bookmarks** and **Quotes**. A book
+- The reader's sidebar has three tabs: **Contents**, **Bookmarks** and **Quotes** (a book
+  without a table of contents has no Contents tab). A book
   card lists its bookmarks and quotes too, where notes can be edited and entries deleted.
   A quote's text cannot be changed; a selection lies within one part of the book.
 - The reading position is saved as you read (after you stay at a place for a few

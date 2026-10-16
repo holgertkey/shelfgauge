@@ -250,7 +250,8 @@ Code: `src/annotations/` (`text`, `anchor`, `store`, `export`, `attach`),
   into this table later.
 - **UI**: `reader.js`/`reader.css` load only on read pages; selecting text offers "Quote";
   saved annotations are highlighted on the client; a bookmark is one action (button or
-  `B`). The reader sidebar has tabs Contents | Bookmarks | Quotes; the book card lists
+  `B`). The reader sidebar has tabs Contents | Bookmarks | Quotes (no Contents
+  tab when the book has no titled sections or notes); the book card lists
   bookmarks and marks in two `<details>` blocks with plain-form edit/delete.
   Lists are server-rendered and work without JS. Writes are a separate route group
   behind the Origin check.

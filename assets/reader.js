@@ -230,8 +230,11 @@
       return;
     }
     const panels = sidebar.querySelectorAll(".tab-panel");
-    if (!Array.from(panels).some((p) => p.dataset.tab === name)) {
-      name = "toc";
+    // An unknown tab, or Contents in a book without them: the first tab there is, and
+    // the chosen tab stays remembered for the next book.
+    const known = Array.from(panels).some((p) => p.dataset.tab === name);
+    if (!known && panels.length) {
+      name = panels[0].dataset.tab;
     }
     for (const panel of panels) {
       panel.classList.toggle("active", panel.dataset.tab === name);
@@ -241,7 +244,9 @@
       tab.classList.toggle("active", active);
       tab.setAttribute("aria-current", active ? "true" : "false");
     }
-    storageSet(TAB_KEY, name);
+    if (known) {
+      storageSet(TAB_KEY, name);
+    }
   }
 
   async function refreshLists() {
