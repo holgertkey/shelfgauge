@@ -26,7 +26,7 @@ const READ_POOL_SIZE: u32 = 4;
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    cli::init_logging(cli.verbose);
+    cli::init_logging(cli.log_level());
     let invocation = cli.invocation();
 
     let library = if invocation.explicit_path {

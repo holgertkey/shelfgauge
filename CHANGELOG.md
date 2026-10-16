@@ -12,6 +12,7 @@ Build numbers (`+NNN`) do not get their own sections.
 
 - `shelfgauge errors [PATH]` lists the books that could not be read at the last scan,
   one `path: reason` line per book.
+- `--trace` as the long form of `-vv` (trace logging).
 
 ### Changed
 

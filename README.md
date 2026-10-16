@@ -42,7 +42,8 @@ shelfgauge annotations export [PATH]   # rewrite the Markdown export of bookmark
 ```
 
 Options: `--port <PORT>`, `--bind <ADDR>`, `--no-scan` (serve without scanning first),
-`-v`/`-vv` (more logging; otherwise `RUST_LOG` is used), `-V` (version).
+`-v`/`--verbose` (debug logging), `-vv`/`--trace` (trace logging; without these
+`RUST_LOG` is used), `-V` (version).
 
 A new library is created only when PATH is given explicitly (e.g. `shelfgauge .`): its
 working data goes into `.shelfgauge/` inside PATH (configuration, index, cover and

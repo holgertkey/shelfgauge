@@ -29,6 +29,21 @@ pub struct Cli {
     /// Increase log verbosity (-v: debug, -vv: trace); overrides RUST_LOG.
     #[arg(short, long, action = ArgAction::Count, global = true)]
     pub verbose: u8,
+
+    /// Log at trace level, the same as -vv; overrides RUST_LOG.
+    #[arg(long, global = true)]
+    pub trace: bool,
+}
+
+impl Cli {
+    /// The log verbosity for [`log_filter`]: the `-v` count, at least 2 with `--trace`.
+    pub fn log_level(&self) -> u8 {
+        if self.trace {
+            self.verbose.max(2)
+        } else {
+            self.verbose
+        }
+    }
 }
 
 /// Arguments of the default mode: serve the library.
@@ -275,6 +290,26 @@ mod tests {
                 .unwrap()
                 .verbose,
             1
+        );
+    }
+
+    #[test]
+    fn trace_flag_is_global_and_equals_two_verbose() {
+        let level = |args: &[&str]| {
+            let mut argv = vec!["shelfgauge"];
+            argv.extend_from_slice(args);
+            Cli::try_parse_from(argv).unwrap().log_level()
+        };
+        assert_eq!(level(&[]), 0);
+        assert_eq!(level(&["-v"]), 1);
+        assert_eq!(level(&["--verbose"]), 1);
+        assert_eq!(level(&["-vv"]), 2);
+        assert_eq!(level(&["--trace"]), 2);
+        assert_eq!(level(&["-v", "--trace"]), 2);
+        assert_eq!(level(&["scan", "--trace"]), 2);
+        assert_eq!(
+            log_filter(level(&["--trace"]), None),
+            log_filter(level(&["-vv"]), None)
         );
     }
 
