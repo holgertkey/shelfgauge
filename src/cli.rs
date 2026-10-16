@@ -81,7 +81,7 @@ pub enum Command {
         /// Library directory (default: the current directory).
         path: Option<PathBuf>,
     },
-    /// Work with bookmarks and marks.
+    /// Work with bookmarks and quotes (`annotations export`: rewrite their Markdown export).
     #[command(subcommand)]
     Annotations(AnnotationsCommand),
 }
@@ -219,6 +219,12 @@ mod tests {
             err.to_string(),
             format!("shelfgauge {}\n", shelfgauge::VERSION)
         );
+    }
+
+    #[test]
+    fn help_lists_annotations_export() {
+        let help = Cli::command().render_help().to_string();
+        assert!(help.contains("annotations export"), "{help}");
     }
 
     #[test]

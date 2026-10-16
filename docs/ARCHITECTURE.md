@@ -18,7 +18,8 @@ Key design points to keep in mind when implementing:
   browser origin).
 - **Scanning runs on every start, in the background**: the server starts immediately and
   serves the existing index while the UI shows progress. Also: a "Rescan" button,
-  `--no-scan`, and a `shelfgauge scan` subcommand (index and exit). One scan runs at a
+  `--no-scan`, a `shelfgauge scan` subcommand (index and exit) and `shelfgauge errors`
+  (list the books that could not be read, with the reason). One scan runs at a
   time on its own thread (`scanner::BackgroundScan`). Ctrl+C stops accepting requests,
   cancels the scan and waits until the writer has committed what it received; a second
   Ctrl+C exits at once.

@@ -118,7 +118,7 @@ again at the next scan.
   leaves it, and it stays on for the next book until you do.
 - Keys: `/` or `s` search, `t` next theme, `m` sidebar mode, `Esc` leave the search
   field; while reading, `←`/`→` previous/next part, `b` bookmark, `f` focus mode, `-`/`+`
-  text size (`0` resets it).
+  text size (`0` resets it); in the **Quote** dialog `Ctrl+Enter` saves, `Esc` cancels.
 - **Rescan** (top bar) updates the index while the library stays usable.
 
 ### Bookmarks, quotes and the reading position
