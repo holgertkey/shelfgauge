@@ -14,8 +14,8 @@ Build numbers (`+NNN`) do not get their own sections.
 
 - Search within the open book: in reading mode the top bar's search field (`/` or `s`)
   finds a word or phrase anywhere in the book as you type, ignoring case, `ё`/`е`, soft
-  hyphens and line breaks. Results appear in a **Search** tab of the sidebar (shown only
-  while there is a query), grouped by chapter (notes as "Notes"), with the text around
+  hyphens and line breaks. Results appear in a sidebar tab (shown only while there is a
+  query) labelled with a magnifier and the number of matches, grouped by chapter (notes as "Notes"), with the text around
   each match; they lead to the place, where the matches on the page are highlighted.
   `n` / `Shift+N` go to the next or previous result across parts, `Esc` leaves the
   search field and then clears the search. At most 500 results are listed (a note

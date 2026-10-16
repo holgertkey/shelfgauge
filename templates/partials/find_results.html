@@ -1,4 +1,4 @@
-<div class="find-results">
+<div class="find-results" data-tab-count="{{ results.tab_count() }}" data-tab-title="{{ results.tab_title() }}">
   {%- if let Some(message) = results.message %}
   <p class="hint">{{ message }}</p>
   {%- else %}

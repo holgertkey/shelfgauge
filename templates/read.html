@@ -48,7 +48,11 @@
   <a href="#tab-bookmarks" data-tab="bookmarks">Bookmarks</a>
   <a href="#tab-marks" data-tab="marks">Quotes</a>
   {#- Only while there is a query (reader.js shows it for the live search). #}
-  <a href="#tab-find" data-tab="find"{% if find.results.is_none() %} hidden{% endif %}>Search</a>
+  {%- if let Some(results) = find.results %}
+  <a href="#tab-find" data-tab="find" class="find-tab" title="{{ results.tab_title() }}" aria-label="{{ results.tab_title() }}"><svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg><span class="tab-count">{{ results.tab_count() }}</span></a>
+  {%- else %}
+  <a href="#tab-find" data-tab="find" class="find-tab" title="Search results" aria-label="Search results" hidden><svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg><span class="tab-count"></span></a>
+  {%- endif %}
 </nav>
 </div>
 {#- With results (no scripts: the form's answer) the Search panel comes first. #}

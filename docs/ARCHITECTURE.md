@@ -205,8 +205,8 @@ Key design points to keep in mind when implementing:
     of `part_size` joins its neighbour.
     `?at=b<n>` redirects to the part URL with `#b<n>`.
   - *Search within the book* (0.11.0): in reading mode the top bar's search field
-    searches the open book; the results fill a fourth sidebar tab, **Search**, which
-    exists only while there is a query. No index: the
+    searches the open book; the results fill a fourth sidebar tab (a magnifier and
+    the number of matches), which exists only while there is a query. No index: the
     query and the rendered text of every leaf block are normalized (lowercase one code
     point at a time, `ё` → `е`, `ς` → `σ`, `’ʼ` → `'`, soft hyphens and zero-width
     characters dropped, whitespace runs → one space; `src/annotations/find.rs`) and

@@ -182,6 +182,20 @@ mark.sg-mark {
   display: none !important;
 }
 
+/* The Search tab: a magnifier and the number of matches. */
+.reader-tabs .find-tab {
+  display: inline-flex;
+  flex: 0 1 auto;
+  gap: 0.25rem;
+  align-items: center;
+  justify-content: center;
+}
+
+.find-tab .icon {
+  width: 0.95em;
+  height: 0.95em;
+}
+
 .find-more {
   margin: 0.75rem 0 0;
 }

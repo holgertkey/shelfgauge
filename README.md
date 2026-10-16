@@ -118,7 +118,8 @@ again at the next scan.
   leaves it, and it stays on for the next book until you do.
 - **Search in the book**: while reading, the search field in the top bar (`/` or `s`)
   finds a word or phrase anywhere in the open book, as you type (at least 2
-  characters); the results appear in a **Search** tab in the sidebar. Case, `ё`/`е`,
+  characters); the results appear in a new sidebar tab marked with a magnifier and
+  the number of matches. Case, `ё`/`е`,
   soft hyphens and line breaks do not matter; it matches any part of a word, so a word
   start finds its forms too. Results are listed by chapter with the text around each
   match (at most 500; refine the query for more) and lead to the place, where every

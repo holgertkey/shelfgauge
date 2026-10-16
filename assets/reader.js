@@ -1056,6 +1056,17 @@
       }
     }
 
+    // The tab shows the number of matches the results carry.
+    function syncTab() {
+      if (!tab) {
+        return;
+      }
+      const list = results();
+      tab.querySelector(".tab-count").textContent = list.dataset.tabCount || "";
+      tab.title = list.dataset.tabTitle || "Search results";
+      tab.setAttribute("aria-label", tab.title);
+    }
+
     function replaceResults(html) {
       const template = document.createElement("template");
       template.innerHTML = html.trim();
@@ -1063,6 +1074,7 @@
       if (replacement) {
         results().replaceWith(replacement);
       }
+      syncTab();
       syncPager();
     }
 
@@ -1074,7 +1086,7 @@
       }
       setFindUrl(raw);
       if (!raw.trim()) {
-        replaceResults('<div class="find-results"></div>');
+        replaceResults('<div class="find-results" data-tab-count="" data-tab-title="Search results"></div>');
         highlightFind("");
         showResults(false);
         return;

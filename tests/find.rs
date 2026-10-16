@@ -394,11 +394,9 @@ async fn the_read_page_lists_results_without_scripts() {
     // Without `find` the Search tab and panel are hidden; the top bar's field searches
     // the book and keeps the part.
     let reply = server.ok(&format!("/book/{id}/read?part=2")).await;
-    assert!(
-        reply
-            .body
-            .contains("<a href=\"#tab-find\" data-tab=\"find\" hidden>Search</a>")
-    );
+    assert!(reply.body.contains(
+        "class=\"find-tab\" title=\"Search results\" aria-label=\"Search results\" hidden><svg"
+    ));
     assert!(
         reply
             .body
@@ -432,7 +430,7 @@ async fn the_read_page_lists_results_without_scripts() {
     assert!(
         reply
             .body
-            .contains("<a href=\"#tab-find\" data-tab=\"find\">Search</a>")
+            .contains("title=\"Search results: 3 matches\" aria-label=\"Search results: 3 matches\"><svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-search\"></use></svg><span class=\"tab-count\">3</span></a>")
     );
     assert!(
         reply
@@ -450,7 +448,11 @@ async fn the_read_page_lists_results_without_scripts() {
     // An empty query shows no results.
     let reply = server.ok(&format!("/book/{id}/read?find=+")).await;
     assert!(!reply.body.contains("find-hits"));
-    assert!(reply.body.contains("data-tab=\"find\" hidden>"));
+    assert!(
+        reply
+            .body
+            .contains("aria-label=\"Search results\" hidden><svg")
+    );
     // Library pages have no Search tab, and their field searches the library.
     for page in ["/".to_owned(), format!("/book/{id}")] {
         let reply = server.ok(&page).await;

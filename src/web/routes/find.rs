@@ -48,6 +48,8 @@ pub(crate) struct FindResults {
     pub(crate) message: Option<String>,
     /// After the results when not all are listed: "The first 500 of 1 234 matches…".
     pub(crate) more: Option<String>,
+    /// The number of matches in the book (0 with a message).
+    pub(crate) total: usize,
     pub(crate) groups: Vec<FindGroup>,
 }
 
@@ -65,6 +67,7 @@ impl FindResults {
         let message = |message: String| Self {
             message: Some(message),
             more: None,
+            total: 0,
             groups: Vec::new(),
         };
         let parsed = match find::Query::parse(query) {
@@ -148,7 +151,28 @@ impl FindResults {
         Self {
             message: None,
             more,
+            total: found.total,
             groups: groups.into_iter().map(|(_, group)| group).collect(),
+        }
+    }
+}
+
+impl FindResults {
+    /// The tab's count: "23", "999+" for more than 999, empty without matches.
+    pub(crate) fn tab_count(&self) -> String {
+        match self.total {
+            0 => String::new(),
+            n if n > 999 => "999+".to_owned(),
+            n => n.to_string(),
+        }
+    }
+
+    /// The tab's tooltip: "Search results: 23 matches".
+    pub(crate) fn tab_title(&self) -> String {
+        match self.total {
+            0 => "Search results".to_owned(),
+            1 => "Search results: 1 match".to_owned(),
+            n => format!("Search results: {} matches", group_digits(n)),
         }
     }
 }
@@ -209,7 +233,26 @@ pub(crate) async fn find(
 
 #[cfg(test)]
 mod tests {
-    use super::group_digits;
+    use super::{FindResults, group_digits};
+
+    #[test]
+    fn tab_counts() {
+        let results = |total| FindResults {
+            message: None,
+            more: None,
+            total,
+            groups: Vec::new(),
+        };
+        assert_eq!(results(0).tab_count(), "");
+        assert_eq!(results(23).tab_count(), "23");
+        assert_eq!(results(999).tab_count(), "999");
+        assert_eq!(results(1000).tab_count(), "999+");
+        assert_eq!(results(1).tab_title(), "Search results: 1 match");
+        assert_eq!(
+            results(47_356).tab_title(),
+            "Search results: 47\u{202f}356 matches"
+        );
+    }
 
     #[test]
     fn digits_are_grouped() {
