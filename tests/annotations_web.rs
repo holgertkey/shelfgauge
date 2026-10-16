@@ -449,6 +449,10 @@ async fn marks_bookmarks_notes_and_export() {
     assert!(lib.export_files().is_empty(), "no file without annotations");
     let card = server.ok(&format!("/book/{id}")).await;
     assert!(card.contains("No bookmarks yet") && card.contains("No quotes yet"));
+    let read = server.ok(&format!("/book/{id}/read")).await;
+    assert!(read.contains(
+        "No bookmarks yet. A bookmark remembers the place at the top of the page (press <kbd>b</kbd>)."
+    ));
     // Gone: 404 (JSON for the reader).
     let reply = server
         .json(&format!("/annotation/{mark}/delete"), serde_json::json!({}))
