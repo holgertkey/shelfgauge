@@ -44,12 +44,10 @@ pub(crate) struct FindGroup {
 
 /// The Search tab's results.
 pub(crate) struct FindResults {
-    /// Shown instead of results (a query too short or too long).
+    /// Shown instead of results (a query too short or too long, no matches).
     pub(crate) message: Option<String>,
-    /// The number of matches in the book.
-    pub(crate) total: usize,
-    /// "3 matches", "500 of 1 234 shown — refine the query".
-    pub(crate) count: String,
+    /// After the results when not all are listed: "The first 500 of 1 234 matches…".
+    pub(crate) more: Option<String>,
     pub(crate) groups: Vec<FindGroup>,
 }
 
@@ -66,8 +64,7 @@ impl FindResults {
     ) -> Self {
         let message = |message: String| Self {
             message: Some(message),
-            total: 0,
-            count: String::new(),
+            more: None,
             groups: Vec::new(),
         };
         let parsed = match find::Query::parse(query) {
@@ -137,20 +134,20 @@ impl FindResults {
                     snippet: Snippet::new(block_text, hit.start, hit.end, SNIPPET_CONTEXT),
                 });
         }
-        let count = match (found.total, found.hits.len()) {
-            (0, _) => "No matches.".to_owned(),
-            (1, _) => "1 match".to_owned(),
-            (total, shown) if shown < total => format!(
-                "{} of {} shown — refine the query",
+        if found.total == 0 {
+            return message("No matches.".into());
+        }
+        let shown = found.hits.len();
+        let more = (shown < found.total).then(|| {
+            format!(
+                "The first {} of {} matches are listed; refine the query to find the rest.",
                 group_digits(shown),
-                group_digits(total)
-            ),
-            (total, _) => format!("{} matches", group_digits(total)),
-        };
+                group_digits(found.total)
+            )
+        });
         Self {
             message: None,
-            total: found.total,
-            count,
+            more,
             groups: groups.into_iter().map(|(_, group)| group).collect(),
         }
     }

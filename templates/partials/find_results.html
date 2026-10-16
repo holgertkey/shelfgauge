@@ -2,13 +2,6 @@
   {%- if let Some(message) = results.message %}
   <p class="hint">{{ message }}</p>
   {%- else %}
-  <div class="find-head">
-    <p class="find-count" role="status">{{ results.count }}</p>
-    {%- if results.total > 0 %}
-    <button type="button" class="icon-button find-step" data-step="-1" title="Previous match (Shift+N)" aria-label="Previous match" hidden>‹</button>
-    <button type="button" class="icon-button find-step" data-step="1" title="Next match (n)" aria-label="Next match" hidden>›</button>
-    {%- endif %}
-  </div>
   {%- for group in results.groups %}
   {%- if !group.title.is_empty() %}
   <h3 class="find-section">{{ group.title }}</h3>
@@ -19,5 +12,8 @@
     {%- endfor %}
   </ol>
   {%- endfor %}
+  {%- if let Some(more) = results.more %}
+  <p class="hint find-more">{{ more }}</p>
+  {%- endif %}
   {%- endif %}
 </div>

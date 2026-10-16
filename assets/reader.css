@@ -1,7 +1,7 @@
 /* shelfgauge reader: sidebar tabs, bookmark and mark lists, highlights, the mark
    popup. Loaded on read pages only. */
 
-/* Four tabs fit a narrow sidebar; a still narrower one wraps them. */
+/* Four tabs and the pager fit the default sidebar; a narrower one wraps them. */
 .reader-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -9,11 +9,42 @@
   border-bottom: 1px solid var(--border);
 }
 
+/* With reader.js the tab row (and its pager) stays at the top of the scrolling
+   sidebar. */
+.tabbed .reader-tabs {
+  position: sticky;
+  top: -0.75rem;
+  z-index: 1;
+  margin: 0 -0.5rem 0.75rem -0.75rem;
+  padding: 0 0.5rem 0 0.75rem;
+  background: var(--sidebar-bg);
+}
+
 .reader-tabs a {
-  padding: 0.3rem 0.35rem;
-  font-size: 0.9rem;
+  padding: 0.3rem 0.2rem;
+  font-size: 0.85rem;
   color: var(--muted);
   border-bottom: 2px solid transparent;
+}
+
+/* Page up / page down for the open tab, at the end of the tab row. */
+.tab-pager {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+}
+
+.tab-pager .icon-button {
+  width: 1rem;
+  height: 1.6rem;
+  padding: 0;
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.tab-pager .icon-button:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .reader-tabs a:hover {
@@ -125,30 +156,8 @@ mark.sg-mark {
   display: none !important;
 }
 
-/* The count and the step buttons stay at the top of the scrolling sidebar. */
-.find-head {
-  position: sticky;
-  top: -0.75rem;
-  z-index: 1;
-  display: flex;
-  gap: 0.25rem;
-  align-items: center;
-  margin: 0 -0.5rem 0.25rem -0.75rem;
-  padding: 0.25rem 0.5rem 0.25rem 0.75rem;
-  background: var(--sidebar-bg);
-  border-bottom: 1px solid var(--border);
-}
-
-.find-step {
-  font-size: 1.2rem;
-  line-height: 1;
-}
-
-.find-count {
-  flex: 1;
-  margin: 0.25rem 0;
-  color: var(--muted);
-  font-size: 0.85rem;
+.find-more {
+  margin: 0.75rem 0 0;
 }
 
 .find-section {

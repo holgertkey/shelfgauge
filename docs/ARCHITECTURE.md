@@ -206,15 +206,14 @@ Key design points to keep in mind when implementing:
     `?at=b<n>` redirects to the part URL with `#b<n>`.
   - *Search within the book* (0.11.0): in reading mode the top bar's search field
     searches the open book; the results fill a fourth sidebar tab, **Search**, which
-    exists only while there is a query (the count and the `‹ ›` buttons stay at its
-    top). No index: the
+    exists only while there is a query. No index: the
     query and the rendered text of every leaf block are normalized (lowercase one code
     point at a time, `ё` → `е`, `ς` → `σ`, `’ʼ` → `'`, soft hyphens and zero-width
     characters dropped, whitespace runs → one space; `src/annotations/find.rs`) and
     matched as plain substrings, never across two blocks; a map leads back to the
     original code points. The normalized text of the whole book is built on its first
     search and kept in the book's `BookText`, which stays in memory with the parsed
-    book. At most 500 results are listed (all are counted), grouped by section (notes
+    book. At most 500 results are listed (a note gives the total), grouped by section (notes
     as "Notes"), each a snippet linking to `read?part=<n>&find=<query>&hit=<k>#<block>`.
     `GET /book/<id>/find?q=` returns the results as a fragment for the live search;
     without scripts the form submits to the read page, which renders them. The reader

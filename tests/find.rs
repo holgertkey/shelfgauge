@@ -71,6 +71,13 @@ impl TestLibrary {
                 "<section><p>A &lt;b&gt;bold&lt;/b&gt; claim &amp; a \"quote\".</p></section>",
             ),
         );
+        lib.write(
+            "many.fb2",
+            &fb2(
+                "Many",
+                &format!("<section><p>{}</p></section>", "echo ".repeat(1234)),
+            ),
+        );
         lib.write("gone.fb2", &chapters());
         lib.scan();
         std::fs::remove_file(lib.dir.path().join("gone.fb2")).unwrap();
@@ -183,12 +190,9 @@ fn hrefs(body: &str) -> Vec<String> {
         .collect()
 }
 
-/// The text of the `<p class="find-count">` element.
-fn count(body: &str) -> &str {
-    let start = body.find("class=\"find-count\"").expect("a count");
-    let start = body[start..].find('>').unwrap() + start + 1;
-    let end = body[start..].find('<').unwrap() + start;
-    &body[start..end]
+/// The number of results listed.
+fn count(body: &str) -> usize {
+    body.matches(" data-hit=\"").count()
 }
 
 #[tokio::test]
@@ -201,7 +205,7 @@ async fn results_link_to_the_right_parts() {
         reply.headers.get(header::CACHE_CONTROL).unwrap(),
         "no-store"
     );
-    assert_eq!(count(&reply.body), "3 matches");
+    assert_eq!(count(&reply.body), 3);
     for n in 1..=3 {
         assert!(
             reply
@@ -252,7 +256,7 @@ async fn every_format_is_searched_with_normalization() {
     // FB2: a title, main text and a footnote (grouped as notes).
     let full = lib.id_of("full.fb2");
     let reply = server.ok(&format!("/book/{full}/find?q=STAIRS")).await;
-    assert_eq!(count(&reply.body), "2 matches", "{}", reply.body);
+    assert_eq!(count(&reply.body), 2, "{}", reply.body);
     assert!(reply.body.contains("<h3 class=\"find-section\">Notes</h3>"));
     assert!(
         reply
@@ -271,7 +275,7 @@ async fn every_format_is_searched_with_normalization() {
     let reply = server
         .ok(&format!("/book/{epub}/find?q=endnote%20one"))
         .await;
-    assert_eq!(count(&reply.body), "1 match", "{}", reply.body);
+    assert_eq!(count(&reply.body), 1, "{}", reply.body);
     assert!(reply.body.contains("<mark>Endnote one</mark>"));
     // TXT: whitespace runs of the hard-wrapped text count as one space.
     let txt = lib.id_of("Пушкин - Дубровский.txt");
@@ -281,7 +285,7 @@ async fn every_format_is_searched_with_normalization() {
             "кирила петрович".replace(' ', "%20")
         ))
         .await;
-    assert!(count(&reply.body).ends_with("matches"), "{}", reply.body);
+    assert!(count(&reply.body) > 1, "{}", reply.body);
     assert!(reply.body.contains("<mark>Кирила Петрович</mark>"));
 }
 
@@ -302,10 +306,33 @@ async fn short_long_and_empty_queries_are_not_searched() {
         assert!(!reply.body.contains("find-hits"));
     }
     let reply = server.ok(&format!("/book/{id}/find?q=zzz")).await;
-    assert_eq!(count(&reply.body), "No matches.");
+    assert!(reply.body.contains("<p class=\"hint\">No matches.</p>"));
+    assert_eq!(count(&reply.body), 0);
     // Invalid UTF-8 is decoded lossily: one replacement character.
     let reply = server.ok(&format!("/book/{id}/find?q=%FF")).await;
     assert!(reply.body.contains("at least 2"), "{}", reply.body);
+}
+
+#[tokio::test]
+async fn at_most_500_results_are_listed_and_all_are_counted() {
+    let lib = TestLibrary::new();
+    let server = lib.server(ReaderConfig::default());
+    let id = lib.id_of("many.fb2");
+    let reply = server.ok(&format!("/book/{id}/find?q=echo")).await;
+    assert_eq!(count(&reply.body), 500);
+    assert!(
+        reply.body.contains(
+            "The first 500 of 1\u{202f}234 matches are listed; refine the query to find the rest."
+        ),
+        "{}",
+        reply.body
+    );
+    let reply = server.ok(&format!("/book/{id}/find?q=echo%20echo")).await;
+    assert_eq!(count(&reply.body), 500, "non-overlapping: 617 matches");
+    assert!(reply.body.contains("The first 500 of 617 matches"));
+    let chapters = lib.id_of("chapters.fb2");
+    let reply = server.ok(&format!("/book/{chapters}/find?q=chapter")).await;
+    assert!(!reply.body.contains("find-more"), "all listed: no note");
 }
 
 #[tokio::test]
@@ -315,7 +342,7 @@ async fn markup_in_the_text_and_the_query_is_escaped() {
     let id = lib.id_of("markup.fb2");
     let query = "%3Cb%3Ebold%3C%2Fb%3E%20claim%20%26"; // "<b>bold</b> claim &"
     let reply = server.ok(&format!("/book/{id}/find?q={query}")).await;
-    assert_eq!(count(&reply.body), "1 match", "{}", reply.body);
+    assert_eq!(count(&reply.body), 1, "{}", reply.body);
     assert!(
         reply
             .body
@@ -396,12 +423,12 @@ async fn the_read_page_lists_results_without_scripts() {
         !reply.body.contains("name=\"q\""),
         "no library search field in reading mode"
     );
-    assert!(!reply.body.contains("find-count"));
+    assert!(!reply.body.contains("find-hits"));
     // The form's answer: the results first, in the same part, under their count.
     let reply = server
         .ok(&format!("/book/{id}/read?part=2&find=paragraph+3"))
         .await;
-    assert_eq!(count(&reply.body), "3 matches");
+    assert_eq!(count(&reply.body), 3);
     assert!(
         reply
             .body
@@ -422,7 +449,7 @@ async fn the_read_page_lists_results_without_scripts() {
     );
     // An empty query shows no results.
     let reply = server.ok(&format!("/book/{id}/read?find=+")).await;
-    assert!(!reply.body.contains("find-count"));
+    assert!(!reply.body.contains("find-hits"));
     assert!(reply.body.contains("data-tab=\"find\" hidden>"));
     // Library pages have no Search tab, and their field searches the library.
     for page in ["/".to_owned(), format!("/book/{id}")] {

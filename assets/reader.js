@@ -245,6 +245,7 @@
       tab.classList.toggle("active", active);
       tab.setAttribute("aria-current", active ? "true" : "false");
     }
+    syncPager();
     // The Search tab comes and goes with the query: never remembered.
     if (known && remember && name !== "find") {
       storageSet(TAB_KEY, name);
@@ -269,8 +270,39 @@
     }
     // The replaced panels lost their state: show the same tab again.
     showTab(active ? active.dataset.tab : storageGet(TAB_KEY) || "toc", false);
+    syncPager();
     highlight();
     drawBookmarks();
+  }
+
+  // The tab row's ‹ › buttons page through the open tab (the sidebar scrolls) like
+  // Page Up / Page Down; each is disabled at its end.
+  let syncPager = () => {};
+
+  function setupPager() {
+    const pager = sidebar.querySelector(".tab-pager");
+    if (!pager) {
+      return;
+    }
+    const [up, down] = pager.querySelectorAll("[data-page]");
+    pager.hidden = false;
+    syncPager = () => {
+      up.disabled = sidebar.scrollTop <= 0;
+      down.disabled = sidebar.scrollTop + sidebar.clientHeight >= sidebar.scrollHeight - 1;
+    };
+    pager.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-page]");
+      if (button) {
+        // The visible part below the sticky tab row, less a little overlap, like the
+        // browser's Page Down.
+        const row = pager.closest(".reader-tabs").getBoundingClientRect().height;
+        const page = Math.max(sidebar.clientHeight - row - 40, 40);
+        sidebar.scrollBy({ top: Number(button.dataset.page) * page, behavior: "smooth" });
+      }
+    });
+    sidebar.addEventListener("scroll", syncPager, { passive: true });
+    window.addEventListener("resize", syncPager);
+    syncPager();
   }
 
   function setupSidebar() {
@@ -278,6 +310,7 @@
       return;
     }
     sidebar.classList.add("tabbed");
+    setupPager();
     showTab(storageGet(TAB_KEY) || "toc");
     sidebar.addEventListener("click", (event) => {
       const tab = event.target.closest(".reader-tabs a[data-tab]");
@@ -1027,13 +1060,6 @@
       }
     }
 
-    // The step buttons work with scripts only.
-    function syncResults() {
-      for (const button of sidebar.querySelectorAll(".find-step")) {
-        button.hidden = false;
-      }
-    }
-
     function replaceResults(html) {
       const template = document.createElement("template");
       template.innerHTML = html.trim();
@@ -1041,7 +1067,7 @@
       if (replacement) {
         results().replaceWith(replacement);
       }
-      syncResults();
+      syncPager();
     }
 
     async function search(raw) {
@@ -1140,12 +1166,6 @@
         event.preventDefault();
       }
     });
-    sidebar.addEventListener("click", (event) => {
-      const step = event.target.closest(".find-step");
-      if (step) {
-        stepFind(Number(step.dataset.step));
-      }
-    });
     document.addEventListener("keydown", (event) => {
       if (event.ctrlKey || event.metaKey || event.altKey) {
         return;
@@ -1173,7 +1193,6 @@
       }
     });
 
-    syncResults();
     const raw = opened.get("find") || "";
     if (raw.trim()) {
       showResults(true);

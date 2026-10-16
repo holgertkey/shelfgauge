@@ -122,11 +122,13 @@ again at the next scan.
   soft hyphens and line breaks do not matter; it matches any part of a word, so a word
   start finds its forms too. Results are listed by chapter with the text around each
   match (at most 500; refine the query for more) and lead to the place, where every
-  match on the page is highlighted. `n` / `Shift+N` (or `‹` `›`) go to the next or
-  previous result, also across parts; `Esc` leaves the search field, a second `Esc`
-  clears the search and closes the tab. Following a result does not move your reading
-  position. The library search (on library pages) covers titles, authors, series and
-  descriptions, not the books' text.
+  match on the page is highlighted. `n` / `Shift+N` go to the next or previous result,
+  also across parts; `Esc` leaves the search field, a second `Esc` clears the search
+  and closes the tab. Following a result does not move your reading position. The
+  library search (on library pages) covers titles, authors, series and descriptions,
+  not the books' text.
+- While reading, the sidebar's tab row stays at its top; its `‹` `›` buttons page
+  through the open tab (contents, bookmarks, quotes or search results).
 - Keys: `/` or `s` search, `t` next theme, `m` sidebar mode, `Esc` leave the search
   field; while reading, `/` or `s` search in the book, `n` / `Shift+N` next / previous
   result, `←`/`→` previous/next part, `b` bookmark, `f` focus mode, `-`/`+`

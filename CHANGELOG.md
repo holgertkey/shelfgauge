@@ -15,11 +15,12 @@ Build numbers (`+NNN`) do not get their own sections.
 - Search within the open book: in reading mode the top bar's search field (`/` or `s`)
   finds a word or phrase anywhere in the book as you type, ignoring case, `ё`/`е`, soft
   hyphens and line breaks. Results appear in a **Search** tab of the sidebar (shown only
-  while there is a query) under a count that stays in view, grouped by chapter (notes
-  as "Notes"), with the text around each match; they lead to the place,
-  where the matches on the page are highlighted; `n` / `Shift+N` go to the next or previous result across parts, `Esc`
-  leaves the search field and then clears the search. At most 500 results are listed, all are counted. Following a
-  result does not move the reading position. Works without JavaScript too (the form
+  while there is a query), grouped by chapter (notes as "Notes"), with the text around
+  each match; they lead to the place, where the matches on the page are highlighted.
+  `n` / `Shift+N` go to the next or previous result across parts, `Esc` leaves the
+  search field and then clears the search. At most 500 results are listed (a note
+  after them gives the total). Following a result does not move the reading
+  position. Works without JavaScript too (the form
   opens the read page with the results). Full-text search across the library is not
   planned.
 - `shelfgauge errors [PATH]` lists the books that could not be read at the last scan,
@@ -37,7 +38,9 @@ Build numbers (`+NNN`) do not get their own sections.
   while scrolling) instead of every entry of the current part.
 - The Quote button on a text selection uses the accent color.
 - A book without a table of contents has no Contents tab.
-- The reader's sidebar tabs are a bit smaller, so four fit in a row.
+- The reader's sidebar tabs are a bit smaller, so four fit in a row with `‹ ›`
+  buttons that page through the open tab (like Page Up / Page Down); the tab row stays
+  at the top while the sidebar scrolls.
 - In reading mode the top bar's search field searches the open book (on library pages
   it searches the library as before).
 
