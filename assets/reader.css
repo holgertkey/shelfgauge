@@ -125,10 +125,18 @@ mark.sg-mark {
   display: none !important;
 }
 
+/* The count and the step buttons stay at the top of the scrolling sidebar. */
 .find-head {
+  position: sticky;
+  top: -0.75rem;
+  z-index: 1;
   display: flex;
   gap: 0.25rem;
   align-items: center;
+  margin: 0 -0.5rem 0.25rem -0.75rem;
+  padding: 0.25rem 0.5rem 0.25rem 0.75rem;
+  background: var(--sidebar-bg);
+  border-bottom: 1px solid var(--border);
 }
 
 .find-step {
@@ -140,11 +148,6 @@ mark.sg-mark {
   flex: 1;
   margin: 0.25rem 0;
   color: var(--muted);
-  font-size: 0.85rem;
-}
-
-.find-library {
-  margin: 0 0 0.5rem;
   font-size: 0.85rem;
 }
 

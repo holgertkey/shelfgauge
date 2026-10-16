@@ -324,11 +324,6 @@ async fn markup_in_the_text_and_the_query_is_escaped() {
         reply.body
     );
     assert!(!reply.body.contains("<b>"));
-    assert!(
-        reply
-            .body
-            .contains("Search the library for “&#60;b&#62;bold&#60;/b&#62; claim &#38;” ›")
-    );
     // The read page: the field and the links carry the query escaped.
     let reply = server.ok(&format!("/book/{id}/read?find={query}")).await;
     assert!(
@@ -402,8 +397,7 @@ async fn the_read_page_lists_results_without_scripts() {
         "no library search field in reading mode"
     );
     assert!(!reply.body.contains("find-count"));
-    // The form's answer: the results first, in the same part, with a link to the
-    // library search.
+    // The form's answer: the results first, in the same part, under their count.
     let reply = server
         .ok(&format!("/book/{id}/read?part=2&find=paragraph+3"))
         .await;
@@ -421,9 +415,7 @@ async fn the_read_page_lists_results_without_scripts() {
     let panel = reply.body.find("id=\"tab-find\"").unwrap();
     assert!(panel < reply.body.find("id=\"tab-toc\"").unwrap());
     assert!(reply.body.contains("value=\"paragraph 3\""));
-    assert!(reply.body.contains(
-        "<a href=\"/search?q=paragraph%203\">Search the library for “paragraph 3” ›</a>"
-    ));
+    assert!(!reply.body.contains("Search the library"));
     assert!(
         reply.body.contains("Chapter 2, paragraph 1"),
         "still part 2"

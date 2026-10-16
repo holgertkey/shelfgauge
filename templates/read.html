@@ -9,8 +9,8 @@
 <meta name="author" content="{{ book_authors }}">
 {%- endif %}
 {%- endblock %}
-{#- In reading mode the top bar's field searches the book; the results link to the
-    library search. Without scripts the form opens this part with the results. #}
+{#- In reading mode the top bar's field searches the book. Without scripts the form
+    opens this part with the results. #}
 {% block search %}
   <form class="search find-form" action="{{ find.action }}" method="get" role="search" data-href="{{ find.href }}" data-part="{{ find.part }}">
     <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg>
