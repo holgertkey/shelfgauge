@@ -470,14 +470,21 @@ async fn statistics_of_an_empty_library_and_after_a_scan() {
 async fn paths_with_markup_are_escaped() {
     let lib = TestLibrary::new();
     let book = fb2("Копия", CHEKHOV, "Copy", "sf");
-    lib.write("a&b <c>/one.fb2", &book);
-    lib.write("a&b <c>/two.fb2", &book);
-    lib.write("a&b <c>/broken.fb2", b"<broken");
+    // `<` and `>` are not allowed in Windows file names, so the markup lives in zip
+    // entry names, which take any character.
+    lib.zip(
+        "a&b.zip",
+        &[
+            ("<c>/one.fb2", book.clone()),
+            ("<c>/two.fb2", book),
+            ("<c>/broken.fb2", b"<broken".to_vec()),
+        ],
+    );
     lib.scan();
     let server = lib.server();
     for uri in ["/duplicates", "/errors"] {
         let main = server.main(uri).await;
-        assert!(main.contains("a&#38;b &#60;c&#62;/"), "{uri}: {main}");
+        assert!(main.contains("a&#38;b.zip/&#60;c&#62;/"), "{uri}: {main}");
         assert!(!main.contains("<c>"), "{uri}: {main}");
     }
 }
