@@ -21,6 +21,7 @@ use super::{BookParser, ParseError, repair};
 
 mod content;
 pub mod encoding;
+pub mod genres;
 mod metadata;
 
 /// Maximum element nesting converted structurally; deeper content is kept as plain text.

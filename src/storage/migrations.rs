@@ -16,7 +16,7 @@ use rusqlite::Connection;
 use super::StorageError;
 
 /// Schema migrations; index `i` upgrades version `i` to `i + 1`.
-const MIGRATIONS: &[&str] = &[V1, V2, V3];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4];
 
 /// The schema version this build creates and understands.
 pub const SCHEMA_VERSION: u32 = MIGRATIONS.len() as u32;
@@ -198,6 +198,37 @@ CREATE INDEX books_content_hash ON books (content_hash)
 ALTER TABLE containers ADD COLUMN listed_formats TEXT;
 "#;
 
+/// Version 4: library statistics.
+///
+/// - `containers.crc32`: the CRC32 of a plain file (NULL for archives, and for files
+///   read before), stored like `books.entry_crc32`. With the size it is the identity
+///   that finds identical copies across plain files and zip entries. A plain file
+///   without it is read once more by the next scan (only its hash and CRC32 are
+///   computed then, it is not parsed again).
+/// - `scans`: one row per finished (or cancelled) scan with its summary.
+/// - `books_sort_title`: for title-ordered lists and matching books by title.
+const V4: &str = r#"
+ALTER TABLE containers ADD COLUMN crc32 INTEGER;
+
+CREATE TABLE scans (
+    id          INTEGER PRIMARY KEY,
+    started_at  INTEGER NOT NULL,
+    finished_at INTEGER NOT NULL,
+    added       INTEGER NOT NULL,
+    updated     INTEGER NOT NULL,
+    moved       INTEGER NOT NULL,
+    removed     INTEGER NOT NULL,
+    unchanged   INTEGER NOT NULL,
+    parsed      INTEGER NOT NULL,
+    errors      INTEGER NOT NULL,
+    skipped     INTEGER NOT NULL,
+    not_books   INTEGER NOT NULL,
+    cancelled   INTEGER NOT NULL CHECK (cancelled IN (0, 1))
+);
+
+CREATE INDEX books_sort_title ON books (sort_title);
+"#;
+
 /// Brings the schema to [`SCHEMA_VERSION`]; refuses databases from newer builds.
 pub fn migrate(conn: &mut Connection) -> Result<(), StorageError> {
     apply(conn, MIGRATIONS)
@@ -325,7 +356,7 @@ mod tests {
     #[test]
     fn version_3_rebuild_keeps_every_reference() {
         let mut conn = version_2_database();
-        migrate(&mut conn).unwrap();
+        apply(&mut conn, &[V1, V2, V3]).unwrap();
         assert_eq!(version(&conn), 3);
         let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
         assert_eq!(
@@ -381,6 +412,31 @@ mod tests {
         let indexes =
             count("SELECT count(*) FROM sqlite_master WHERE type = 'index' AND tbl_name = 'books'");
         assert_eq!(indexes, 4);
+    }
+
+    #[test]
+    fn version_4_keeps_the_data_and_adds_statistics() {
+        let mut conn = version_2_database();
+        apply(&mut conn, &[V1, V2, V3]).unwrap();
+        migrate(&mut conn).unwrap();
+        assert_eq!(version(&conn), 4);
+        let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(count("SELECT count(*) FROM books WHERE id = 7"), 1);
+        assert_eq!(
+            count("SELECT count(*) FROM book_authors WHERE book_id = 7"),
+            1
+        );
+        assert_eq!(count("SELECT count(*) FROM books_fts WHERE rowid = 7"), 1);
+        assert_eq!(
+            count("SELECT count(*) FROM containers WHERE crc32 IS NULL"),
+            1,
+            "files are read once more"
+        );
+        assert_eq!(count("SELECT count(*) FROM scans"), 0);
+        assert_eq!(
+            count("SELECT count(*) FROM sqlite_master WHERE name = 'books_sort_title'"),
+            1
+        );
     }
 
     #[test]

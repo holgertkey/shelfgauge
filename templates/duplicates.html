@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block main %}
+<p class="breadcrumbs"><a href="{{ layout.urls.stats() }}">Library statistics</a></p>
+<h1>Duplicates</h1>
+<nav class="modes switch" aria-label="Kind of duplicates">
+  <a href="{{ identical_href }}"{% if !probable %} class="active" aria-current="page"{% endif %}>Identical copies</a>
+  <a href="{{ probable_href }}"{% if probable %} class="active" aria-current="page"{% endif %}>Possibly the same book</a>
+</nav>
+<p class="muted">{{ summary }} Duplicates are only listed here: nothing is merged or hidden.</p>
+{%- for group in groups %}
+<ul class="books duplicate-group">
+  {%- for copy in group %}
+  <li><a href="{{ copy.href }}">{{ copy.title }}</a>
+    {%- if !copy.authors.is_empty() %} <span class="authors">{{ copy.authors }}</span>{% endif %}
+    <div class="copy-meta"><span class="path">{{ copy.path }}</span> <span class="muted">· {{ copy.format }} · {{ copy.size }}</span></div></li>
+  {%- endfor %}
+</ul>
+{%- endfor %}
+{% include "partials/pager.html" %}
+{% endblock %}

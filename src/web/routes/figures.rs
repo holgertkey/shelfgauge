@@ -13,6 +13,21 @@ pub(crate) fn group_digits(n: u64) -> String {
     out
 }
 
+/// "1 book", "12 345 books": `n` with its digits grouped and the noun for it.
+pub(crate) fn count(n: u64, one: &str, many: &str) -> String {
+    format!("{} {}", group_digits(n), if n == 1 { one } else { many })
+}
+
+/// A duration in seconds: "12 s", "1 min 28 s", "2 h 5 min".
+pub(crate) fn duration(seconds: i64) -> String {
+    let seconds = seconds.max(0);
+    match seconds {
+        0..60 => format!("{seconds} s"),
+        60..3600 => format!("{} min {} s", seconds / 60, seconds % 60),
+        _ => format!("{} h {} min", seconds / 3600, seconds % 3600 / 60),
+    }
+}
+
 /// A size in bytes with binary units: "512 B", "4.2 KB", "48 MB", "1 234 GB".
 ///
 /// One decimal below 10 units, whole units above.
@@ -60,6 +75,14 @@ mod tests {
         assert_eq!(group_digits(500), "500");
         assert_eq!(group_digits(1234), "1\u{202f}234");
         assert_eq!(group_digits(1_234_567), "1\u{202f}234\u{202f}567");
+    }
+
+    #[test]
+    fn durations() {
+        assert_eq!(duration(-1), "0 s");
+        assert_eq!(duration(59), "59 s");
+        assert_eq!(duration(88), "1 min 28 s");
+        assert_eq!(duration(7500), "2 h 5 min");
     }
 
     #[test]

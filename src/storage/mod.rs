@@ -17,7 +17,9 @@ pub mod containers;
 pub mod folders;
 pub mod genres;
 pub mod migrations;
+pub mod scans;
 pub mod search;
+pub mod stats;
 
 /// How long a connection waits for a lock held by another connection.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);

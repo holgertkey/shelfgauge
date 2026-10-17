@@ -8,6 +8,43 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-17
+
+### Added
+
+- **Library statistics** (`/stats`, linked from the library page): books, authors,
+  series, genres and the size on disk (with the part in zip archives); bars for
+  formats, languages, genres, the top series and authors; the state of the index (the
+  last scan, books that could not be read, DRM, duplicates, books without a cover or an
+  author); reading and quotes (books in progress and finished, bookmarks, quotes and
+  the latest three). Every figure with a list behind it links to it.
+- Book lists behind the figures: `/books?format=`, `?language=`, `?genre=`,
+  `?missing=cover` and `?missing=author`, by title, with pages.
+- **Duplicates** (`/duplicates`), reported and never merged or hidden: identical
+  copies (the same content in several files, across plain files and zip archives) and
+  books that are possibly the same book (the same title and authors, different
+  contents, e.g. an FB2 and an EPUB).
+- **Books that could not be read** (`/errors`): the web version of
+  `shelfgauge errors`, with the books protected by DRM listed separately.
+- FB2 genres are shown by name ("Fantasy" for `sf_fantasy`) on the book card and the
+  statistics, and link to the list of the genre's books; unknown codes and EPUB
+  subjects are shown as they are.
+- The library page shows the books added last with their covers, one line of figures
+  (books, authors, size on disk) and a notice when books could not be read, are
+  protected by DRM or have identical copies.
+
+### Changed
+
+- The library page is reworked: "Currently reading" shows cards with the cover, a
+  progress bar and a **Continue** button; an empty library shows the supported formats
+  (FB2, EPUB, TXT, `.fbz`, optional HTML) and the Rescan button; the keyboard
+  shortcuts (updated with the keys of 0.11.0) are collapsed under "Keyboard
+  shortcuts".
+- The index schema is now version 4 (scans history, a CRC32 for plain files, an index
+  on titles). **The first scan after the upgrade reads every plain book file once more**
+  to compute its CRC32 (files are not parsed again; on a large library on a slow disk
+  this takes a while). Older versions of shelfgauge cannot open the upgraded index.
+
 ## [0.11.0] - 2026-10-16
 
 ### Added

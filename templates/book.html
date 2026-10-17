@@ -16,7 +16,7 @@
     {%- endfor %}
     <dl class="facts">
       {%- if !series.is_empty() %}<dt>Series</dt><dd>{{ series.join("; ") }}</dd>{% endif %}
-      {%- if !genres.is_empty() %}<dt>Genres</dt><dd>{{ genres.join(", ") }}</dd>{% endif %}
+      {%- if !genres.is_empty() %}<dt>Genres</dt><dd>{% for (name, href) in genres %}{% if !loop.first %}, {% endif %}<a href="{{ href }}">{{ name }}</a>{% endfor %}</dd>{% endif %}
       {%- if let Some(language) = language %}<dt>Language</dt><dd>{{ language }}</dd>{% endif %}
       <dt>Format</dt><dd>{{ format }}</dd>
       <dt>Location</dt><dd class="path"><a href="{{ folder_href }}">{{ location }}</a></dd>

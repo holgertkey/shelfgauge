@@ -14,6 +14,7 @@ use shelfgauge::storage::books::{
 use shelfgauge::storage::containers::{ContainerRecord, upsert_container};
 use shelfgauge::storage::folders::{FolderKind, FolderPath, folder_book_index, folder_children};
 use shelfgauge::storage::search::search;
+use shelfgauge::storage::stats::{BookFilter, count_books_where, library_stats, list_books};
 use shelfgauge::storage::{open_read_pool, open_writer};
 
 struct Db {
@@ -45,6 +46,7 @@ fn container(conn: &Connection, path: &str) -> i64 {
             size: 100,
             mtime_ns: 1,
             content_hash: (kind == ContainerKind::File).then(|| path.as_bytes().to_vec()),
+            crc32: (kind == ContainerKind::File).then(|| crc32fast::hash(path.as_bytes())),
             listed_formats: None,
         },
     )
@@ -818,4 +820,113 @@ fn record_from_parsed_metadata() {
     assert_eq!(record.annotation, "One.\nTwo.");
     assert_eq!(record.cover_mime.as_deref(), Some("image/png"));
     assert_eq!(record.status, BookStatus::Ok);
+}
+
+#[test]
+fn library_stats_count_readable_books_and_each_container_once() {
+    let db = db();
+    let zip = container(&db.conn, "pack.zip");
+    let mut records = Vec::new();
+    for (i, (title, format, language, genre)) in [
+        ("A", "fb2", Some("ru"), "sf_fantasy"),
+        ("B", "fb2", Some("ru"), "prose"),
+        ("C", "epub", Some("en"), "prose"),
+        ("D", "epub", None, "prose"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut record = book(
+            zip,
+            Some(entry(title, i as u32)),
+            title,
+            vec![person("Толстой", "Лев")],
+        );
+        record.format = format.to_owned();
+        record.language = language.map(str::to_owned);
+        record.genres = vec![genre.to_owned()];
+        if title == "A" {
+            record.series = vec![Series {
+                name: "Saga".to_owned(),
+                index: None,
+            }];
+            record.cover_mime = Some("image/png".to_owned());
+        }
+        records.push(upsert_book(&db.conn, &record).unwrap());
+    }
+    let loose = container(&db.conn, "loose.txt");
+    let mut record = book(loose, None, "No author", Vec::new());
+    record.format = "txt".to_owned();
+    upsert_book(&db.conn, &record).unwrap();
+    let gone = container(&db.conn, "gone.fb2");
+    let removed = upsert_book(&db.conn, &book(gone, None, "Gone", Vec::new())).unwrap();
+    mark_removed(&db.conn, removed).unwrap();
+    let broken = container(&db.conn, "broken.fb2");
+    upsert_book(
+        &db.conn,
+        &BookRecord::failed(broken, None, None, "fb2", "broken", "bad"),
+    )
+    .unwrap();
+    let mut locked = book(zip, Some(entry("locked", 9)), "Locked", Vec::new());
+    locked.status = BookStatus::Protected;
+    locked.drm = Some("Adobe ADEPT".to_owned());
+    locked.format = "epub".to_owned();
+    upsert_book(&db.conn, &locked).unwrap();
+
+    let stats = library_stats(&db.conn).unwrap();
+    assert_eq!((stats.books, stats.readable), (7, 5));
+    assert_eq!((stats.errors, stats.protected), (1, 1));
+    assert_eq!(stats.authors, 1);
+    assert_eq!((stats.series, stats.genres), (1, 2));
+    // `container` records 100 bytes each: the zip (once), loose and broken; not gone.
+    assert_eq!((stats.size, stats.zip_size), (300, 100));
+    let shares = |list: &[shelfgauge::storage::stats::Share]| -> Vec<(Option<String>, u64)> {
+        list.iter().map(|s| (s.value.clone(), s.books)).collect()
+    };
+    let s = |v: &str| Some(v.to_owned());
+    assert_eq!(
+        shares(&stats.formats),
+        [(s("epub"), 2), (s("fb2"), 2), (s("txt"), 1)]
+    );
+    assert_eq!(
+        shares(&stats.languages),
+        [(s("ru"), 3), (None, 1), (s("en"), 1)]
+    );
+    assert_eq!(
+        shares(&stats.top_genres),
+        [(s("prose"), 4), (s("sf_fantasy"), 1)]
+    );
+    assert_eq!(stats.top_authors.len(), 1);
+    assert_eq!(
+        (
+            stats.top_authors[0].name.as_str(),
+            stats.top_authors[0].books
+        ),
+        ("Толстой Лев", 4)
+    );
+    assert_eq!(stats.top_series[0].name, "Saga");
+    assert_eq!((stats.without_cover, stats.without_author), (4, 1));
+    assert_eq!(stats.last_scan, None);
+
+    // Each figure is the length of its list.
+    for (filter, expected) in [
+        (BookFilter::Format("epub".to_owned()), 2),
+        (BookFilter::Language("ru".to_owned()), 3),
+        (BookFilter::Genre("prose".to_owned()), 4),
+        (BookFilter::WithoutCover, 4),
+        (BookFilter::WithoutAuthor, 1),
+        (BookFilter::Format("pdf".to_owned()), 0),
+    ] {
+        assert_eq!(
+            count_books_where(&db.conn, &filter).unwrap(),
+            expected,
+            "{filter:?}"
+        );
+        let listed = list_books(&db.conn, &filter, 10, 0).unwrap();
+        assert_eq!(listed.len() as u64, expected, "{filter:?}");
+    }
+    let page = list_books(&db.conn, &BookFilter::Genre("prose".to_owned()), 2, 1).unwrap();
+    assert_eq!(titles(&page), ["C", "D"], "by title, paged");
+    let none = list_books(&db.conn, &BookFilter::WithoutAuthor, 10, 0).unwrap();
+    assert_eq!(titles(&none), ["No author"]);
 }

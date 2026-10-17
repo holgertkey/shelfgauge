@@ -65,7 +65,7 @@
   </ul>
 </section>
 {%- endif %}
-<p class="summary">{{ summary }}</p>
+<p class="summary">{{ summary }} <a class="stats-link" href="{{ layout.urls.stats() }}">Library statistics ›</a></p>
 {%- if !attention.is_empty() %}
 <p class="attention">{% for (text, href) in attention %}{% if !loop.first %} · {% endif %}<a href="{{ href }}">{{ text }}</a>{% endfor %} ›</p>
 {%- endif %}

@@ -1,11 +1,11 @@
-# shelfgauge v0.11.0
+# shelfgauge v0.12.0
 
 A single-binary tool that indexes a folder tree of ebooks — FB2, EPUB, plain text and
 (optionally) HTML files, plain or inside `.zip` archives — into a local SQLite
 database and serves a browsable, searchable web library on `localhost`, with an
 in-browser reader.
 
-**Current version:** 0.11.0
+**Current version:** 0.12.0
 
 ## Status
 
@@ -13,7 +13,8 @@ Early development, not yet published. `shelfgauge [PATH]` indexes a library of F
 TXT and (if enabled) HTML books (plain files and `.zip` archives, any number of books per archive) in the background and
 serves it as a web library: browse by author or by folder, open a book card (cover,
 series, genres, annotation), search by title, author, series or annotation, and read
-books in the browser, with search inside the open book. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design.
+books in the browser, with search inside the open book. A statistics page shows what
+is in the library, the state of the index and duplicates. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design.
 
 ## Installation
 
@@ -94,6 +95,26 @@ again at the next scan.
 
 ### In the browser
 
+- The **library page** shows the books you are reading (cover, progress, **Continue**,
+  **Mark as finished**), the books added last, one line of figures (books, authors,
+  size on disk) with a link to the statistics, and a short notice when something needs
+  attention: books that could not be read or are protected by DRM, and books with
+  identical copies. An empty library shows the supported formats and **Rescan**.
+- **Library statistics** (`/stats`): books, authors, series, genres and the size on
+  disk (and how much of it is in zip archives); bars for formats, languages, genres, the
+  top series and authors; the state of the index (the last scan, failures, DRM,
+  duplicates, books without a cover or an author); and reading and quotes (books in
+  progress and finished, bookmarks, quotes and the latest three). Every figure with a
+  list behind it is a link: `/books?format=epub`, `?language=ru`, `?genre=<code>`,
+  `?missing=cover` or `?missing=author`. FB2 genre codes are shown by name ("Fantasy");
+  EPUB subjects as they are. The figures are computed once after each scan.
+- **Books that could not be read** (`/errors`): each with its path in the library and the
+  reason, and the books protected by DRM; fix or replace the files and rescan.
+- **Duplicates** (`/duplicates`) are listed, never merged or hidden: *identical copies*
+  (the same content in several files, e.g. a book loose and inside a zip, by size and
+  CRC32) and books that are *possibly the same book* (the same title and authors,
+  different contents, e.g. an FB2 and an EPUB). Books without an author are not
+  matched by title alone.
 - The sidebar lists the library **by author** or **by folder** (zip archives are shown as
   folders); the choice is remembered per browser.
 - A book card shows the cover and metadata; **Read** opens the book. Books are split into
@@ -131,8 +152,8 @@ again at the next scan.
 - While reading, the book link and the tabs stay at the top of the sidebar; the `‹` `›`
   buttons next to the book link page through the open tab (contents, bookmarks, quotes
   or search results).
-- Keys: `/` or `s` search, `t` next theme, `m` sidebar mode, `Esc` leave the search
-  field; while reading, `/` or `s` search in the book, `n` / `Shift+N` next / previous
+- Keys (also under **Keyboard shortcuts** on the library page): `/` or `s` search, `t`
+  next theme, `m` sidebar mode, `Esc` leave the search field; while reading, `/` or `s` search in the book, `n` / `Shift+N` next / previous
   result, `←`/`→` previous/next part, `b` bookmark, `f` focus mode, `-`/`+`
   text size (`0` resets it); in the **Quote** dialog `Ctrl+Enter` saves, `Esc` cancels.
 - **Rescan** (top bar) updates the index while the library stays usable.
@@ -244,4 +265,4 @@ MIT — see [LICENSE](LICENSE).
 
 ---
 
-_shelfgauge v0.11.0 — MIT License_
+_shelfgauge v0.12.0 — MIT License_

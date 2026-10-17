@@ -18,6 +18,9 @@ pub struct ContainerRecord {
     pub mtime_ns: i64,
     /// Content hash of a plain file (not used for archives).
     pub content_hash: Option<Vec<u8>>,
+    /// CRC32 of a plain file (not used for archives); with the size, the identity that
+    /// finds identical copies among plain files and zip entries.
+    pub crc32: Option<u32>,
     /// For an archive: the book formats its entries were listed for (see
     /// [`listed_formats`]). An archive listed for other formats is listed again even if
     /// its stat is unchanged, so books of a newly supported format are found.
@@ -57,12 +60,13 @@ pub struct StoredContainer {
 /// Returns the container id, which stays the same for the same path.
 pub fn upsert_container(conn: &Connection, record: &ContainerRecord) -> Result<i64, StorageError> {
     let id = conn.query_row(
-        "INSERT INTO containers (path, kind, size, mtime_ns, content_hash, present, listed_formats)
-         VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6)
+        "INSERT INTO containers
+             (path, kind, size, mtime_ns, content_hash, present, listed_formats, crc32)
+         VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7)
          ON CONFLICT (path) DO UPDATE SET
              kind = excluded.kind, size = excluded.size, mtime_ns = excluded.mtime_ns,
              content_hash = excluded.content_hash, present = 1,
-             listed_formats = excluded.listed_formats
+             listed_formats = excluded.listed_formats, crc32 = excluded.crc32
          RETURNING id",
         params![
             record.path,
@@ -71,6 +75,7 @@ pub fn upsert_container(conn: &Connection, record: &ContainerRecord) -> Result<i
             record.mtime_ns,
             record.content_hash,
             record.listed_formats,
+            record.crc32.map(i64::from),
         ],
         |row| row.get(0),
     )?;
@@ -90,7 +95,7 @@ pub fn container_by_path(
 ) -> Result<Option<StoredContainer>, StorageError> {
     Ok(conn
         .query_row(
-            "SELECT id, path, kind, size, mtime_ns, content_hash, present, listed_formats
+            "SELECT id, path, kind, size, mtime_ns, content_hash, present, listed_formats, crc32
              FROM containers WHERE path = ?1",
             [path],
             stored_container,
@@ -101,7 +106,7 @@ pub fn container_by_path(
 /// All recorded containers, ordered by path.
 pub fn list_containers(conn: &Connection) -> Result<Vec<StoredContainer>, StorageError> {
     let mut stmt = conn.prepare(
-        "SELECT id, path, kind, size, mtime_ns, content_hash, present, listed_formats
+        "SELECT id, path, kind, size, mtime_ns, content_hash, present, listed_formats, crc32
          FROM containers ORDER BY path",
     )?;
     let rows = stmt.query_map([], stored_container)?;
@@ -133,6 +138,7 @@ fn stored_container(row: &Row<'_>) -> rusqlite::Result<StoredContainer> {
             mtime_ns: row.get(4)?,
             content_hash: row.get(5)?,
             listed_formats: row.get(7)?,
+            crc32: row.get::<_, Option<i64>>(8)?.map(|v| v as u32),
         },
         present: row.get(6)?,
     })
@@ -150,6 +156,8 @@ mod tests {
             size: 10,
             mtime_ns: 1_700_000_000_123_456_789,
             content_hash: (kind == ContainerKind::File).then(|| vec![1, 2, 3]),
+            // Above `i32::MAX`: stored as a positive INTEGER, like `entry_crc32`.
+            crc32: (kind == ContainerKind::File).then_some(0xFFFF_FFF0),
             listed_formats: (kind == ContainerKind::Zip).then(|| "fb2".to_owned()),
         }
     }
@@ -172,6 +180,12 @@ mod tests {
         let stored = container_by_path(&conn, "a/b.fb2").unwrap().unwrap();
         assert_eq!(stored.record, r);
         assert!(stored.present, "upsert marks the container present again");
+        let crc32: i64 = conn
+            .query_row("SELECT crc32 FROM containers WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(crc32, 0xFFFF_FFF0, "stored without a sign flip");
         assert_eq!(container_by_path(&conn, "missing").unwrap(), None);
     }
 

@@ -24,6 +24,7 @@ pub(crate) mod read;
 pub(crate) mod scan;
 pub(crate) mod search;
 pub(crate) mod sidebar;
+pub(crate) mod stats;
 
 /// The query parameters any page may take.
 #[derive(Debug, Default, Deserialize)]
@@ -53,6 +54,16 @@ pub(crate) struct Params {
     find: Option<String>,
     /// The 1-based number of the search result followed (reading mode).
     hit: Option<String>,
+    /// A format (book lists).
+    format: Option<String>,
+    /// A language (book lists).
+    language: Option<String>,
+    /// A genre code (book lists).
+    genre: Option<String>,
+    /// `cover` or `author`: books without one (book lists).
+    missing: Option<String>,
+    /// `probable` for probable duplicates (duplicates page).
+    kind: Option<String>,
 }
 
 impl Params {
@@ -165,6 +176,17 @@ impl BookRow {
     }
 }
 
+/// `YYYY-MM-DD HH:MM UTC` of a Unix time in seconds.
+fn date_time(unix: i64) -> String {
+    let seconds = unix.rem_euclid(86_400);
+    format!(
+        "{} {:02}:{:02} UTC",
+        date(unix),
+        seconds / 3600,
+        seconds % 3600 / 60
+    )
+}
+
 /// `YYYY-MM-DD` (UTC) of a Unix time in seconds.
 fn date(unix: i64) -> String {
     // Howard Hinnant's days-to-civil algorithm.
@@ -199,6 +221,11 @@ mod tests {
         assert_eq!(date(951_782_400), "2000-02-29");
         assert_eq!(date(1_791_763_200), "2026-10-12");
         assert_eq!(date(-86_400), "1969-12-31");
+        assert_eq!(
+            date_time(1_791_763_200 + 3_600 * 6 + 60 * 35 + 59),
+            "2026-10-12 06:35 UTC"
+        );
+        assert_eq!(date_time(-60), "1969-12-31 23:59 UTC");
     }
 
     #[test]

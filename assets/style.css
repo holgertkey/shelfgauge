@@ -1075,6 +1075,164 @@ button.small.primary {
   font-size: 0.9em;
 }
 
+.stats-link {
+  margin-left: 0.5rem;
+  font-size: 0.9rem;
+}
+
+/* ---------- Library statistics ---------- */
+
+.stat-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  gap: 0.75rem;
+  margin: 1rem 0 1.5rem;
+  padding: 0;
+  list-style: none;
+}
+
+.stat-card {
+  display: flex;
+  flex-direction: column;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.stat-card a {
+  display: flex;
+  flex-direction: column;
+  color: inherit;
+}
+
+.stat-card a:hover .stat-label {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.stat-value {
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.stat-label {
+  color: var(--muted);
+}
+
+.stat-detail {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
+  gap: 0.5rem 2rem;
+}
+
+.chart h2,
+.stats-section h2 {
+  margin: 1rem 0 0.5rem;
+  font-size: 1.15rem;
+}
+
+.stats-section h3 {
+  margin: 1rem 0 0.5rem;
+  font-size: 1rem;
+}
+
+.bars {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bars li {
+  display: grid;
+  grid-template-columns: minmax(0, 11rem) minmax(0, 1fr) max-content;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.2rem 0;
+  font-size: 0.9rem;
+}
+
+.bars .bar-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bars .bar {
+  height: 0.6rem;
+  overflow: hidden;
+  background: var(--hover);
+  border-radius: 3px;
+}
+
+.bars .bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+}
+
+.bars .bar-count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.facts-list {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.facts-list li {
+  padding: 0.15rem 0;
+}
+
+.latest-quotes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.latest-quotes li {
+  padding: 0.4rem 0 0.4rem 0.75rem;
+  border-left: 3px solid var(--border);
+}
+
+.latest-quotes li + li {
+  margin-top: 0.5rem;
+}
+
+.latest-quotes .quote {
+  color: var(--fg);
+  font-style: italic;
+}
+
+/* ---------- Duplicates ---------- */
+
+.modes.switch {
+  max-width: 26rem;
+  margin: 0.75rem 0;
+}
+
+.duplicate-group {
+  margin: 0 0 1rem;
+  border-top: 2px solid var(--border);
+}
+
+.copy-meta {
+  font-size: 0.85rem;
+}
+
+.copy-meta .path {
+  color: var(--muted);
+}
+
 /* ---------- Bars ---------- */
 
 .w0 {

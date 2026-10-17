@@ -63,6 +63,13 @@ Key design points to keep in mind when implementing:
   marked `removed` only after a complete, uncancelled walk, never below an unreadable
   directory, for an archive that cannot be listed, or after a transient read error.
   Symlinks are not followed; non-UTF-8 paths are skipped with a warning.
+- **Content identity across kinds** (schema v4): plain files also record a CRC32
+  (`containers.crc32`), computed while the file is read for its hash, so the size and
+  CRC32 of a book's bytes compare plain files with zip entries (identical copies, see
+  *Library statistics*). A plain file recorded before has a hash but no CRC32 and is
+  read once more by the next scan (hash unchanged, not parsed); a file that could not
+  be read has neither and is not retried. Every scan, finished or cancelled, is
+  recorded in `scans` (times and the `ScanSummary` counts).
 - **Moved/renamed files** are re-matched during a scan: plain files by `content_hash`, zip
   entries by `(size, CRC32)` (before any decompression); a unique match keeps the book id
   and updates its location, ambiguous matches create new rows. The content hash is
@@ -191,6 +198,33 @@ Key design points to keep in mind when implementing:
     so `base_path` keeps working).
   - Scan progress is polled (`/scan/status`, JSON), not streamed: an open SSE
     connection would hold up the graceful shutdown.
+  - *Library page* (0.12.0): "Currently reading" as cards (cover, progress bar),
+    the 8 books added last (status `ok`, by id: rows are never deleted and
+    `added_at` is set only on insert, so ids follow it without sorting the table), one
+    line of figures (books, authors, size on disk) and a notice only when something
+    needs attention (failures and DRM link to `/errors`, identical copies to
+    `/duplicates`). Only cheap queries; the identical copies come from the statistics
+    cache.
+  - *Library statistics* (0.12.0, `/stats`, `src/storage/stats.rs`): counts, sizes,
+    bars for formats, languages, genres, top series and authors, index health
+    (last scan, failures, DRM, duplicates, no cover, no author) and reading and quotes
+    (from `userdata.sqlite`, only books whose content key is live). The composition
+    counts readable books (status `ok`); failed and protected books count in the index
+    health. Each figure links to its list (`/books?format=|language=|genre=|missing=`,
+    title order, the same condition, so a list's length is the figure). The whole
+    result is computed in a few hundred milliseconds to about a second on 100 000
+    books, so it is cached in `AppState` and dropped when a scan is recorded (keyed by
+    the last `scans` id, which also notices a `shelfgauge scan` run beside the
+    server). Bars are CSS: the width is one of the classes `w0`…`w100` (steps of 5),
+    since the CSP allows no inline styles; the reading progress bars use them too.
+    FB2 genre codes get names from the schema's list (`src/format/fb2/genres.rs`);
+    unknown codes and EPUB subjects are shown as they are.
+  - *Duplicates are reported, never merged or hidden* (`/duplicates`): identical copies
+    share size + CRC32 (across plain files and archives; copies with one content key
+    already share annotations and the reading position); probable duplicates share the
+    normalized title (`sort_title`) and a non-empty author set with at least two
+    contents (only titles that occur more than once are examined, via the
+    `books_sort_title` index). Books without an author are never matched by title.
   - *Reading mode*: sidebar shows the book's TOC (one entry marked: the section at the
     top of the screen, followed while scrolling); main area shows one part of the book as
     HTML, rendered from `BookContent` (never directly from FB2). Splitting into parts is
@@ -488,5 +522,6 @@ unchanged (its golden test must not change). TXT and `.fbz` followed in 0.9.0, H
 
 ## Out of scope for v1
 
-The V2 hub (above), deduplication across the library, RAR/other archive formats, nested
-archives, multi-root libraries.
+The V2 hub (above), deduplication across the library (duplicates are only reported),
+RAR/other archive formats, nested archives, multi-root libraries, text statistics across
+the library (word or page counts would need every book parsed).

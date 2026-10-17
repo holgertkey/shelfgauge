@@ -8,7 +8,9 @@ use axum::response::{Html, Response};
 use super::annotations::{Lists, book_annotations, progress_label};
 use super::{date, parse_id, render};
 use crate::cache::covers;
+use crate::format::fb2::genres::genre_label;
 use crate::storage::books::{BookStatus, book_by_id};
+use crate::storage::stats::BookFilter;
 use crate::web::error::PROTECTED;
 use crate::web::layout::{Layout, SidebarMode};
 use crate::web::sidebar::{self, Focus};
@@ -23,7 +25,8 @@ struct BookPage {
     authors: Vec<(String, String)>,
     notices: Vec<(&'static str, String)>,
     series: Vec<String>,
-    genres: Vec<String>,
+    /// `(name, list URL)`.
+    genres: Vec<(String, String)>,
     language: Option<String>,
     format: String,
     location: String,
@@ -147,7 +150,16 @@ pub(crate) async fn card(
                 None => s.name.clone(),
             })
             .collect(),
-        genres: book.genres.clone(),
+        genres: book
+            .genres
+            .iter()
+            .map(|code| {
+                (
+                    genre_label(code),
+                    urls.books(&BookFilter::Genre(code.clone()), 1),
+                )
+            })
+            .collect(),
         language: book.language.clone(),
         format: book.format.to_uppercase(),
         folder_href: urls.folder(&sidebar::book_folder(&book), 1),

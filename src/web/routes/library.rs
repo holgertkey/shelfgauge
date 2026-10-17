@@ -6,7 +6,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::{Html, Redirect};
 
-use super::figures::{file_size, group_digits};
+use super::figures::{count, file_size};
 use super::{BookRow, Params, Row, parse_id, render};
 use crate::cache::covers;
 use crate::storage::authors::{
@@ -54,13 +54,14 @@ pub(crate) async fn home(
 ) -> Result<Html<String>, AppError> {
     let mode = SidebarMode::from_headers(&headers);
     let s = state.clone();
-    let (books, authors, size, (errors, protected), recent, sidebar) = state
+    let (books, authors, size, (errors, protected), identical, recent, sidebar) = state
         .db(move |conn| {
             Ok((
                 count_books(conn)?,
                 count_authors(conn, "")?,
                 library_size(conn)?,
                 count_unreadable(conn)?,
+                s.identical_copies(conn)?.identical_groups,
                 recent_books(conn, RECENT_BOOKS)?,
                 sidebar::build(conn, &s, mode, &Focus::None)?,
             ))
@@ -83,6 +84,16 @@ pub(crate) async fn home(
                 count(protected, "book", "books")
             ),
             format!("{}#protected", urls.errors()),
+        ));
+    }
+    if identical > 0 {
+        let verb = if identical == 1 { "has" } else { "have" };
+        attention.push((
+            format!(
+                "{} {verb} identical copies",
+                count(identical, "book", "books")
+            ),
+            urls.duplicates(false, 1),
         ));
     }
     render(&HomePage {
@@ -111,11 +122,6 @@ pub(crate) async fn home(
             .collect(),
         attention,
     })
-}
-
-/// "1 book", "12 345 books" (the digits grouped).
-fn count(n: u64, one: &str, many: &str) -> String {
-    format!("{} {}", group_digits(n), if n == 1 { one } else { many })
 }
 
 #[derive(Template)]

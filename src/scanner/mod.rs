@@ -13,7 +13,8 @@
 //!    [`PARSER_STACK_SIZE`] stacks; a panicking parser is caught and the book is
 //!    recorded with an `error` status.
 //! 5. **Write** everything through a single writer thread in batched transactions,
-//!    caching covers on the way; finally mark vanished books `removed`.
+//!    caching covers on the way; finally mark vanished books `removed` and record the
+//!    scan ([`record_scan`]).
 //!
 //! The scan is crash-resistant: an archive's real `(size, mtime)` is committed only
 //! after all of its books (until then it carries [`UNFINISHED_MTIME`]), and a plain
@@ -38,6 +39,7 @@ use crate::library::Library;
 use crate::storage::StorageError;
 use crate::storage::books::{BookStatus, EntryRecord, all_books};
 use crate::storage::containers::{ContainerRecord, list_containers};
+use crate::storage::scans::{ScanRecord, record_scan};
 
 pub mod background;
 mod detect;
@@ -241,12 +243,14 @@ struct Run<'a> {
     unchanged: AtomicU64,
     not_books: AtomicU64,
     file_candidates: HashMap<Vec<u8>, Vec<i64>>,
-    deferred: Mutex<Vec<(Vec<u8>, Found)>>,
+    /// New plain files set aside for matching: hash, CRC32 and the file.
+    deferred: Mutex<Vec<(Vec<u8>, u32, Found)>>,
 }
 
 impl Scanner<'_> {
     /// Runs a scan, writing through `conn` (the index's writer connection).
     pub fn run(&self, conn: &mut Connection) -> Result<ScanSummary, ScanError> {
+        let started_at = crate::annotations::now();
         let progress = self.progress;
         progress.reset();
         progress.set_phase(ScanPhase::Walking);
@@ -323,8 +327,9 @@ impl Scanner<'_> {
         let (tx, rx) = sync_channel::<Op>(256);
         let covers_dir = self.library.covers_dir();
 
+        let writer_conn = &mut *conn;
         let (stats, counters) = std::thread::scope(|scope| {
-            let writer = scope.spawn(move || writer::run(conn, rx, covers_dir));
+            let writer = scope.spawn(move || writer::run(writer_conn, rx, covers_dir));
             let run = Run {
                 scanner: self,
                 tx,
@@ -397,22 +402,22 @@ impl Scanner<'_> {
                 std::mem::take(&mut *run.deferred.lock().unwrap_or_else(|e| e.into_inner()));
             let keyed = deferred
                 .into_iter()
-                .map(|(hash, found)| (hash.clone(), (hash, found)))
+                .map(|(hash, crc32, found)| (hash.clone(), (hash, crc32, found)))
                 .collect();
             let (file_moves, file_new) = matcher::match_unique(keyed, &run.file_candidates);
             let mut relocated = relocated;
-            for (book_id, (hash, found)) in file_moves {
+            for (book_id, (hash, crc32, found)) in file_moves {
                 relocated.insert(book_id);
                 run.send(Op::Relocate {
                     book_id,
-                    container: ContainerRef::File(file_record(&found, Some(hash))),
+                    container: ContainerRef::File(file_record(&found, Some((hash, crc32)))),
                     entry: None,
                 });
                 progress.done.fetch_add(1, Ordering::Relaxed);
             }
             let rest: Vec<FileJob> = file_new
                 .into_iter()
-                .map(|(_, found)| FileJob {
+                .map(|(_, _, found)| FileJob {
                     found,
                     existing: None,
                     reparse: false,
@@ -450,7 +455,7 @@ impl Scanner<'_> {
         let stats = stats.map_err(|_| ScanError::WriterPanicked)??;
         let (unchanged, parsed, errors, not_books) = counters;
 
-        Ok(ScanSummary {
+        let summary = ScanSummary {
             added: stats.added,
             updated: stats.updated,
             moved: stats.moved,
@@ -461,7 +466,25 @@ impl Scanner<'_> {
             skipped: walk.skipped_non_utf8,
             not_books,
             cancelled: self.cancelled(),
-        })
+        };
+        record_scan(
+            conn,
+            &ScanRecord {
+                started_at,
+                finished_at: crate::annotations::now(),
+                added: summary.added,
+                updated: summary.updated,
+                moved: summary.moved,
+                removed: summary.removed,
+                unchanged: summary.unchanged,
+                parsed: summary.parsed,
+                errors: summary.errors,
+                skipped: summary.skipped,
+                not_books: summary.not_books,
+                cancelled: summary.cancelled,
+            },
+        )?;
+        Ok(summary)
     }
 
     fn cancelled(&self) -> bool {
@@ -522,11 +545,12 @@ impl Run<'_> {
             }
         };
         let hash = crate::cache::content::content_hash(&data);
+        let crc32 = crc32fast::hash(&data);
         if let Some((_, Some(stored))) = &job.existing
             && *stored == hash
             && !job.reparse
         {
-            self.send(Op::Touch(file_record(found, Some(hash))));
+            self.send(Op::Touch(file_record(found, Some((hash, crc32)))));
             self.unchanged.fetch_add(1, Ordering::Relaxed);
             self.done();
             return;
@@ -535,7 +559,7 @@ impl Run<'_> {
             self.deferred
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .push((hash, found.clone()));
+                .push((hash, crc32, found.clone()));
             return;
         }
         // Parser log lines (e.g. a repaired book) name the book.
@@ -544,7 +568,7 @@ impl Run<'_> {
             self.parse(parser, &data, file_name(&found.path))
         };
         self.send(Op::Book {
-            container: ContainerRef::File(file_record(found, Some(hash.clone()))),
+            container: ContainerRef::File(file_record(found, Some((hash.clone(), crc32)))),
             entry: None,
             content_hash: Some(hash),
             format: parser.format(),
@@ -660,17 +684,21 @@ fn archive_record(found: &Found, formats: &str) -> ContainerRecord {
         size: found.size,
         mtime_ns: found.mtime_ns,
         content_hash: None,
+        crc32: None,
         listed_formats: Some(formats.to_owned()),
     }
 }
 
-fn file_record(found: &Found, content_hash: Option<Vec<u8>>) -> ContainerRecord {
+/// The record of a plain file with its content hash and CRC32, if it could be read.
+fn file_record(found: &Found, identity: Option<(Vec<u8>, u32)>) -> ContainerRecord {
+    let (content_hash, crc32) = identity.unzip();
     ContainerRecord {
         path: found.path.clone(),
         kind: ContainerKind::File,
         size: found.size,
         mtime_ns: found.mtime_ns,
         content_hash,
+        crc32,
         listed_formats: None,
     }
 }

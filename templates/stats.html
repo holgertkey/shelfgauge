@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block main %}
+<h1>Library statistics</h1>
+<ul class="stat-cards">
+  {%- for card in cards %}
+  <li class="stat-card">
+    {%- if let Some(href) = card.href %}
+    <a href="{{ href }}"><span class="stat-value">{{ card.value }}</span> <span class="stat-label">{{ card.label }}</span></a>
+    {%- else %}
+    <span class="stat-value">{{ card.value }}</span> <span class="stat-label">{{ card.label }}</span>
+    {%- endif %}
+    {%- if !card.detail.is_empty() %}
+    <span class="stat-detail">{{ card.detail }}</span>
+    {%- endif %}
+  </li>
+  {%- endfor %}
+</ul>
+{%- if !charts.is_empty() %}
+<div class="charts">
+  {%- for chart in charts %}
+  <section class="chart">
+    <h2>{{ chart.title }}</h2>
+    <ul class="bars">
+      {%- for bar in chart.bars %}
+      <li>
+        <span class="bar-label">{% if let Some(href) = bar.href %}<a href="{{ href }}">{{ bar.label }}</a>{% else %}{{ bar.label }}{% endif %}</span>
+        <span class="bar" aria-hidden="true"><span class="{{ bar.width }}"></span></span>
+        <span class="bar-count">{{ bar.count }}</span>
+      </li>
+      {%- endfor %}
+    </ul>
+  </section>
+  {%- endfor %}
+</div>
+{%- endif %}
+{%- if !health.is_empty() %}
+<section class="stats-section">
+  <h2>Index</h2>
+  <ul class="facts-list">
+    {%- for fact in health %}
+    <li>{% if let Some(href) = fact.href %}<a href="{{ href }}">{{ fact.text }}</a>{% else %}{{ fact.text }}{% endif %}</li>
+    {%- endfor %}
+  </ul>
+</section>
+{%- endif %}
+{%- if !reading.is_empty() || !quotes.is_empty() %}
+<section class="stats-section">
+  <h2>Reading and quotes</h2>
+  {%- if !reading.is_empty() %}
+  <ul class="facts-list">
+    {%- for fact in reading %}
+    <li>{{ fact.text }}</li>
+    {%- endfor %}
+  </ul>
+  {%- endif %}
+  {%- if !quotes.is_empty() %}
+  <h3>Latest quotes</h3>
+  <ul class="latest-quotes">
+    {%- for quote in quotes %}
+    <li><a class="quote" href="{{ quote.href }}">{{ quote.text }}</a> <span class="muted">— <a href="{{ quote.book_href }}">{{ quote.book }}</a></span></li>
+    {%- endfor %}
+  </ul>
+  {%- endif %}
+</section>
+{%- endif %}
+{% endblock %}

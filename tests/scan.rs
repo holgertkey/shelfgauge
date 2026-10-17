@@ -94,6 +94,37 @@ impl TestLibrary {
         self.scan_with(&[], false)
     }
 
+    /// Scans with `limits`; returns the summary and the final progress.
+    fn scan_limited(
+        &mut self,
+        limits: ReadLimits,
+    ) -> (ScanSummary, shelfgauge::scanner::ProgressSnapshot) {
+        let registry = Registry::with_formats(shelfgauge::format::DEFAULT_FORMATS).unwrap();
+        let progress = ScanProgress::default();
+        let cancel = AtomicBool::new(false);
+        let summary = Scanner {
+            library: &self.library,
+            exclude: &[],
+            registry: &registry,
+            limits,
+            threads: 2,
+            progress: &progress,
+            cancel: &cancel,
+        }
+        .run(&mut self.conn)
+        .unwrap();
+        (summary, progress.snapshot())
+    }
+
+    /// The recorded CRC32 of the plain file `path`.
+    fn file_crc32(&self, path: &str) -> Option<u32> {
+        shelfgauge::storage::containers::container_by_path(&self.conn, path)
+            .unwrap()
+            .unwrap()
+            .record
+            .crc32
+    }
+
     /// `(title, status)` of all books, ordered by id.
     fn books(&self) -> Vec<(i64, String, BookStatus)> {
         all_books(&self.conn)
@@ -888,4 +919,59 @@ fn html_books_are_indexed_only_when_enabled() {
 
     let s = lib.scan();
     assert_eq!(s.removed, 2, "turned off again: {s:?}");
+}
+
+/// Schema version 4 records a CRC32 for plain files: the first scan after the upgrade
+/// reads every plain file once more (without parsing it), later scans read nothing.
+#[test]
+fn plain_files_get_their_crc32_once() {
+    let mut lib = TestLibrary::new();
+    let one = fb2("Один", "Иванов");
+    lib.write("a.fb2", &one);
+    lib.write("b.fb2", &fb2("Два", "Петров"));
+    lib.zip("c.zip", &[("three.fb2", fb2("Три", "Сидоров"))]);
+    let big = fb2(&"Длинная ".repeat(500), "Толстой");
+    lib.write("big.fb2", &big);
+    let limits = ReadLimits {
+        max_book_size: (big.len() - 1) as u64,
+    };
+    let (first, _) = lib.scan_limited(limits);
+    assert_eq!((first.added, first.errors), (4, 1), "{first:?}");
+    assert_eq!(lib.file_crc32("a.fb2"), Some(crc32fast::hash(&one)));
+    assert_eq!(lib.file_crc32("c.zip"), None, "archives have none");
+    assert_eq!(lib.file_crc32("big.fb2"), None, "not read");
+    let scan = shelfgauge::storage::scans::last_scan(&lib.conn)
+        .unwrap()
+        .expect("the scan is recorded");
+    assert_eq!((scan.added, scan.errors, scan.cancelled), (4, 1, false));
+    assert!(scan.finished_at >= scan.started_at && scan.started_at > 0);
+
+    // As after the migration: no CRC32 recorded yet.
+    lib.conn
+        .execute("UPDATE containers SET crc32 = NULL", [])
+        .unwrap();
+    let (upgrade, progress) = lib.scan_limited(limits);
+    assert_eq!(upgrade, summary(0, 0, 0, 0, 4, 0), "nothing is parsed");
+    assert_eq!(progress.total, 2, "the two readable plain files are read");
+    assert_eq!(lib.file_crc32("a.fb2"), Some(crc32fast::hash(&one)));
+    assert!(lib.file_crc32("b.fb2").is_some());
+    assert_eq!(lib.file_crc32("big.fb2"), None);
+
+    let (later, progress) = lib.scan_limited(limits);
+    assert_eq!(later, summary(0, 0, 0, 0, 4, 0));
+    assert_eq!(progress.total, 0, "nothing is read again");
+    let generation = shelfgauge::storage::scans::scan_generation(&lib.conn).unwrap();
+    assert_eq!(generation, 3, "every scan is recorded");
+}
+
+/// A moved plain file keeps its CRC32 at the new path.
+#[test]
+fn moved_files_keep_their_crc32() {
+    let mut lib = TestLibrary::new();
+    let one = fb2("Один", "Иванов");
+    lib.write("a.fb2", &one);
+    lib.scan();
+    std::fs::rename(lib.root().join("a.fb2"), lib.root().join("moved.fb2")).unwrap();
+    assert_eq!(lib.scan(), summary(0, 0, 1, 0, 0, 0));
+    assert_eq!(lib.file_crc32("moved.fb2"), Some(crc32fast::hash(&one)));
 }

@@ -436,7 +436,7 @@ async fn home_notice_appears_only_with_unreadable_books() {
 
     lib.write("locked.epub", &common::epub3_drm());
     lib.write("a.fb2", b"<broken");
-    lib.write("b.fb2", b"<broken");
+    lib.write("b.fb2", b"<broken too");
     lib.scan();
     let main = server.ok("/").await.main().to_owned();
     assert!(
@@ -625,7 +625,7 @@ async fn book_card_shows_metadata_and_cover() {
     assert!(main.contains("<h1>Война и мир</h1>"));
     assert!(main.contains("Толстой Лев</a>"));
     assert!(main.contains("<dt>Series</dt><dd>Эпопея #1</dd>"));
-    assert!(main.contains("<dt>Genres</dt><dd>prose</dd>"));
+    assert!(main.contains("<dt>Genres</dt><dd><a href=\"/books?genre=prose\">prose</a></dd>"));
     assert!(main.contains("Первая строка аннотации"));
     assert!(main.contains("Толстой Лев/Война и мир.fb2"));
     assert!(!main.contains("class=\"notice"), "{main}");

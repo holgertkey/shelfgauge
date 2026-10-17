@@ -9,6 +9,8 @@
 //! - A plain file without a book whose stat is unchanged was found not to be a book
 //!   ([`ParseErrorKind::NotABook`](crate::format::ParseErrorKind::NotABook)) and is
 //!   skipped; it is looked at again once it changes.
+//! - A plain file recorded without a CRC32 (indexed before schema version 4) is read
+//!   once more; its hash is unchanged, so it is not parsed again.
 //! - A book that failed to parse with an older parser
 //!   ([`LocatedBook::retry_parse`]) is parsed again even if its file is unchanged.
 //! - Books are considered vanished only when it is certain that their file is gone:
@@ -93,7 +95,11 @@ pub(super) fn plan(
             ContainerKind::File => {
                 let book = live_books.iter().find(|b| b.entry_name.is_empty());
                 let reparse = book.is_some_and(|b| b.retry_parse());
-                if unchanged_stat && book.is_some() && !reparse {
+                // Read before the CRC32 was recorded: read once more for it (files that
+                // could not be read have no hash and are not retried).
+                let needs_crc = stored
+                    .is_some_and(|c| c.record.content_hash.is_some() && c.record.crc32.is_none());
+                if unchanged_stat && book.is_some() && !reparse && !needs_crc {
                     plan.unchanged_books += 1;
                     continue;
                 }

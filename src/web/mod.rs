@@ -32,7 +32,10 @@ use crate::library::Library;
 use crate::render::load;
 use crate::scanner::BackgroundScan;
 use crate::storage::ReadPool;
+use crate::storage::StorageError;
 use crate::storage::books::BookDetails;
+use crate::storage::scans::scan_generation;
+use crate::storage::stats::{DuplicateSummary, LibraryStats, identical_summary, library_stats};
 
 mod assets;
 mod error;
@@ -100,6 +103,42 @@ struct Inner {
     registry: Registry,
     /// Recently read books, newest last.
     recent: Mutex<VecDeque<RecentBook>>,
+    /// The library statistics, until the next scan.
+    stats: ScanCache<Arc<LibraryStats>>,
+    /// The identical copies (for the library page's notice), until the next scan.
+    identical: ScanCache<DuplicateSummary>,
+}
+
+/// A value derived from the index, kept until a scan is recorded (see
+/// [`scan_generation`]): the statistics are too slow to compute for every page.
+struct ScanCache<T>(Mutex<Option<(i64, T)>>);
+
+impl<T: Clone> ScanCache<T> {
+    fn new() -> Self {
+        Self(Mutex::new(None))
+    }
+
+    /// The value for scan `generation`, computed with `f` if needed.
+    fn get(
+        &self,
+        generation: i64,
+        conn: &rusqlite::Connection,
+        f: impl FnOnce(&rusqlite::Connection) -> Result<T, StorageError>,
+    ) -> Result<T, AppError> {
+        if let Some((cached, value)) = &*self.0.lock().unwrap_or_else(|e| e.into_inner())
+            && *cached == generation
+        {
+            return Ok(value.clone());
+        }
+        // Computed without the lock: two requests may both compute it, once.
+        let value = f(conn)?;
+        self.set(generation, value.clone());
+        Ok(value)
+    }
+
+    fn set(&self, generation: i64, value: T) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some((generation, value));
+    }
 }
 
 /// A parsed book kept in memory: `(book id, content key, content, its text)`; the
@@ -145,6 +184,8 @@ impl AppState {
             reader: config.reader.clone(),
             registry: Registry::with_builtin_formats(),
             recent: Mutex::new(VecDeque::new()),
+            stats: ScanCache::new(),
+            identical: ScanCache::new(),
         }))
     }
 
@@ -278,6 +319,29 @@ impl AppState {
         Ok((content, text))
     }
 
+    /// The library statistics, cached until the next scan.
+    pub(crate) fn library_stats(
+        &self,
+        conn: &rusqlite::Connection,
+    ) -> Result<Arc<LibraryStats>, AppError> {
+        let generation = scan_generation(conn)?;
+        let stats = self
+            .0
+            .stats
+            .get(generation, conn, |conn| library_stats(conn).map(Arc::new))?;
+        self.0.identical.set(generation, stats.duplicates);
+        Ok(stats)
+    }
+
+    /// The counts of identical copies, cached until the next scan.
+    pub(crate) fn identical_copies(
+        &self,
+        conn: &rusqlite::Connection,
+    ) -> Result<DuplicateSummary, AppError> {
+        let generation = scan_generation(conn)?;
+        self.0.identical.get(generation, conn, identical_summary)
+    }
+
     /// Runs `f` with a pooled read connection on a blocking thread.
     pub(crate) async fn db<T: Send + 'static>(
         &self,
@@ -358,6 +422,9 @@ pub fn router(state: AppState) -> Router {
         )
         .route(&urls.path("/search"), get(routes::search::search))
         .route(&urls.path("/errors"), get(routes::library::errors))
+        .route(&urls.path("/stats"), get(routes::stats::stats))
+        .route(&urls.path("/books"), get(routes::stats::books))
+        .route(&urls.path("/duplicates"), get(routes::stats::duplicates))
         .route(&urls.path("/scan/status"), get(routes::scan::status))
         .route(
             &urls.path("/sidebar/authors"),

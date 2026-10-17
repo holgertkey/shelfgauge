@@ -5,6 +5,7 @@ use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 
 use super::assets;
 use crate::storage::folders::FolderPath;
+use crate::storage::stats::BookFilter;
 
 /// Characters percent-encoded in query values: everything except unreserved characters
 /// and `/` (so `+`, `&`, `#`, `%`, spaces and non-ASCII text are always encoded).
@@ -282,6 +283,41 @@ impl Urls {
     /// Search results for `query` at 1-based `page`.
     pub fn search(&self, query: &str, page: u64) -> String {
         self.with_query("/search", &[("q", query)], page)
+    }
+
+    /// The library statistics.
+    pub fn stats(&self) -> String {
+        self.path("/stats")
+    }
+
+    /// The readable books behind a figure of the statistics, at 1-based `page`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use shelfgauge::storage::stats::BookFilter;
+    /// use shelfgauge::web::Urls;
+    ///
+    /// let urls = Urls::new("/");
+    /// assert_eq!(urls.books(&BookFilter::Genre("a b&c".into()), 2), "/books?genre=a%20b%26c&page=2");
+    /// assert_eq!(urls.books(&BookFilter::WithoutCover, 1), "/books?missing=cover");
+    /// ```
+    pub fn books(&self, filter: &BookFilter, page: u64) -> String {
+        let param = match filter {
+            BookFilter::Format(format) => ("format", format.as_str()),
+            BookFilter::Language(language) => ("language", language.as_str()),
+            BookFilter::Genre(code) => ("genre", code.as_str()),
+            BookFilter::WithoutCover => ("missing", "cover"),
+            BookFilter::WithoutAuthor => ("missing", "author"),
+        };
+        self.with_query("/books", &[param], page)
+    }
+
+    /// The groups of identical copies (`probable`: of probable duplicates) at 1-based
+    /// `page`.
+    pub fn duplicates(&self, probable: bool, page: u64) -> String {
+        let kind = if probable { "probable" } else { "" };
+        self.with_query("/duplicates", &[("kind", kind)], page)
     }
 
     /// The books that could not be read.

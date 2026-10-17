@@ -278,6 +278,42 @@ pub fn counts(conn: &Connection, key: &[u8]) -> Result<(u64, u64), StorageError>
     )?)
 }
 
+/// The number of live bookmarks and marks of every book that has any:
+/// `(book key, bookmarks, marks)`.
+pub fn counts_by_book(conn: &Connection) -> Result<Vec<(Vec<u8>, u64, u64)>, StorageError> {
+    let mut stmt = conn.prepare(
+        "SELECT book_key, count(*) FILTER (WHERE text = ''), count(*) FILTER (WHERE text != '')
+         FROM annotations WHERE deleted_at IS NULL GROUP BY book_key",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get(0)?,
+            row.get::<_, i64>(1)? as u64,
+            row.get::<_, i64>(2)? as u64,
+        ))
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// Live marks (not bookmarks), most recently created first.
+pub fn latest_marks(conn: &Connection, limit: u32) -> Result<Vec<Annotation>, StorageError> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {COLUMNS} FROM annotations
+         WHERE text != '' AND deleted_at IS NULL
+         ORDER BY created_at DESC, id LIMIT ?1"
+    ))?;
+    let rows = stmt.query_map([limit], annotation_row)?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// The live reading positions of all books: `(book key, progress in per mille)`.
+pub fn progress_by_book(conn: &Connection) -> Result<Vec<(Vec<u8>, u16)>, StorageError> {
+    let mut stmt =
+        conn.prepare("SELECT book_key, progress FROM reading_positions WHERE deleted_at IS NULL")?;
+    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
 /// Moves an annotation to a new place (and book), after re-attaching.
 #[allow(clippy::too_many_arguments)]
 pub fn reanchor(
