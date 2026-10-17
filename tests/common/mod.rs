@@ -232,6 +232,18 @@ pub fn epub2() -> Vec<u8> {
     zip(&epub2_entries())
 }
 
+/// The EPUB 3 book protected by Adobe ADEPT (an encrypted chapter and `rights.xml`).
+pub fn epub3_drm() -> Vec<u8> {
+    let encryption = r#"<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container" xmlns:enc="http://www.w3.org/2001/04/xmlenc#"><enc:EncryptedData><enc:EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes128-cbc"/><enc:CipherData><enc:CipherReference URI="OEBPS/text/ch1.xhtml"/></enc:CipherData></enc:EncryptedData></encryption>"#;
+    let mut entries = with_entry(
+        epub3_entries(),
+        "META-INF/encryption.xml",
+        Some(encryption.as_bytes().to_vec()),
+    );
+    entries.push(("META-INF/rights.xml", b"<rights/>".to_vec()));
+    zip(&entries)
+}
+
 /// `entries` with the entry `name` replaced (or added) or, with `None`, removed.
 pub fn with_entry(
     mut entries: Vec<(&'static str, Vec<u8>)>,

@@ -357,6 +357,7 @@ pub fn router(state: AppState) -> Router {
             get(routes::read::image),
         )
         .route(&urls.path("/search"), get(routes::search::search))
+        .route(&urls.path("/errors"), get(routes::library::errors))
         .route(&urls.path("/scan/status"), get(routes::scan::status))
         .route(
             &urls.path("/sidebar/authors"),

@@ -483,6 +483,111 @@ pub fn failed_books(conn: &Connection) -> Result<Vec<FailedBook>, StorageError> 
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
+/// A book protected by DRM, for the list of books that cannot be read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProtectedBook {
+    /// Book id.
+    pub id: i64,
+    /// The path relative to the library root, as in [`FailedBook::path`].
+    pub path: String,
+    /// The protection scheme.
+    pub drm: String,
+}
+
+/// Books with status `protected`, ordered by path.
+pub fn protected_books(conn: &Connection) -> Result<Vec<ProtectedBook>, StorageError> {
+    let mut stmt = conn.prepare(
+        "SELECT b.id, c.path, b.entry_path, b.drm
+         FROM books b JOIN containers c ON c.id = b.container_id
+         WHERE b.status = 'protected'
+         ORDER BY c.path, b.entry_index, b.id",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        let container: String = row.get(1)?;
+        let entry: Option<String> = row.get(2)?;
+        Ok(ProtectedBook {
+            id: row.get(0)?,
+            path: match entry {
+                Some(entry) => format!("{container}/{entry}"),
+                None => container,
+            },
+            drm: row
+                .get::<_, Option<String>>(3)?
+                .unwrap_or_else(|| "unknown DRM".to_owned()),
+        })
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// The number of books with status `error` and with status `protected`.
+pub fn count_unreadable(conn: &Connection) -> Result<(u64, u64), StorageError> {
+    let (errors, protected): (i64, i64) = conn.query_row(
+        "SELECT count(*) FILTER (WHERE status = 'error'),
+                count(*) FILTER (WHERE status = 'protected')
+         FROM books WHERE status IN ('error', 'protected')",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    Ok((errors as u64, protected as u64))
+}
+
+/// The size on disk of the library: the sum of the sizes of the present files and
+/// archives that hold at least one live book, each counted once.
+pub fn library_size(conn: &Connection) -> Result<u64, StorageError> {
+    let size: i64 = conn.query_row(
+        "SELECT coalesce(sum(c.size), 0) FROM containers c
+         WHERE c.present = 1
+           AND EXISTS (SELECT 1 FROM books b
+                       WHERE b.container_id = c.id AND b.status != 'removed')",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(size.max(0) as u64)
+}
+
+/// A recently added book, for the library page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecentBook {
+    /// Book id.
+    pub id: i64,
+    /// Title.
+    pub title: String,
+    /// Author display names joined with `, `.
+    pub authors: String,
+    /// Cover MIME type, if the book has a cover.
+    pub cover_mime: Option<String>,
+    /// When the record last changed (the cover URL's version).
+    pub updated_at: i64,
+}
+
+/// The `limit` most recently added readable books (status `ok`), newest first.
+///
+/// Ordered by id: rows are never deleted and `added_at` is set only on insert, so ids
+/// grow with `added_at`, and the rowid order needs no sort of the whole table.
+pub fn recent_books(conn: &Connection, limit: u32) -> Result<Vec<RecentBook>, StorageError> {
+    let mut stmt = conn.prepare(
+        "SELECT b.id, b.title,
+                (SELECT group_concat(a.display_name, ', ' ORDER BY ba.position)
+                   FROM book_authors ba JOIN authors a ON a.id = ba.author_id
+                  WHERE ba.book_id = b.id),
+                b.cover_mime, b.updated_at
+         FROM books b
+         WHERE b.status = 'ok'
+         ORDER BY b.id DESC
+         LIMIT ?1",
+    )?;
+    let rows = stmt.query_map([limit], |row| {
+        Ok(RecentBook {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            authors: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+            cover_mime: row.get(3)?,
+            updated_at: row.get(4)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
 /// Books in a container (any status), ordered by entry index.
 pub fn books_in_container(
     conn: &Connection,

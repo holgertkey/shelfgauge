@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block main %}
+<h1>Books that could not be read</h1>
+{%- if failed.is_empty() && protected.is_empty() %}
+<p class="empty">Every book in the library could be read.</p>
+{%- else %}
+{%- if !failed.is_empty() %}
+<p class="hint">Fix or replace these files, then rescan the library: changed files are read
+again. Books that failed with an older version of shelfgauge are retried by the next scan.</p>
+<ul class="books unreadable">
+  {%- for book in failed %}
+  <li><a class="path" href="{{ book.href }}">{{ book.path }}</a> <span class="reason">{{ book.reason }}</span></li>
+  {%- endfor %}
+</ul>
+{%- endif %}
+{%- if !protected.is_empty() %}
+<section id="protected">
+  <h2>Protected by DRM</h2>
+  <p class="hint">Their descriptions are indexed, but their text cannot be shown.</p>
+  <ul class="books unreadable">
+    {%- for book in protected %}
+    <li><a class="path" href="{{ book.href }}">{{ book.path }}</a> <span class="reason">{{ book.reason }}</span></li>
+    {%- endfor %}
+  </ul>
+</section>
+{%- endif %}
+<form method="post" action="{{ layout.urls.scan() }}" class="actions">
+  <button type="submit">Rescan the library</button>
+</form>
+{%- endif %}
+{% endblock %}

@@ -110,7 +110,7 @@ async fn library_page_renders_the_layout() {
         "<header class=\"topbar\">",
         "id=\"sidebar\"",
         "<main class=\"main\">",
-        "0 books indexed",
+        "No books yet.",
         "href=\"/assets/style.css?v=",
         "src=\"/assets/app.js?v=",
         "action=\"/scan\"",
@@ -462,7 +462,7 @@ async fn serves_over_tcp_until_shutdown() {
     .await
     .unwrap();
     assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
-    assert!(response.contains("books indexed"), "{response}");
+    assert!(response.contains("No books yet."), "{response}");
 
     stop.send(()).unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(10), server)
@@ -494,7 +494,7 @@ async fn rescan_indexes_in_the_background() {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     let reply = server.get("/").await;
-    assert!(reply.body.contains("1 book indexed"), "{}", reply.body);
+    assert!(reply.body.contains("1 book · "), "{}", reply.body);
     assert!(!reply.body.contains("Scanning"), "{}", reply.body);
 }
 

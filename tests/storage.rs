@@ -7,9 +7,9 @@ use shelfgauge::storage::authors::{
     author_by_id, author_index, books_by_author, count_authors, list_authors,
 };
 use shelfgauge::storage::books::{
-    BookRecord, BookStatus, EntryRecord, book_by_id, books_in_container, count_books, failed_books,
-    find_by_content_hash, find_by_entry_identity, find_live_at, mark_removed, relocate,
-    upsert_book,
+    BookRecord, BookStatus, EntryRecord, book_by_id, books_in_container, count_books,
+    count_unreadable, failed_books, find_by_content_hash, find_by_entry_identity, find_live_at,
+    library_size, mark_removed, protected_books, recent_books, relocate, upsert_book,
 };
 use shelfgauge::storage::containers::{ContainerRecord, upsert_container};
 use shelfgauge::storage::folders::{FolderKind, FolderPath, folder_book_index, folder_children};
@@ -470,6 +470,99 @@ fn failed_books_are_listed_by_path_with_their_message() {
     // A removed book is no longer an error of the library.
     mark_removed(&db.conn, entry_id).unwrap();
     assert_eq!(failed_books(&db.conn).unwrap().len(), 1);
+}
+
+#[test]
+fn unreadable_books_are_counted_and_protected_ones_listed() {
+    let db = db();
+    let broken = container(&db.conn, "broken.fb2");
+    let zip = container(&db.conn, "z/pack.zip");
+    upsert_book(
+        &db.conn,
+        &BookRecord::failed(broken, None, None, "fb2", "broken", "invalid XML"),
+    )
+    .unwrap();
+    let mut locked = book(zip, Some(entry("locked.epub", 3)), "Locked", Vec::new());
+    locked.status = BookStatus::Protected;
+    locked.drm = Some("Adobe ADEPT".to_owned());
+    let locked = upsert_book(&db.conn, &locked).unwrap();
+    upsert_book(
+        &db.conn,
+        &book(zip, Some(entry("fine.fb2", 4)), "Fine", Vec::new()),
+    )
+    .unwrap();
+
+    assert_eq!(count_unreadable(&db.conn).unwrap(), (1, 1));
+    let protected = protected_books(&db.conn).unwrap();
+    assert_eq!(protected.len(), 1);
+    assert_eq!(protected[0].id, locked);
+    assert_eq!(protected[0].path, "z/pack.zip/locked.epub");
+    assert_eq!(protected[0].drm, "Adobe ADEPT");
+
+    mark_removed(&db.conn, locked).unwrap();
+    assert_eq!(count_unreadable(&db.conn).unwrap(), (1, 0));
+    assert!(protected_books(&db.conn).unwrap().is_empty());
+}
+
+#[test]
+fn library_size_counts_each_container_with_live_books_once() {
+    let db = db();
+    assert_eq!(library_size(&db.conn).unwrap(), 0);
+    // `container` records 100 bytes for each.
+    let zip = container(&db.conn, "pack.zip");
+    let file = container(&db.conn, "one.fb2");
+    let gone = container(&db.conn, "gone.fb2");
+    container(&db.conn, "empty.zip"); // No books at all.
+    for (name, crc) in [("a.fb2", 1), ("b.fb2", 2), ("c.fb2", 3)] {
+        upsert_book(
+            &db.conn,
+            &book(zip, Some(entry(name, crc)), name, Vec::new()),
+        )
+        .unwrap();
+    }
+    upsert_book(&db.conn, &book(file, None, "One", Vec::new())).unwrap();
+    let removed = upsert_book(&db.conn, &book(gone, None, "Gone", Vec::new())).unwrap();
+    mark_removed(&db.conn, removed).unwrap();
+    assert_eq!(library_size(&db.conn).unwrap(), 200);
+}
+
+#[test]
+fn recent_books_are_the_newest_readable_ones() {
+    let db = db();
+    let c = container(&db.conn, "pack.zip");
+    let record = |i: u32, title: &str| {
+        book(
+            c,
+            Some(entry(title, i)),
+            title,
+            vec![person("Толстой", "Лев")],
+        )
+    };
+    for (i, title) in ["Old", "Middle", "New", "Newest"].iter().enumerate() {
+        upsert_book(&db.conn, &record(i as u32, title)).unwrap();
+    }
+    upsert_book(
+        &db.conn,
+        &BookRecord::failed(c, Some(entry("bad", 9)), None, "fb2", "bad", "oops"),
+    )
+    .unwrap();
+    // Updating a book in place does not make it new.
+    let mut old = record(0, "Old");
+    old.title = "Old, revised".to_owned();
+    upsert_book(&db.conn, &old).unwrap();
+
+    let recent = recent_books(&db.conn, 3).unwrap();
+    let listed: Vec<&str> = recent.iter().map(|b| b.title.as_str()).collect();
+    // Errors are left out.
+    assert_eq!(listed, ["Newest", "New", "Middle"]);
+    assert_eq!(recent[0].authors, "Толстой Лев");
+    assert_eq!(recent[0].cover_mime, None);
+    let added: Vec<i64> = recent_books(&db.conn, 10)
+        .unwrap()
+        .iter()
+        .map(|b| book_by_id(&db.conn, b.id).unwrap().unwrap().added_at)
+        .collect();
+    assert!(added.is_sorted_by(|a, b| a >= b), "{added:?}");
 }
 
 #[test]

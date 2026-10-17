@@ -2,41 +2,90 @@
 {% block main %}
 <h1>Library</h1>
 <p class="muted path">{{ root }}</p>
-<p class="stats">{{ books }} {% if books == 1 %}book{% else %}books{% endif %} indexed, {{ authors }} {% if authors == 1 %}author{% else %}authors{% endif %}.</p>
-<p>Browse the library by <a href="{{ layout.urls.authors("", 1) }}">author</a> or by
-<a href="{{ layout.urls.folders() }}">folder</a> in the sidebar, or search by title,
-author, series or annotation in the top bar.</p>
+{%- if books == 0 %}
+<section class="welcome">
+  <p>No books yet. Shelfgauge finds the books below this folder, also inside .zip
+  archives: FB2 (and .fbz), EPUB and plain text, and HTML pages if they are turned on
+  in the configuration (<code>[scan] formats</code>).</p>
+  <form method="post" action="{{ layout.urls.scan() }}">
+    <button type="submit">Rescan the library</button>
+  </form>
+</section>
+{%- else %}
 {%- if !reading.is_empty() %}
-<section class="reading-list">
+<section class="home-section">
   <div class="section-head">
     <h2>Currently reading</h2>
     <form method="post" action="{{ layout.urls.clear_reading() }}">
       <button type="submit" class="text-button" title="Remove all books from this list (where you stopped is kept)">Clear list</button>
     </form>
   </div>
-  <ul>
+  <ul class="reading-cards">
     {%- for item in reading %}
-    <li>
+    <li class="reading-card">
+      <a class="thumb" href="{{ item.card_href }}" tabindex="-1" aria-hidden="true">
+        {%- if let Some(cover) = item.cover %}<img src="{{ cover }}" alt="" loading="lazy">{% else %}<span class="thumb-placeholder">{{ item.title }}</span>{% endif -%}
+      </a>
       <div class="reading-book">
         <a class="title" href="{{ item.card_href }}">{{ item.title }}</a>
-        {%- if !item.authors.is_empty() %} <span class="muted">· {{ item.authors }}</span>{% endif %}
-        <div class="reading-meta muted">{{ item.progress }} · {{ item.date }} · <a href="{{ item.continue_href }}">Continue</a></div>
+        {%- if !item.authors.is_empty() %}
+        <div class="authors">{{ item.authors }}</div>
+        {%- endif %}
+        <div class="progress-bar" aria-hidden="true"><span class="{{ item.bar }}"></span></div>
+        <div class="reading-meta muted">{{ item.progress }} · {{ item.date }}</div>
+        <div class="reading-actions">
+          <a class="button primary" href="{{ item.continue_href }}">Continue</a>
+          <form method="post" action="{{ item.finished_action }}">
+            <button type="submit" class="icon-button" title="Mark as finished" aria-label="Mark as finished"><svg class="icon" aria-hidden="true"><use href="#i-done"></use></svg></button>
+          </form>
+        </div>
       </div>
-      <form method="post" action="{{ item.finished_action }}">
-        <button type="submit" class="icon-button" title="Mark as finished" aria-label="Mark as finished"><svg class="icon" aria-hidden="true"><use href="#i-done"></use></svg></button>
-      </form>
     </li>
     {%- endfor %}
   </ul>
 </section>
 {%- endif %}
-{%- if books == 0 %}
-<p class="note">No books yet. shelfgauge indexes FB2 books (also inside .zip archives)
-below this folder; use <strong>Rescan</strong> after adding books.</p>
+{%- if !recent.is_empty() %}
+<section class="home-section">
+  <h2>Recently added</h2>
+  <ul class="recent-books">
+    {%- for book in recent %}
+    <li>
+      <a href="{{ book.href }}">
+        <span class="thumb">
+          {%- if let Some(cover) = book.cover %}<img src="{{ cover }}" alt="" loading="lazy">{% else %}<span class="thumb-placeholder" aria-hidden="true">{{ book.title }}</span>{% endif -%}
+        </span>
+        <span class="recent-title">{{ book.title }}</span>
+      </a>
+      {%- if !book.authors.is_empty() %}
+      <span class="authors">{{ book.authors }}</span>
+      {%- endif %}
+    </li>
+    {%- endfor %}
+  </ul>
+</section>
 {%- endif %}
-<p class="keys">Keys: <kbd>/</kbd> or <kbd>s</kbd> search, <kbd>t</kbd> next theme,
-<kbd>m</kbd> switch sidebar mode, <kbd>Esc</kbd> leave the search field; while reading,
-<kbd>←</kbd> and <kbd>→</kbd> go to the previous and next part, <kbd>b</kbd> adds a bookmark,
-<kbd>f</kbd> turns focus mode on and off, <kbd>-</kbd> and <kbd>+</kbd> change the text size
-(<kbd>0</kbd> resets it).</p>
+<p class="summary">{{ summary }}</p>
+{%- if !attention.is_empty() %}
+<p class="attention">{% for (text, href) in attention %}{% if !loop.first %} · {% endif %}<a href="{{ href }}">{{ text }}</a>{% endfor %} ›</p>
+{%- endif %}
+{%- endif %}
+<details class="keys">
+  <summary>Keyboard shortcuts</summary>
+  <dl>
+    <dt><kbd>/</kbd> or <kbd>s</kbd></dt><dd>Search the library (in a book: search the book)</dd>
+    <dt><kbd>Esc</kbd></dt><dd>Leave the search field</dd>
+    <dt><kbd>t</kbd></dt><dd>Next theme</dd>
+    <dt><kbd>m</kbd></dt><dd>Switch the sidebar between authors and folders</dd>
+  </dl>
+  <h3>While reading</h3>
+  <dl>
+    <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Previous and next part</dd>
+    <dt><kbd>n</kbd> <kbd>Shift</kbd>+<kbd>N</kbd></dt><dd>Next and previous match of the search</dd>
+    <dt><kbd>b</kbd></dt><dd>Bookmark this place</dd>
+    <dt><kbd>f</kbd></dt><dd>Focus mode on and off</dd>
+    <dt><kbd>-</kbd> <kbd>+</kbd> <kbd>0</kbd></dt><dd>Smaller, larger and default text size</dd>
+    <dt><kbd>Esc</kbd></dt><dd>Close a panel, clear the search, leave focus mode</dd>
+  </dl>
+</details>
 {% endblock %}

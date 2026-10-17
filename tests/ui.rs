@@ -333,7 +333,7 @@ async fn home_shows_counts_and_the_sidebar() {
     let reply = server.ok("/").await;
     // 8 live books (one removed; the error book counts), authors: Толстой, Пушкин,
     // Чехов, Гоголь.
-    reply.assert_has("8 books indexed, 4 authors.");
+    reply.assert_has("8 books · 4 authors · ");
     assert!(
         reply.sidebar().contains("Толстой Лев"),
         "authors mode by default"
@@ -358,6 +358,131 @@ async fn home_shows_counts_and_the_sidebar() {
         reply.sidebar()
     );
     assert!(!reply.sidebar().contains("коллекция.zip"), "collapsed");
+}
+
+#[tokio::test]
+async fn home_shows_new_books_the_summary_and_what_needs_attention() {
+    let lib = library();
+    let server = lib.server("/", 100);
+    let reply = server.ok("/").await;
+    let main = reply.main();
+    // Recently added: the 7 readable books (not the broken or the removed one).
+    let recent = &main[main.find("Recently added").expect("the section")..];
+    let recent = &recent[..recent.find("</section>").unwrap()];
+    assert_eq!(recent.matches("<li>").count(), 7, "{recent}");
+    assert!(!recent.contains("Пропавшая") && !recent.contains("broken"));
+    // A served cover, and a placeholder for the SVG one (never served).
+    let war = lib.id_of("Война и мир");
+    assert!(
+        recent.contains(&format!("src=\"/cover/{war}?v=")),
+        "{recent}"
+    );
+    let svg = lib.id_of("Обложка");
+    assert!(!recent.contains(&format!("/cover/{svg}")), "{recent}");
+    assert!(
+        recent.contains("<span class=\"thumb-placeholder\" aria-hidden=\"true\">Обложка</span>")
+    );
+    assert!(recent.contains(&format!("href=\"/book/{svg}\"")));
+    // Titles are escaped.
+    assert!(!main.contains("<script>alert"));
+    assert!(recent.contains("&#60;script&#62;alert(1)&#60;/script&#62;"));
+    // The summary line and the notice of the broken book.
+    assert!(
+        main.contains("<p class=\"summary\">8 books · 4 authors · "),
+        "{main}"
+    );
+    assert!(
+        main.contains("<a href=\"/errors\">1 book could not be read</a> ›"),
+        "{main}"
+    );
+    assert!(!main.contains("protected by DRM"));
+    // The keys are collapsed; the old paragraph is gone.
+    assert!(main.contains("<details class=\"keys\">"));
+    assert!(main.contains("Shift</kbd>+<kbd>N</kbd>"));
+    assert!(!main.contains("Browse the library"));
+    assert!(!main.contains("No books yet"));
+}
+
+#[tokio::test]
+async fn home_of_an_empty_library_welcomes() {
+    let lib = TestLibrary::new();
+    lib.scan();
+    let reply = lib.server("/", 100).ok("/").await;
+    let main = reply.main();
+    for part in [
+        "No books yet.",
+        "FB2",
+        "EPUB",
+        "plain text",
+        "<form method=\"post\" action=\"/scan\">",
+        "<details class=\"keys\">",
+    ] {
+        assert!(main.contains(part), "{part:?} missing in {main}");
+    }
+    for part in ["Recently added", "class=\"summary\"", "class=\"attention\""] {
+        assert!(!main.contains(part), "{part}");
+    }
+}
+
+#[tokio::test]
+async fn home_notice_appears_only_with_unreadable_books() {
+    let lib = TestLibrary::new();
+    lib.write("good.fb2", &Book::new("Хорошая", "Гоголь", "Николай").fb2());
+    lib.scan();
+    let server = lib.server("/", 100);
+    let main = server.ok("/").await.main().to_owned();
+    assert!(!main.contains("class=\"attention\""), "{main}");
+    assert!(main.contains("1 book · 1 author · "), "{main}");
+
+    lib.write("locked.epub", &common::epub3_drm());
+    lib.write("a.fb2", b"<broken");
+    lib.write("b.fb2", b"<broken");
+    lib.scan();
+    let main = server.ok("/").await.main().to_owned();
+    assert!(
+        main.contains(
+            "<a href=\"/errors\">2 books could not be read</a> · \
+             <a href=\"/errors#protected\">1 book is protected by DRM</a> ›"
+        ),
+        "{main}"
+    );
+}
+
+#[tokio::test]
+async fn errors_page_lists_unreadable_books_by_relative_path() {
+    let lib = library();
+    lib.zip("packs/p.zip", &[("x/bad.fb2", b"<nope".to_vec())]);
+    lib.write("drm/locked.epub", &common::epub3_drm());
+    lib.scan();
+    let server = lib.server("/", 100);
+    let reply = server.ok("/errors").await;
+    let main = reply.main();
+    let root = lib.dir.path().display().to_string();
+    assert!(!reply.body.contains(&root), "no absolute paths: {main}");
+    let broken = lib.id_of("broken");
+    assert!(
+        main.contains(&format!(
+            "<a class=\"path\" href=\"/book/{broken}\">broken.fb2</a> <span class=\"reason\">"
+        )),
+        "{main}"
+    );
+    assert!(main.contains(">packs/p.zip/x/bad.fb2</a>"), "{main}");
+    let drm = &main[main.find("id=\"protected\"").expect("the DRM section")..];
+    assert!(drm.contains(">drm/locked.epub</a> <span class=\"reason\">Adobe ADEPT</span>"));
+    assert!(!drm.contains("broken.fb2"));
+    assert!(main.contains("action=\"/scan\""));
+    assert!(main.find("bad.fb2").unwrap() < main.find("id=\"protected\"").unwrap());
+
+    // A library without unreadable books.
+    let lib = TestLibrary::new();
+    lib.write("good.fb2", &Book::new("Хорошая", "Гоголь", "Николай").fb2());
+    lib.scan();
+    let main = lib.server("/", 100).ok("/errors").await.main().to_owned();
+    assert!(
+        main.contains("Every book in the library could be read."),
+        "{main}"
+    );
+    assert!(!main.contains("id=\"protected\""));
 }
 
 #[tokio::test]

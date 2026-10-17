@@ -982,6 +982,61 @@ async fn export_all_rewrites_files_and_removes_only_marked_ones() {
 }
 
 #[tokio::test]
+async fn currently_reading_cards_show_cover_progress_and_escape() {
+    const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    let lib = TestLibrary::new();
+    lib.write(
+        "plain.fb2",
+        &book("A &lt;b&gt; &amp; c", "Writer", 2, false, &[]),
+    );
+    let with_cover = String::from_utf8(book("Covered", "Writer", 2, false, &[]))
+        .unwrap()
+        .replace(
+            "<book-title>",
+            r##"<coverpage><image l:href="#c"/></coverpage><book-title>"##,
+        )
+        .replace(
+            "</FictionBook>",
+            &format!(r#"<binary id="c" content-type="image/png">{PNG}</binary></FictionBook>"#),
+        );
+    lib.write("covered.fb2", with_cover.as_bytes());
+    lib.scan();
+    let (plain, covered) = (lib.id_of("plain.fb2"), lib.id_of("covered.fb2"));
+    let server = lib.server(|_| {});
+    for id in [plain, covered] {
+        let block = server.block_of(id, &para(2, 1)).await;
+        let reply = server
+            .json(
+                &format!("/book/{id}/position"),
+                serde_json::json!({"block": block}),
+            )
+            .await;
+        assert_eq!(reply.status, StatusCode::NO_CONTENT);
+    }
+    let home = server.ok("/").await;
+    let list = &home[home.find("class=\"reading-cards\"").expect("the cards")..];
+    let list = &list[..list.find("</ul>").unwrap()];
+    assert_eq!(
+        list.matches("<li class=\"reading-card\">").count(),
+        2,
+        "{list}"
+    );
+    // The title is escaped, in the link and in the placeholder.
+    assert!(!list.contains("<b>"), "{list}");
+    assert!(list.contains(">A &#60;b&#62; &#38; c</a>"), "{list}");
+    assert!(list.contains("<span class=\"thumb-placeholder\">A &#60;b&#62; &#38; c</span>"));
+    assert!(
+        list.contains(&format!("<img src=\"/cover/{covered}?v=")),
+        "{list}"
+    );
+    // The bar is drawn with a width class, not an inline style.
+    assert!(list.contains("<div class=\"progress-bar\" aria-hidden=\"true\"><span class=\"w"));
+    assert!(!list.contains("style="));
+    assert!(list.contains(&format!("action=\"/book/{plain}/finished\"")));
+    assert!(list.contains("class=\"button primary\""));
+}
+
+#[tokio::test]
 async fn currently_reading_list() {
     let lib = TestLibrary::new();
     for name in ["a", "b", "c"] {

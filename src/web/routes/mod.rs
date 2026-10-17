@@ -17,6 +17,7 @@ use crate::storage::folders::FolderPath;
 
 pub(crate) mod annotations;
 pub(crate) mod book;
+pub(crate) mod figures;
 pub(crate) mod find;
 pub(crate) mod library;
 pub(crate) mod read;

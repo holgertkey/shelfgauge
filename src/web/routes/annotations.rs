@@ -15,12 +15,14 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
+use super::figures::width_class;
 use super::parse_id;
 use crate::annotations::anchor::{self, Anchor, AnchorError};
 use crate::annotations::attach::{self, export_key};
 use crate::annotations::store::{self, NewAnnotation, ReadingPosition, UserData};
 use crate::annotations::text::{BookText, char_len};
 use crate::annotations::{Annotation, BookSnapshot, now};
+use crate::cache::covers;
 use crate::format::model::{BlockId, BookContent};
 use crate::render::split::{part_of, split};
 use crate::storage::books::{BookDetails, BookStatus, book_by_id};
@@ -569,7 +571,12 @@ pub(crate) struct ReadingItem {
     pub(crate) card_href: String,
     pub(crate) continue_href: String,
     pub(crate) finished_action: String,
+    /// The cover URL, if the book has a cover that can be served.
+    pub(crate) cover: Option<String>,
+    /// "read 37 %".
     pub(crate) progress: String,
+    /// The width class of the progress bar (see [`width_class`]).
+    pub(crate) bar: String,
     pub(crate) date: String,
 }
 
@@ -601,7 +608,13 @@ pub(crate) fn reading_list(
             card_href: urls.book(book.id),
             continue_href: urls.read_at(book.id, position.block),
             finished_action: urls.finished(book.id),
+            cover: book
+                .cover_mime
+                .as_deref()
+                .and_then(covers::known_mime)
+                .map(|_| urls.cover(book.id, book.updated_at)),
             progress: progress_label(position.progress),
+            bar: width_class(u64::from(position.progress)),
             date: super::date(position.updated_at),
         });
         if items.len() == limit {

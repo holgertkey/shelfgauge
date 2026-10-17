@@ -115,7 +115,7 @@ fn first_run_creates_config_and_serves() {
     assert_eq!(server.url, format!("http://127.0.0.1:{port}/"));
     let response = server.get("/");
     assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
-    assert!(response.contains("books indexed"), "{response}");
+    assert!(response.contains("No books yet."), "{response}");
     let err = server.stop();
     assert!(err.contains("created default config"), "{err}");
 
@@ -156,7 +156,7 @@ fn cli_flags_override_config_file() {
     // The index opened without a running writer serves pages.
     let response = server.get("/");
     assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
-    assert!(response.contains("0 books indexed"), "{response}");
+    assert!(response.contains("No books yet."), "{response}");
     let err = server.stop();
     assert!(!err.contains("scanning"), "--no-scan starts no scan: {err}");
 
@@ -170,7 +170,7 @@ fn cli_flags_override_config_file() {
     let server = Server::start(dir.path(), &["--port", &port.to_string(), "--bind", "::1"]);
     assert_eq!(server.url, format!("http://[::1]:{port}/"));
     let deadline = Instant::now() + Duration::from_secs(30);
-    while !server.get("/").contains("1 book indexed") {
+    while !server.get("/").contains("1 book · ") {
         assert!(Instant::now() < deadline, "the background scan did not run");
         std::thread::sleep(Duration::from_millis(50));
     }

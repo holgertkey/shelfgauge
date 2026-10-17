@@ -284,6 +284,11 @@ impl Urls {
         self.with_query("/search", &[("q", query)], page)
     }
 
+    /// The books that could not be read.
+    pub fn errors(&self) -> String {
+        self.path("/errors")
+    }
+
     /// The rescan action (`POST`).
     pub fn scan(&self) -> String {
         self.path("/scan")

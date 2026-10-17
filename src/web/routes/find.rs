@@ -10,6 +10,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::header;
 use axum::response::{Html, IntoResponse, Response};
 
+use super::figures::group_digits;
 use super::{Params, parse_id};
 use crate::annotations::find::{
     self, MAX_HITS, MAX_QUERY_CHARS, MIN_QUERY_CHARS, QueryError, SNIPPET_CONTEXT, Snippet,
@@ -144,8 +145,8 @@ impl FindResults {
         let more = (shown < found.total).then(|| {
             format!(
                 "The first {} of {} matches are listed; refine the query to find the rest.",
-                group_digits(shown),
-                group_digits(found.total)
+                group_digits(shown as u64),
+                group_digits(found.total as u64)
             )
         });
         Self {
@@ -172,22 +173,9 @@ impl FindResults {
         match self.total {
             0 => "Search results".to_owned(),
             1 => "Search results: 1 match".to_owned(),
-            n => format!("Search results: {} matches", group_digits(n)),
+            n => format!("Search results: {} matches", group_digits(n as u64)),
         }
     }
-}
-
-/// `n` with its digits in groups of three, separated by a narrow no-break space.
-fn group_digits(n: usize) -> String {
-    let digits = n.to_string();
-    let mut out = String::new();
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push('\u{202f}');
-        }
-        out.push(c);
-    }
-    out
 }
 
 /// The live search's answer.
@@ -233,7 +221,7 @@ pub(crate) async fn find(
 
 #[cfg(test)]
 mod tests {
-    use super::{FindResults, group_digits};
+    use super::FindResults;
 
     #[test]
     fn tab_counts() {
@@ -252,13 +240,5 @@ mod tests {
             results(47_356).tab_title(),
             "Search results: 47\u{202f}356 matches"
         );
-    }
-
-    #[test]
-    fn digits_are_grouped() {
-        assert_eq!(group_digits(0), "0");
-        assert_eq!(group_digits(500), "500");
-        assert_eq!(group_digits(1234), "1\u{202f}234");
-        assert_eq!(group_digits(1_234_567), "1\u{202f}234\u{202f}567");
     }
 }
