@@ -334,6 +334,7 @@ async fn home_shows_counts_and_the_sidebar() {
     // 8 live books (one removed; the error book counts), authors: Толстой, Пушкин,
     // Чехов, Гоголь.
     reply.assert_has("8 books · 4 authors · ");
+    reply.assert_has("<title>Shelfgauge library</title>");
     assert!(
         reply.sidebar().contains("Толстой Лев"),
         "authors mode by default"
@@ -490,6 +491,7 @@ async fn author_index_pages_and_filters() {
     let lib = library();
     let server = lib.server("/", 2);
     let first = server.ok("/authors").await;
+    first.assert_has("<title>Authors · shelfgauge</title>");
     let main = first.main();
     assert!(main.contains("Гоголь Николай") && main.contains("Пушкин Александр"));
     assert!(!main.contains("Толстой"), "page 1 holds 2 of 4 authors");

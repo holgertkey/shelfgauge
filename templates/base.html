@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{ layout.title }} · shelfgauge</title>
+<title>{% block title %}{{ layout.title }} · shelfgauge{% endblock %}</title>
 <link rel="icon" href="{{ layout.urls.asset("icon.svg") }}" type="image/svg+xml">
 <link rel="stylesheet" href="{{ layout.urls.asset("style.css") }}">
 <script src="{{ layout.urls.asset("theme.js") }}"></script>
