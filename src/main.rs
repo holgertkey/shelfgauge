@@ -12,7 +12,7 @@ use clap::Parser;
 use shelfgauge::annotations::attach;
 use shelfgauge::annotations::export::Exporter;
 use shelfgauge::annotations::store::UserData;
-use shelfgauge::config::Config;
+use shelfgauge::config::{Config, ConfigOverrides, LiveConfig};
 use shelfgauge::container::ReadLimits;
 use shelfgauge::format::PARSER_STACK_SIZE;
 use shelfgauge::library::Library;
@@ -62,7 +62,7 @@ fn main() -> anyhow::Result<()> {
 
     match invocation.mode {
         Mode::Scan => scan(&library, &config),
-        Mode::Serve { scan } => serve(library, &config, scan),
+        Mode::Serve { scan } => serve(library, &config, &invocation.overrides, scan),
         Mode::ExportAnnotations => export_annotations(&library, &config),
         Mode::Errors => errors(&library),
     }
@@ -115,7 +115,12 @@ fn open_userdata(library: &Library) -> anyhow::Result<UserData> {
 }
 
 /// The default command: serves the library, scanning it in the background.
-fn serve(library: Library, config: &Config, scan: bool) -> anyhow::Result<()> {
+fn serve(
+    library: Library,
+    config: &Config,
+    overrides: &ConfigOverrides,
+    scan: bool,
+) -> anyhow::Result<()> {
     // Fail fast, before touching the index: unsafe bind address or busy port.
     let listener = web::bind(&config.server, web::Auth::None)?;
     let db_path = library.db_path();
@@ -128,14 +133,20 @@ fn serve(library: Library, config: &Config, scan: bool) -> anyhow::Result<()> {
 
     let userdata = Arc::new(open_userdata(&library)?);
     let exporter = exporter(&library, config);
+    // One handle for the handlers and the scan: the settings page swaps it.
+    let live = LiveConfig::new(config.clone());
     let background = {
-        let (library, userdata, exporter) =
-            (library.clone(), Arc::clone(&userdata), exporter.clone());
-        let retention = config.annotations.removed_book_retention_days;
+        let (library, userdata, exporter, live) = (
+            library.clone(),
+            Arc::clone(&userdata),
+            exporter.clone(),
+            live.clone(),
+        );
         Arc::new(
-            BackgroundScan::new(library.clone(), config.scan.exclude.clone())
-                .with_registry(config.scan.registry())
+            BackgroundScan::new(library.clone(), Vec::new())
+                .with_config(live.clone())
                 .after_complete_scan(move || {
+                    let retention = live.get().annotations.removed_book_retention_days;
                     if let Err(e) =
                         attach::cleanup_library(&library, &userdata, &exporter, retention)
                     {
@@ -145,6 +156,7 @@ fn serve(library: Library, config: &Config, scan: bool) -> anyhow::Result<()> {
         )
     };
     let state = web::AppState::new(library, config, pool, Arc::clone(&background))
+        .with_config(live, overrides.clone())
         .with_annotations(userdata, exporter);
     let url = web::display_url(&config.server, state.urls());
     let router = web::router(state);
@@ -229,6 +241,7 @@ fn scan(library: &Library, config: &Config) -> anyhow::Result<()> {
         library,
         exclude: &config.scan.exclude,
         registry: &registry,
+        reread: false,
         limits: ReadLimits::default(),
         threads: 0,
         progress: &progress,

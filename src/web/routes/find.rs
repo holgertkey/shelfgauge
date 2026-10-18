@@ -199,7 +199,7 @@ pub(crate) async fn find(
     let results = tokio::task::spawn_blocking(move || {
         run_with_parser_stack(|| {
             let (content, text) = s.book_text(&book)?;
-            let parts = split(&content, s.reader());
+            let parts = split(&content, &s.config().reader);
             Ok::<_, AppError>(FindResults::new(
                 s.urls(),
                 id,

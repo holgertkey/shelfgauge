@@ -2,8 +2,9 @@
 
 > Status: v1 implemented (scanner, storage, web server, library and reading mode,
 > hardening), annotations (0.6.0), reader settings (0.7.0), EPUB (0.8.0), plain text
-> and `.fbz` (0.9.0), HTML (0.10.0, opt-in), search within the book (0.11.0). The V2
-> hub below is designed, not built.
+> and `.fbz` (0.9.0), HTML (0.10.0, opt-in), search within the book (0.11.0), library
+> statistics (0.12.0), the settings page (0.13.0). The V2 hub below is designed, not
+> built.
 
 `shelfgauge` is a single-binary Rust app that indexes a directory tree of ebook files (FB2
 (also `.fbz`), EPUB, TXT and opt-in HTML, plain files and `.zip` archives with any number of books inside) into a local SQLite DB
@@ -17,8 +18,38 @@ Key design points to keep in mind when implementing:
   CLI flags override it. The port is fixed (default `8742`): if it is busy, exit with a
   clear error — never silently fall back to another port (a changing port changes the
   browser origin).
+- **Live configuration**: the server shares one `config::LiveConfig`
+  (`Arc<RwLock<Arc<Config>>>`) between the request handlers (`AppState::config()`, one
+  snapshot per request), the background scan (`exclude` and the registry are read at
+  each `start()`) and the post-scan cleanup (the retention is read when it runs). The
+  settings page swaps it as a whole after a save. `[server]` stays as started (the
+  `Host` allowlist and `Urls` are built once): `AppState::server()` keeps the running
+  values, and the live config always carries them. The body limit of user writes is a
+  middleware reading the current `max_note_length` (wrapping the body in
+  `http_body_util::Limited`, 413 when exceeded), not a `DefaultBodyLimit` fixed when
+  the router is built.
+- **Config write path** (`config::edit`): the settings form covers the editable keys
+  (`edit::FIELDS`: label, kind and bounds; hints come from the comments of
+  `DEFAULT_CONFIG_TOML`). A save parses the form into a `Config` with per-field errors
+  (exclude patterns compiled as the scanner does), edits the file with `toml_edit` —
+  only keys whose value differs from what the file gives now, keeping comments (also
+  after a value), order and unknown keys — validates the new text with
+  `Config::from_toml`, and writes it atomically (temporary file with the old
+  permissions, renamed; a read-only file is refused). The form carries an xxh3 hash of
+  the file it was rendered from; a different file on disk is a conflict (409). One
+  save at a time (a lock in `AppState`). Errors shown in the browser carry no paths.
+
+  | Section          | Takes effect                                        |
+  | ---------------- | --------------------------------------------------- |
+  | `[library]`      | at once (next request)                              |
+  | `[reader]`       | at once (the split runs per request; block ids and deep links do not depend on it) |
+  | `[annotations]`  | at once (limits on the next write, retention at the next cleanup) |
+  | `[scan]`         | at the next scan; the page counts the books that would leave the index (`storage::stats::leaving_books`) |
+  | `[server]`       | read-only on the page; `config.toml` and a restart  |
 - **Scanning runs on every start, in the background**: the server starts immediately and
-  serves the existing index while the UI shows progress. Also: a "Rescan" button,
+  serves the existing index while the UI shows progress. Also: a "Rescan" button, a
+  re-read (`Scanner::reread`, from the settings page: every file and archive counts as
+  changed, so all books are parsed again),
   `--no-scan`, a `shelfgauge scan` subcommand (index and exit) and `shelfgauge errors`
   (list the books that could not be read, with the reason). One scan runs at a
   time on its own thread (`scanner::BackgroundScan`). Ctrl+C stops accepting requests,
@@ -385,9 +416,13 @@ v1 binds to `127.0.0.1` only, but is built to allow remote access later:
   `null` Origin is rejected.
 - If `bind` is not a loopback address and no authentication is configured, the program
   refuses to start.
-- Routes are split into a *read* group, an *admin* group (scan, settings) and a *user
-  writes* group (annotations, reading position), with an auth middleware slot; the admin
-  group may stay localhost-only, user writes need authentication for remote access.
+- Routes are split into a *read* group, an *admin* group (`POST /scan`, `GET`/`POST
+  /settings`, the maintenance actions `POST /settings/reread`, `/settings/content-cache`
+  and `/settings/export`) and a *user writes* group (annotations, reading position,
+  `POST /reading/clear`), with an auth middleware slot; the admin group may stay
+  localhost-only, user writes need authentication for remote access. The admin pages
+  are the one place that shows absolute paths (the library root in *About*); error
+  messages stay path-free.
 - All routes and URLs are built with a configurable `base_path` (reverse proxy on a
   subpath) through one helper (`web::Urls`); `base_path` is limited to unreserved URL
   characters so it is safe in router paths and links.

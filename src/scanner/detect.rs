@@ -13,6 +13,8 @@
 //!   once more; its hash is unchanged, so it is not parsed again.
 //! - A book that failed to parse with an older parser
 //!   ([`LocatedBook::retry_parse`]) is parsed again even if its file is unchanged.
+//! - A re-read (`reread`) treats every file and archive as changed: all books are
+//!   parsed again, and files found not to be books are looked at again.
 //! - Books are considered vanished only when it is certain that their file is gone:
 //!   never below a directory that could not be read, never for an archive that could
 //!   not be listed, and never after an incomplete walk.
@@ -65,6 +67,7 @@ pub(super) fn plan(
     containers: &[StoredContainer],
     books: &[LocatedBook],
     extensions: &[&str],
+    reread: bool,
 ) -> Plan {
     let mut live: HashMap<i64, Vec<&LocatedBook>> = HashMap::new();
     for book in books.iter().filter(|b| b.status != BookStatus::Removed) {
@@ -83,18 +86,19 @@ pub(super) fn plan(
         let live_books = stored
             .and_then(|c| live.get(&c.id))
             .map_or(&[][..], Vec::as_slice);
-        let unchanged_stat = stored.is_some_and(|c| {
-            c.present
-                && c.record.kind == found.kind
-                && c.record.size == found.size
-                && c.record.mtime_ns == found.mtime_ns
-                && (found.kind == ContainerKind::File
-                    || c.record.listed_formats.as_deref() == Some(formats.as_str()))
-        });
+        let unchanged_stat = !reread
+            && stored.is_some_and(|c| {
+                c.present
+                    && c.record.kind == found.kind
+                    && c.record.size == found.size
+                    && c.record.mtime_ns == found.mtime_ns
+                    && (found.kind == ContainerKind::File
+                        || c.record.listed_formats.as_deref() == Some(formats.as_str()))
+            });
         match found.kind {
             ContainerKind::File => {
                 let book = live_books.iter().find(|b| b.entry_name.is_empty());
-                let reparse = book.is_some_and(|b| b.retry_parse());
+                let reparse = reread || book.is_some_and(|b| b.retry_parse());
                 // Read before the CRC32 was recorded: read once more for it (files that
                 // could not be read have no hash and are not retried).
                 let needs_crc = stored
@@ -150,6 +154,7 @@ pub(super) fn plan(
                             if book.entry_size == Some(entry.size)
                                 && book.entry_crc32 == Some(entry.crc32)
                                 && !book.retry_parse()
+                                && !reread
                             {
                                 plan.unchanged_books += 1;
                             } else {

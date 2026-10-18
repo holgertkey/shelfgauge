@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% block main %}
+<h1>Settings</h1>
+<nav class="settings-toc" aria-label="Settings sections">
+  {%- for section in sections %}
+  <a href="#{{ section.id }}">{{ section.title }}</a>
+  {%- endfor %}
+  <a href="#server">Server</a>
+  <a href="#browser">This browser</a>
+  <a href="#maintenance">Maintenance</a>
+  <a href="#about">About</a>
+</nav>
+{%- for notice in notices %}
+<div class="notice settings-notice {{ notice.kind }}" role="status">
+  <span>{{ notice.text }}</span>
+  {%- if notice.rescan %}
+  <form class="rescan" action="{{ layout.urls.scan() }}" method="post">
+    <input type="hidden" name="back" value="settings">
+    <button type="submit"{% if scan_running %} disabled{% endif %}>Rescan now</button>
+  </form>
+  {%- endif %}
+</div>
+{%- endfor %}
+<form class="settings-form" action="{{ layout.urls.settings() }}" method="post">
+  <input type="hidden" name="rev" value="{{ rev }}">
+  {%- for section in sections %}
+  <section class="settings-section" id="{{ section.id }}">
+    <h2>{{ section.title }}</h2>
+    <p class="muted">{{ section.effect }}</p>
+    {%- for field in section.fields %}
+    <div class="field{% if field.error.is_some() %} invalid{% endif %}">
+      {%- if field.kind == "bool" %}
+      <label class="check"><input type="checkbox" id="{{ field.id }}" name="{{ field.name }}" value="true"{% if field.checked %} checked{% endif %}{% if field.error.is_some() %} aria-invalid="true"{% endif %} aria-describedby="{{ field.id }}-hint"> {{ field.label }}</label>
+      {%- else if field.kind == "choice" || field.kind == "formats" %}
+      <fieldset aria-describedby="{{ field.id }}-hint">
+        <legend>{{ field.label }}</legend>
+        {%- for option in field.options %}
+        <label class="check"><input type="{% if field.kind == "choice" %}radio{% else %}checkbox{% endif %}" name="{{ field.name }}" value="{{ option.value }}"{% if option.checked %} checked{% endif %}> {{ option.label }}{% if !option.note.is_empty() %} <span class="muted">({{ option.note }})</span>{% endif %}</label>
+        {%- endfor %}
+      </fieldset>
+      {%- else if field.kind == "lines" %}
+      <label for="{{ field.id }}">{{ field.label }}</label>
+      <textarea id="{{ field.id }}" name="{{ field.name }}" rows="4" spellcheck="false" autocomplete="off" placeholder="one pattern per line, e.g. drafts/"{% if field.error.is_some() %} aria-invalid="true"{% endif %} aria-describedby="{{ field.id }}-hint">{{ field.value }}</textarea>
+      {%- else %}
+      <label for="{{ field.id }}">{{ field.label }}</label>
+      <input type="number" id="{{ field.id }}" name="{{ field.name }}" value="{{ field.value }}" min="{{ field.min }}"{% if let Some(max) = field.max %} max="{{ max }}"{% endif %} step="1" required{% if field.error.is_some() %} aria-invalid="true"{% endif %} aria-describedby="{{ field.id }}-hint">
+      {%- endif %}
+      {%- if let Some(error) = field.error %}
+      <p class="field-error">{{ error }}</p>
+      {%- endif %}
+      <p class="hint" id="{{ field.id }}-hint">{{ field.hint }} <span class="default">{{ field.default }}</span></p>
+    </div>
+    {%- endfor %}
+  </section>
+  {%- endfor %}
+  <div class="settings-save">
+    <button type="submit" class="primary"{% if !can_save %} disabled{% endif %}>Save</button>
+    <span class="muted">Saved to .shelfgauge/config.toml; comments in the file are kept.</span>
+  </div>
+</form>
+
+<section class="settings-section" id="server">
+  <h2>Server</h2>
+  <p class="muted">Change these in config.toml and restart shelfgauge: changing them from the browser could cut off access to this page.</p>
+  <dl class="facts settings-facts">
+    {%- for row in server %}
+    <dt>{{ row.label }}</dt>
+    <dd>{% if row.label == "Allowed hosts" && !allowed_hosts.is_empty() %}<ul class="plain-list">{% for host in allowed_hosts %}<li>{{ host }}</li>{% endfor %}</ul>{% else %}{{ row.value }}{% endif %}{% if !row.note.is_empty() %} <span class="muted">({{ row.note }})</span>{% endif %}</dd>
+    {%- endfor %}
+  </dl>
+</section>
+
+<section class="settings-section" id="browser">
+  <h2>This browser</h2>
+  <p class="muted">These settings live only in this browser, not in config.toml.</p>
+  <p class="no-js-note">They need JavaScript, which is turned off.</p>
+  <div class="browser-settings">
+    <div class="field">
+      <label for="browser-theme">Theme</label>
+      <select id="browser-theme" class="theme-choice">
+        <option value="">Auto</option>
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+        <option value="sepia">Sepia</option>
+        <option value="navy">Navy</option>
+        <option value="black">Black</option>
+      </select>
+      <p class="hint">The same as the menu in the top bar; the <kbd>t</kbd> key switches to the next one.</p>
+    </div>
+    <div class="field">
+      <p><strong>Reading settings</strong>: <span class="reader-summary">default</span></p>
+      <button type="button" class="reset-reader">Reset reading settings</button>
+      <p class="hint">Font, size, width and spacing of the text, set with the Aa button in reading mode.</p>
+    </div>
+    <div class="field">
+      <button type="button" class="reset-sidebar">Reset sidebar</button>
+      <p class="hint">Its width, whether it is hidden, its scroll position and the Authors/Folders choice.</p>
+    </div>
+    <div class="field">
+      <button type="button" class="leave-focus" disabled>Leave focus mode</button>
+      <p class="hint">Focus mode hides everything but the text in reading mode (the <kbd>f</kbd> key).</p>
+    </div>
+    <p class="browser-done muted" role="status"></p>
+  </div>
+</section>
+
+<section class="settings-section" id="maintenance">
+  <h2>Maintenance</h2>
+  {%- if scan_running %}
+  <p class="notice">A scan is running; the actions that use the index are available when it has finished.</p>
+  {%- endif %}
+  <div class="actions">
+    <div class="action">
+      <form class="rescan" action="{{ layout.urls.scan() }}" method="post">
+        <input type="hidden" name="back" value="settings">
+        <button type="submit"{% if scan_running %} disabled{% endif %}>Rescan</button>
+      </form>
+      <p class="hint">Finds new, changed, moved and removed books.</p>
+    </div>
+    <div class="action">
+      <form action="{{ reread_action }}" method="post">
+        <button type="submit"{% if scan_running %} disabled{% endif %}>Re-read all books</button>
+      </form>
+      <p class="hint">A scan that parses every book again, also unchanged ones: after an update of shelfgauge that reads some books better, or a damaged cache. Takes long on big libraries.</p>
+    </div>
+    <div class="action">
+      <form action="{{ cache_action }}" method="post">
+        <button type="submit"{% if scan_running %} disabled{% endif %}>Clear the content cache</button>
+      </form>
+      <p class="hint">Books are parsed again when they are opened. Covers are kept; they are made again only by re-reading.</p>
+    </div>
+    <div class="action">
+      <form action="{{ export_action }}" method="post">
+        <button type="submit"{% if scan_running %} disabled{% endif %}>Export annotations</button>
+      </form>
+      <p class="hint">Writes Markdown files with all bookmarks, quotes and notes to .shelfgauge/annotations/, as <code>shelfgauge annotations export</code> does.</p>
+    </div>
+    <div class="action">
+      <form action="{{ clear_reading_action }}" method="post">
+        <input type="hidden" name="back" value="settings">
+        <button type="submit">Clear “Currently reading”</button>
+      </form>
+      <p class="hint">Empties the list on the library page; where you stopped in each book is kept.</p>
+    </div>
+  </div>
+</section>
+
+<section class="settings-section" id="about">
+  <h2>About</h2>
+  <dl class="facts settings-facts">
+    {%- for row in about %}
+    <dt>{{ row.label }}</dt>
+    <dd>{{ row.value }}{% if let Some((href, text)) = row.link %} <a href="{{ href }}">{{ text }}</a>{% endif %}</dd>
+    {%- endfor %}
+    {%- if !unknown_keys.is_empty() %}
+    <dt>Unknown keys in config.toml</dt>
+    <dd><ul class="plain-list">{% for key in unknown_keys %}<li><code>{{ key }}</code></li>{% endfor %}</ul><span class="muted">They are ignored; check them for typos.</span></dd>
+    {%- endif %}
+  </dl>
+</section>
+{%- endblock %}

@@ -505,3 +505,67 @@ pub fn duplicate_copies(
     }
     Ok(copies)
 }
+
+/// Live books that the next scan would remove under new `[scan]` settings.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LeavingBooks {
+    /// Books of formats no longer indexed, by format (in name order).
+    pub by_format: Vec<(String, u64)>,
+    /// Other books whose file or archive matches an exclude pattern.
+    pub excluded: u64,
+}
+
+impl LeavingBooks {
+    /// All books that would leave the index.
+    pub fn total(&self) -> u64 {
+        self.by_format.iter().map(|(_, n)| n).sum::<u64>() + self.excluded
+    }
+}
+
+/// Counts the live books (any status but `removed`) whose format is not in `formats`,
+/// and the others whose container path (relative, `/`-separated) is `excluded`.
+///
+/// `excluded` is called once per container and format, and only if `check_paths` is set (no
+/// exclude patterns: no need to read every path).
+pub fn leaving_books(
+    conn: &Connection,
+    formats: &[String],
+    check_paths: bool,
+    excluded: impl Fn(&str) -> bool,
+) -> Result<LeavingBooks, StorageError> {
+    let mut leaving = LeavingBooks::default();
+    let mut stmt = conn.prepare(
+        "SELECT format, count(*) FROM books WHERE status != 'removed'
+         GROUP BY format ORDER BY format",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
+    for row in rows {
+        let (format, count) = row?;
+        if !formats.contains(&format) {
+            leaving.by_format.push((format, count as u64));
+        }
+    }
+    if check_paths {
+        let mut stmt = conn.prepare(
+            "SELECT c.path, b.format, count(*) FROM books b
+             JOIN containers c ON c.id = b.container_id
+             WHERE b.status != 'removed' GROUP BY c.id, b.format",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (path, format, count) = row?;
+            if formats.contains(&format) && excluded(&path) {
+                leaving.excluded += count as u64;
+            }
+        }
+    }
+    Ok(leaving)
+}

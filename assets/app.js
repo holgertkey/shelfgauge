@@ -338,7 +338,8 @@ function setupScroll(sidebar) {
 
 function setupScan() {
   const banner = document.getElementById("scan-banner");
-  const form = document.querySelector("form.rescan");
+  // The top bar's button and those of the settings page.
+  const forms = document.querySelectorAll("form.rescan");
   if (!banner) {
     return;
   }
@@ -395,7 +396,7 @@ function setupScan() {
   if (!banner.hidden) {
     poll();
   }
-  if (form) {
+  for (const form of forms) {
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       try {
@@ -417,6 +418,88 @@ function setupScan() {
       }
     });
   }
+}
+
+// ---------- Settings page: this browser ----------
+
+const FOCUS_KEY = "shelfgauge-focus";
+const READER_KEY = "shelfgauge-reader";
+
+// What the reader settings differ in from the defaults, e.g. "serif font, size 5".
+function readerSummary() {
+  let saved = {};
+  try {
+    saved = JSON.parse(storageGet(localStorage, READER_KEY)) || {};
+  } catch (e) {
+    saved = {};
+  }
+  const labels = {
+    font: (v) => `${v} font`,
+    size: (v) => `text size ${v}`,
+    leading: (v) => `${v} line spacing`,
+    width: (v) => `${v} text width`,
+    align: (v) => (v === "justify" ? "justified" : "left-aligned"),
+    status: (v) => `status line ${v}`,
+  };
+  const parts = [];
+  for (const name of Object.keys(labels)) {
+    const options = shelfgaugeReader.OPTIONS[name];
+    const value = String(saved[name]);
+    if (options.includes(value) && value !== options[0]) {
+      parts.push(labels[name](value));
+    }
+  }
+  return parts.length ? parts.join(", ") : "default";
+}
+
+function setupBrowserSettings() {
+  const section = document.querySelector(".browser-settings");
+  if (!section) {
+    return;
+  }
+  const done = section.querySelector(".browser-done");
+  const say = (text) => {
+    done.textContent = text;
+  };
+
+  const theme = section.querySelector(".theme-choice");
+  theme.value = storageGet(localStorage, THEME_KEY) || "";
+  theme.addEventListener("change", () => applyTheme(theme.value));
+  document.addEventListener("shelfgauge:theme", (event) => {
+    theme.value = event.detail;
+  });
+
+  const summary = section.querySelector(".reader-summary");
+  const resetReader = section.querySelector(".reset-reader");
+  const showReader = () => {
+    summary.textContent = readerSummary();
+    resetReader.disabled = summary.textContent === "default";
+  };
+  showReader();
+  resetReader.addEventListener("click", () => {
+    shelfgaugeReader.save({});
+    showReader();
+    say("The reading settings are back to their defaults.");
+  });
+
+  section.querySelector(".reset-sidebar").addEventListener("click", () => {
+    storageSet(localStorage, SIDEBAR_KEY, null);
+    storageSet(localStorage, WIDTH_KEY, null);
+    storageSet(sessionStorage, SCROLL_KEY, null);
+    const sidebar = document.getElementById("sidebar");
+    const path = (sidebar && sidebar.dataset.cookiePath) || "/";
+    document.cookie = `${MODE_COOKIE}=; path=${path}; max-age=0; samesite=lax`;
+    // The server renders the sidebar mode: show the default one.
+    window.location.reload();
+  });
+
+  const leaveFocus = section.querySelector(".leave-focus");
+  leaveFocus.disabled = storageGet(localStorage, FOCUS_KEY) !== "1";
+  leaveFocus.addEventListener("click", () => {
+    shelfgaugeReader.setFocus(false);
+    leaveFocus.disabled = true;
+    say("Focus mode is off.");
+  });
 }
 
 // ---------- Notes on the book card ----------
@@ -511,6 +594,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setupScroll(sidebar);
   }
   setupScan();
+  setupBrowserSettings();
   setupNoteForms();
   setupKeys();
 });

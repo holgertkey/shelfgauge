@@ -115,6 +115,7 @@ impl TestLibrary {
             library: &self.library,
             exclude: &[],
             registry: &registry,
+            reread: false,
             limits: ReadLimits::default(),
             threads: 2,
             progress: &ScanProgress::default(),

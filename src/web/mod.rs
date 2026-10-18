@@ -4,7 +4,8 @@
 //! and takes the fixed port (a busy port is an error, never a fallback), [`router`]
 //! builds the app, and [`serve`] runs it until a shutdown signal.
 //!
-//! Routes come in four groups: *public* (assets), *read* (browsing), *admin* (rescan)
+//! Routes come in four groups: *public* (assets), *read* (browsing), *admin* (rescan,
+//! settings and maintenance)
 //! and *user writes* (annotations, reading position); all but public pass through the
 //! authentication slot
 //! ([`security::Auth`]). Every request goes through the `Host` check and, for
@@ -17,14 +18,17 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use axum::Router;
-use axum::extract::DefaultBodyLimit;
-use axum::middleware::{from_fn, from_fn_with_state};
+use axum::body::Body;
+use axum::extract::{DefaultBodyLimit, Request, State};
+use axum::http::{StatusCode, header};
+use axum::middleware::{Next, from_fn, from_fn_with_state};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 
 use crate::annotations::export::Exporter;
 use crate::annotations::store::UserData;
 use crate::annotations::text::BookText;
-use crate::config::{AnnotationsConfig, Config, ReaderConfig, ServerConfig};
+use crate::config::{AnnotationsConfig, Config, ConfigOverrides, LiveConfig, ServerConfig};
 use crate::container::ReadLimits;
 use crate::format::Registry;
 use crate::format::model::BookContent;
@@ -94,10 +98,15 @@ struct Inner {
     auth: Auth,
     pool: ReadPool,
     scan: Arc<BackgroundScan>,
-    page_size: u32,
-    reading_list_size: u32,
-    reader: ReaderConfig,
-    annotations: AnnotationsConfig,
+    /// The configuration; its `[server]` section may differ from `server` after a save.
+    config: LiveConfig,
+    /// The `[server]` settings the server was started with.
+    server: ServerConfig,
+    /// The command-line overrides (shown on the settings page; they only touch
+    /// `[server]`, which stays as started).
+    overrides: ConfigOverrides,
+    /// Held while the settings page checks and writes `config.toml`.
+    save: Mutex<()>,
     userdata: Arc<UserData>,
     exporter: Exporter,
     registry: Registry,
@@ -170,7 +179,10 @@ impl AppState {
         Self(Arc::new(Inner {
             library,
             urls,
-            annotations: config.annotations.clone(),
+            config: LiveConfig::new(config.clone()),
+            server: config.server.clone(),
+            overrides: ConfigOverrides::default(),
+            save: Mutex::new(()),
             userdata: Arc::new(
                 UserData::open_in_memory().expect("an in-memory database always opens"),
             ),
@@ -179,9 +191,6 @@ impl AppState {
             auth: Auth::None,
             pool,
             scan,
-            page_size: config.library.page_size,
-            reading_list_size: config.library.reading_list_size,
-            reader: config.reader.clone(),
             registry: Registry::with_builtin_formats(),
             recent: Mutex::new(VecDeque::new()),
             stats: ScanCache::new(),
@@ -200,6 +209,22 @@ impl AppState {
         let inner = Arc::get_mut(&mut self.0).expect("the state is not shared yet");
         inner.userdata = userdata;
         inner.exporter = exporter;
+        self
+    }
+
+    /// Shares `config` (the same handle as the background scan's) instead of a copy of
+    /// the config given to [`new`](Self::new), and keeps the command-line `overrides`
+    /// to apply again after the settings page saves. Call it right after
+    /// [`new`](Self::new), before the state is shared; `config` must hold the same
+    /// `[server]` settings.
+    ///
+    /// # Panics
+    ///
+    /// If the state has already been cloned.
+    pub fn with_config(mut self, config: LiveConfig, overrides: ConfigOverrides) -> Self {
+        let inner = Arc::get_mut(&mut self.0).expect("the state is not shared yet");
+        inner.config = config;
+        inner.overrides = overrides;
         self
     }
 
@@ -233,24 +258,30 @@ impl AppState {
         &self.0.scan
     }
 
-    /// Books on the "Currently reading" list (`library.reading_list_size`).
-    pub fn reading_list_size(&self) -> u32 {
-        self.0.reading_list_size
+    /// The current configuration: take it once per request. Its `[server]` section is
+    /// always the one the server was started with.
+    pub fn config(&self) -> Arc<Config> {
+        self.0.config.get()
+    }
+
+    /// The shared configuration handle.
+    pub fn live_config(&self) -> &LiveConfig {
+        &self.0.config
+    }
+
+    /// The `[server]` settings the server runs with (fixed at startup).
+    pub fn server(&self) -> &ServerConfig {
+        &self.0.server
+    }
+
+    /// The command-line overrides of the config file.
+    pub fn overrides(&self) -> &ConfigOverrides {
+        &self.0.overrides
     }
 
     /// Entries per list page (`library.page_size`).
     pub fn page_size(&self) -> u32 {
-        self.0.page_size
-    }
-
-    /// The `[reader]` settings.
-    pub fn reader(&self) -> &ReaderConfig {
-        &self.0.reader
-    }
-
-    /// The `[annotations]` settings.
-    pub fn annotations(&self) -> &AnnotationsConfig {
-        &self.0.annotations
+        self.config().library.page_size
     }
 
     /// The user-data database.
@@ -319,6 +350,21 @@ impl AppState {
         Ok((content, text))
     }
 
+    /// Locks out other saves of the settings page while `config.toml` is checked and
+    /// written.
+    pub(crate) fn save_lock(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.0.save.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Drops the parsed books kept in memory (after the content cache was cleared).
+    pub(crate) fn forget_loaded_books(&self) {
+        self.0
+            .recent
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+    }
+
     /// The library statistics, cached until the next scan.
     pub(crate) fn library_stats(
         &self,
@@ -376,6 +422,31 @@ impl AppState {
 /// surrogate pair escaped in JSON), plus room for the other fields.
 pub fn write_body_limit(config: &AnnotationsConfig) -> usize {
     (config.max_note_length as usize + 256) * 12 + 4096
+}
+
+/// Middleware: limits the body of a user write to [`write_body_limit`] of the current
+/// `[annotations]` settings.
+///
+/// A body over the limit is refused with `413 Payload Too Large`: at once if its
+/// `Content-Length` says so, otherwise by the extractor that reads it (axum maps the
+/// [`Limited`](http_body_util::Limited) error to 413).
+async fn limit_write_body(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    let limit = write_body_limit(&state.config().annotations);
+    let declared = req
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok());
+    if declared.is_some_and(|len| len > limit as u64) {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "Failed to buffer the request body",
+        )
+            .into_response();
+    }
+    let (parts, body) = req.into_parts();
+    let body = Body::new(http_body_util::Limited::new(body, limit));
+    next.run(Request::from_parts(parts, body)).await
 }
 
 /// Checks the bind safety rule and listens on the configured address and fixed port.
@@ -438,6 +509,22 @@ pub fn router(state: AppState) -> Router {
         .route_layer(auth());
     let admin = Router::new()
         .route(&urls.path("/scan"), post(routes::scan::rescan))
+        .route(
+            &urls.settings(),
+            get(routes::settings::page).post(routes::settings::save),
+        )
+        .route(
+            &urls.settings_action("reread"),
+            post(routes::settings::reread),
+        )
+        .route(
+            &urls.settings_action("content-cache"),
+            post(routes::settings::clear_content_cache),
+        )
+        .route(
+            &urls.settings_action("export"),
+            post(routes::settings::export),
+        )
         .route_layer(auth());
     // User writes (annotations, reading position): behind the Origin check like every
     // POST, and with a body limit derived from the configured lengths.
@@ -467,7 +554,10 @@ pub fn router(state: AppState) -> Router {
             post(routes::annotations::clear_reading),
         )
         .route_layer(auth())
-        .layer(DefaultBodyLimit::max(write_body_limit(state.annotations())));
+        // Not `DefaultBodyLimit::max`: that is fixed when the router is built, and the
+        // settings page can raise `max_note_length` at run time.
+        .layer(from_fn_with_state(state.clone(), limit_write_body))
+        .layer(DefaultBodyLimit::disable());
 
     let mut app = public.merge(read).merge(admin).merge(writes);
     if let Some(prefix) = urls.prefix() {

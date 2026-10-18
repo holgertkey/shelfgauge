@@ -157,7 +157,7 @@ pub(crate) fn book_annotations(
     let user = user.lock();
     Ok(Some(BookAnnotations {
         annotations: store::for_book(&user, &snapshot.key)?,
-        position: if state.reader().remember_position {
+        position: if state.config().reader.remember_position {
             store::position(&user, &snapshot.key)?
         } else {
             None
@@ -240,7 +240,7 @@ fn parse_block(text: &str) -> Result<BlockId, AppError> {
 
 /// Checks a note against `annotations.max_note_length`.
 fn check_note(state: &AppState, note: Option<&str>) -> Result<(), AppError> {
-    let max = state.annotations().max_note_length as usize;
+    let max = state.config().annotations.max_note_length as usize;
     match note.map(char_len) {
         Some(len) if len > max => Err(AppError::BadRequest(format!(
             "the note is {len} characters long; the limit is {max}"
@@ -311,7 +311,8 @@ pub(crate) async fn create(
                         end_offset: request.end_offset.ok_or_else(|| field("end_offset"))?,
                     };
                     let quote = anchor::quote(&text, &anchor).map_err(bad)?;
-                    let parts = split(&content, state.reader());
+                    let config = state.config();
+                    let parts = split(&content, &config.reader);
                     if part_of(&parts, anchor.start_block) != part_of(&parts, anchor.end_block) {
                         return Err(AppError::BadRequest(
                             "a selection must lie within one part of the book".to_owned(),
@@ -319,7 +320,7 @@ pub(crate) async fn create(
                     }
                     let (len, max) = (
                         char_len(&quote.text),
-                        state.annotations().max_text_length as usize,
+                        config.annotations.max_text_length as usize,
                     );
                     if len > max {
                         return Err(AppError::BadRequest(format!(
@@ -506,7 +507,7 @@ pub(crate) async fn position(
 ) -> Result<StatusCode, ApiError> {
     let id = parse_id(&id)?;
     let Json(request) = body?;
-    if !state.reader().remember_position {
+    if !state.config().reader.remember_position {
         return Ok(StatusCode::NO_CONTENT);
     }
     state
@@ -553,15 +554,18 @@ pub(crate) async fn finished(
 }
 
 /// `POST /reading/clear` (form): empties the "Currently reading" list (the positions
-/// are kept); back to the library page.
-pub(crate) async fn clear_reading(State(state): State<AppState>) -> Result<Redirect, AppError> {
+/// are kept); back to the library page (the settings page with `back=settings`).
+pub(crate) async fn clear_reading(
+    State(state): State<AppState>,
+    form: Result<axum::Form<super::Back>, axum::extract::rejection::FormRejection>,
+) -> Result<Redirect, AppError> {
     state
         .user_db(move |state, _| {
             store::dismiss_all(&state.userdata().lock(), now())?;
             Ok(())
         })
         .await?;
-    Ok(Redirect::to(&state.urls().home()))
+    Ok(Redirect::to(&super::Back::url(form, state.urls())))
 }
 
 /// A book on the "Currently reading" list.
@@ -586,8 +590,9 @@ pub(crate) fn reading_list(
     state: &AppState,
     index: &Connection,
 ) -> Result<Vec<ReadingItem>, AppError> {
-    let limit = state.reading_list_size() as usize;
-    if limit == 0 || !state.reader().remember_position {
+    let config = state.config();
+    let limit = config.library.reading_list_size as usize;
+    if limit == 0 || !config.reader.remember_position {
         return Ok(Vec::new());
     }
     let positions = store::reading_list(&state.userdata().lock())?;

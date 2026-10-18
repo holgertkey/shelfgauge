@@ -3,19 +3,27 @@
 //! Progress is polled (`GET /scan/status`) rather than streamed: an open event stream
 //! would keep the graceful shutdown waiting.
 
+use axum::Form;
 use axum::Json;
 use axum::extract::State;
+use axum::extract::rejection::FormRejection;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 
+use super::Back;
 use crate::web::AppState;
 use crate::web::layout::ScanStatus;
 
 /// `POST /scan` (admin): starts a rescan unless one is running.
 ///
-/// A form post is redirected to the library page; a request that accepts JSON (the
+/// A form post is redirected to the library page (the settings page with
+/// `back=settings`); a request that accepts JSON (the
 /// page's script) gets `202 Accepted` with the scan status.
-pub(crate) async fn rescan(State(state): State<AppState>, headers: HeaderMap) -> Response {
+pub(crate) async fn rescan(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    form: Result<Form<Back>, FormRejection>,
+) -> Response {
     if state.scan().start() {
         tracing::info!("rescan requested");
     }
@@ -31,7 +39,7 @@ pub(crate) async fn rescan(State(state): State<AppState>, headers: HeaderMap) ->
         )
             .into_response()
     } else {
-        Redirect::to(&state.urls().home()).into_response()
+        Redirect::to(&Back::url(form, state.urls())).into_response()
     }
 }
 

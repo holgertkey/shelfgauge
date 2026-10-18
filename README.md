@@ -1,11 +1,11 @@
-# shelfgauge v0.12.0
+# shelfgauge v0.13.0
 
 A single-binary tool that indexes a folder tree of ebooks — FB2, EPUB, plain text and
 (optionally) HTML files, plain or inside `.zip` archives — into a local SQLite
 database and serves a browsable, searchable web library on `localhost`, with an
 in-browser reader.
 
-**Current version:** 0.12.0
+**Current version:** 0.13.0
 
 ## Status
 
@@ -157,6 +157,13 @@ again at the next scan.
   result, `←`/`→` previous/next part, `b` bookmark, `f` focus mode, `-`/`+`
   text size (`0` resets it); in the **Quote** dialog `Ctrl+Enter` saves, `Esc` cancels.
 - **Rescan** (top bar) updates the index while the library stays usable.
+- **Settings** (the gear in the top bar, `/settings`): change the configuration from
+  the browser (see [Configuration](#configuration)); reset what this browser remembers
+  (theme, reading settings, the sidebar, focus mode); maintenance: rescan, **Re-read all
+  books** (parses every book again, also unchanged ones, e.g. after an update of
+  shelfgauge), clear the content cache, export the annotations, clear "Currently
+  reading"; and facts about the library (version, paths, sizes, the last scan, unknown
+  keys in `config.toml`).
 
 ### Bookmarks, quotes and the reading position
 
@@ -198,6 +205,21 @@ are parsed; books that cannot be read are listed with the reason on their card.
 `.shelfgauge/config.toml` is created with commented defaults on first run. Missing keys
 use their defaults, unknown keys are reported as warnings, and invalid values stop the
 program with a message naming the key. `--port` and `--bind` override the file.
+
+All sections but `[server]` can also be changed on the **Settings** page. It edits the
+file in place, keeping your comments, key order and unknown keys, writes only the keys
+you changed, and checks the new values the way the program does at startup, so a save
+never produces a file the next start rejects. If the file was changed since the page
+was opened (by hand, in another tab), the save is refused and the form shows the file
+as it is now. When changes take effect:
+
+| Section | Takes effect |
+|---|---|
+| `[library]` | At once (the next page). |
+| `[reader]` | At once: parts are made when a page is opened; links to places in books keep working. |
+| `[annotations]` | At once: the limits for the next quote or note, the retention at the next cleanup after a scan. |
+| `[scan]` | At the next scan. The page tells how many books a change would remove from the index (a format turned off, a new exclude pattern) and offers **Rescan now**; no scan starts by itself. |
+| `[server]` | Only in `config.toml`, after a restart: changing the address or port from the browser could cut off access to the page itself. The page shows the running values and which command-line options override them. |
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -265,4 +287,4 @@ MIT — see [LICENSE](LICENSE).
 
 ---
 
-_shelfgauge v0.12.0 — MIT License_
+_shelfgauge v0.13.0 — MIT License_

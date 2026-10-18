@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 
+use crate::config::{Config, LiveConfig};
 use crate::container::ReadLimits;
 use crate::format::Registry;
 use crate::library::Library;
@@ -19,8 +20,7 @@ use super::{ProgressSnapshot, ScanError, ScanProgress, ScanSummary, Scanner};
 #[derive(Debug)]
 pub struct BackgroundScan {
     library: Library,
-    exclude: Vec<String>,
-    registry: Arc<Registry>,
+    config: LiveConfig,
     progress: Arc<ScanProgress>,
     cancel: Arc<AtomicBool>,
     thread: Mutex<Option<JoinHandle<()>>>,
@@ -43,13 +43,11 @@ impl BackgroundScan {
     /// [default formats](crate::format::DEFAULT_FORMATS); nothing runs until
     /// [`BackgroundScan::start`].
     pub fn new(library: Library, exclude: Vec<String>) -> Self {
+        let mut config = Config::default();
+        config.scan.exclude = exclude;
         Self {
             library,
-            exclude,
-            registry: Arc::new(
-                Registry::with_formats(crate::format::DEFAULT_FORMATS)
-                    .expect("default formats are known"),
-            ),
+            config: LiveConfig::new(config),
             progress: Arc::new(ScanProgress::default()),
             cancel: Arc::new(AtomicBool::new(false)),
             thread: Mutex::new(None),
@@ -58,9 +56,10 @@ impl BackgroundScan {
         }
     }
 
-    /// Indexes the formats of `registry` (`[scan].formats`) instead of the defaults.
-    pub fn with_registry(mut self, registry: Registry) -> Self {
-        self.registry = Arc::new(registry);
+    /// Takes the `[scan]` settings from `config` when each scan starts, instead of the
+    /// patterns given to [`new`](Self::new) and the default formats.
+    pub fn with_config(mut self, config: LiveConfig) -> Self {
+        self.config = config;
         self
     }
 
@@ -76,14 +75,25 @@ impl BackgroundScan {
     ///
     /// Returns whether a new scan was started.
     pub fn start(&self) -> bool {
+        self.start_with(false)
+    }
+
+    /// Starts a scan that parses every book again, even unchanged ones (after a parser
+    /// fix or a damaged cache), unless one is running or the controller is shut down.
+    ///
+    /// Returns whether a new scan was started.
+    pub fn start_reread(&self) -> bool {
+        self.start_with(true)
+    }
+
+    fn start_with(&self, reread: bool) -> bool {
         let mut thread = self.lock();
         if thread.as_ref().is_some_and(|t| !t.is_finished()) || self.cancel.load(Ordering::Relaxed)
         {
             return false;
         }
         let library = self.library.clone();
-        let exclude = self.exclude.clone();
-        let registry = Arc::clone(&self.registry);
+        let scan = self.config.get().scan.clone();
         let progress = Arc::clone(&self.progress);
         let cancel = Arc::clone(&self.cancel);
         let last = Arc::clone(&self.last);
@@ -92,7 +102,15 @@ impl BackgroundScan {
             .name("scan".to_owned())
             .spawn(move || {
                 tracing::info!("scanning {}", library.root().display());
-                let result = run(&library, &exclude, &registry, &progress, &cancel);
+                let registry = scan.registry();
+                let result = run(
+                    &library,
+                    &scan.exclude,
+                    &registry,
+                    reread,
+                    &progress,
+                    &cancel,
+                );
                 match &result {
                     Ok(summary) if summary.cancelled => {
                         tracing::info!("scan cancelled; changes found so far are saved");
@@ -177,6 +195,7 @@ fn run(
     library: &Library,
     exclude: &[String],
     registry: &Registry,
+    reread: bool,
     progress: &ScanProgress,
     cancel: &AtomicBool,
 ) -> Result<ScanSummary, ScanError> {
@@ -185,6 +204,7 @@ fn run(
         library,
         exclude,
         registry,
+        reread,
         limits: ReadLimits::default(),
         threads: 0,
         progress,

@@ -1585,6 +1585,192 @@ button.small.primary {
   border-top: 1px solid var(--border);
 }
 
+/* ---------- Settings ---------- */
+
+.settings-toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+}
+
+.settings-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  max-width: 44rem;
+  margin: 0 0 0.75rem;
+}
+
+.settings-notice form {
+  margin: 0;
+}
+
+.notice.ok {
+  background: var(--banner-bg);
+}
+
+.notice.info {
+  border-left: 3px solid var(--accent);
+}
+
+.settings-section {
+  max-width: 44rem;
+  margin: 0 0 2rem;
+  scroll-margin-top: calc(var(--topbar-height) + 1rem);
+}
+
+.settings-section h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1.15rem;
+}
+
+.settings-section > .muted {
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+}
+
+.field {
+  margin: 0 0 1rem;
+}
+
+.field > label:not(.check),
+.field legend {
+  display: block;
+  margin: 0 0 0.25rem;
+  font-weight: 600;
+}
+
+.field fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.field .check {
+  display: block;
+  margin: 0.15rem 0;
+}
+
+.field > .check {
+  font-weight: 600;
+}
+
+.field input[type="number"],
+.field select,
+.field textarea {
+  box-sizing: border-box;
+  padding: 0.3rem 0.5rem;
+  color: var(--fg);
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.field input[type="number"] {
+  width: 12rem;
+  max-width: 100%;
+}
+
+.field textarea {
+  display: block;
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9rem;
+  resize: vertical;
+}
+
+.field.invalid input,
+.field.invalid textarea {
+  border-color: var(--error);
+}
+
+.field-error {
+  margin: 0.25rem 0 0;
+  color: var(--error);
+  font-size: 0.9rem;
+}
+
+.hint {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.hint .default {
+  white-space: nowrap;
+}
+
+.settings-save {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  max-width: 44rem;
+  margin: 0 0 2rem;
+  padding: 0.75rem 0;
+  font-size: 0.9rem;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+
+button.primary {
+  color: #ffffff;
+  font-weight: 600;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+button.primary:hover {
+  filter: brightness(1.1);
+}
+
+button:disabled,
+button:disabled:hover {
+  cursor: not-allowed;
+  opacity: 0.55;
+  filter: none;
+}
+
+.settings-facts {
+  grid-template-columns: max-content minmax(0, 1fr);
+  overflow-wrap: anywhere;
+}
+
+.plain-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.actions .action {
+  margin: 0 0 1rem;
+}
+
+.actions form {
+  margin: 0;
+}
+
+.no-js-note {
+  display: none;
+}
+
+.no-js .no-js-note {
+  display: block;
+}
+
+.no-js .browser-settings {
+  display: none;
+}
+
+.browser-done:empty {
+  display: none;
+}
+
 /* ---------- Narrow screens ---------- */
 
 @media (max-width: 48rem) {
@@ -1624,6 +1810,20 @@ button.small.primary {
 
   .brand {
     display: none;
+  }
+
+  /* The theme is also on the settings page (and in the reader's Aa panel), and the
+     t key switches it: the bar keeps its room for the search field. */
+  .topbar .theme-select {
+    display: none;
+  }
+
+  .settings-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-facts dd {
+    margin-bottom: 0.5rem;
   }
 
   .book-card {

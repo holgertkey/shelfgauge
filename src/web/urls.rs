@@ -330,6 +330,17 @@ impl Urls {
         self.path("/scan")
     }
 
+    /// The settings page (`GET`; `POST` saves the config form).
+    pub fn settings(&self) -> String {
+        self.path("/settings")
+    }
+
+    /// The settings page's maintenance action `action` (`POST`): `reread`,
+    /// `content-cache` or `export`.
+    pub fn settings_action(&self, action: &str) -> String {
+        self.path(&format!("/settings/{action}"))
+    }
+
     /// The scan progress (JSON).
     pub fn scan_status(&self) -> String {
         self.path("/scan/status")

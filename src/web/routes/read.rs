@@ -214,8 +214,9 @@ pub(super) async fn book(state: &AppState, id: i64) -> Result<BookDetails, AppEr
 }
 
 fn page(state: &AppState, book: &BookDetails, params: &Params) -> Result<Outcome, AppError> {
+    let config = state.config();
     let (content, text) = state.book_text(book)?;
-    let parts = split(&content, state.reader());
+    let parts = split(&content, &config.reader);
     let urls = state.urls();
     let links = Links {
         urls,
@@ -294,13 +295,13 @@ fn page(state: &AppState, book: &BookDetails, params: &Params) -> Result<Outcome
         next: neighbour(index + 1),
         lists: Lists::new(urls, book.id, &annotations, current, Some(&text)),
         annotations_href: urls.annotations(book.id),
-        position_href: if state.reader().remember_position {
+        position_href: if config.reader.remember_position {
             urls.position(book.id)
         } else {
             String::new()
         },
-        max_text: state.annotations().max_text_length,
-        max_note: state.annotations().max_note_length,
+        max_text: config.annotations.max_text_length,
+        max_note: config.annotations.max_note_length,
         find: FindPanel {
             action: urls.read(book.id, 1),
             href: urls.find(book.id, ""),

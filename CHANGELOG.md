@@ -8,6 +8,34 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-18
+
+### Added
+
+- **Settings page** (`/settings`, the gear in the top bar, also in reading mode):
+  change `[library]`, `[reader]`, `[annotations]` and `[scan]` from the browser.
+  `config.toml` is edited in place: comments, key order and unknown keys are kept and
+  only changed keys are written; the values are checked as at startup (errors are
+  shown at their field) and the file is written atomically. A save is refused when the
+  file was changed since the page was opened. `[library]`, `[reader]` and
+  `[annotations]` apply at once, `[scan]` at the next scan; the page tells how many
+  books a change would remove from the index and offers **Rescan now**. `[server]` is
+  shown read-only, with the command-line overrides.
+- *This browser* on the settings page: the theme, and resetting the reading settings,
+  the sidebar (width, hidden state, scroll position, Authors/Folders) and focus mode.
+- Maintenance on the settings page: **Re-read all books** (a scan that parses every
+  book again, also unchanged ones), clear the content cache, export the annotations
+  (as `shelfgauge annotations export`), clear "Currently reading".
+- *About* on the settings page: version, library and config paths, the sizes of the
+  index, the annotations database and the caches, the last scan, and unknown keys in
+  `config.toml`.
+
+### Changed
+
+- The body limit of annotation writes follows the current `max_note_length`.
+- On narrow screens the theme menu leaves the top bar (it is on the settings page and
+  in the reader's **Aa** panel; `t` still switches the theme).
+
 ## [0.12.0] - 2026-10-17
 
 ### Added

@@ -23,6 +23,7 @@ pub(crate) mod library;
 pub(crate) mod read;
 pub(crate) mod scan;
 pub(crate) mod search;
+pub(crate) mod settings;
 pub(crate) mod sidebar;
 pub(crate) mod stats;
 
@@ -86,6 +87,24 @@ impl Params {
                 inner: clean(&self.inner),
             },
             _ => FolderPath::Dir(clean(&self.path)),
+        }
+    }
+}
+
+/// The `back` field of an action's form: where to go after it.
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct Back {
+    #[serde(default)]
+    back: String,
+}
+
+impl Back {
+    /// The page to redirect to: the settings page for `back=settings`, otherwise the
+    /// library page. A request without a form body counts as no `back`.
+    fn url<T>(form: Result<axum::Form<Back>, T>, urls: &Urls) -> String {
+        match form {
+            Ok(axum::Form(Back { back })) if back == "settings" => urls.settings(),
+            _ => urls.home(),
         }
     }
 }

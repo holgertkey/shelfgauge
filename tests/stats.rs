@@ -97,6 +97,7 @@ impl TestLibrary {
             library: &self.library,
             exclude: &[],
             registry: &Registry::with_builtin_formats(),
+            reread: false,
             limits: ReadLimits::default(),
             threads: 2,
             progress: &ScanProgress::default(),

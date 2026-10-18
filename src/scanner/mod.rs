@@ -52,7 +52,7 @@ use walk::Found;
 use writer::{ContainerRef, Op, Outcome};
 
 pub use background::BackgroundScan;
-pub use walk::mtime_ns;
+pub use walk::{excludes, mtime_ns};
 
 /// The modification time recorded for an archive while its books are being written;
 /// never equal to a real file time, so an interrupted scan re-examines the archive.
@@ -223,6 +223,9 @@ pub struct Scanner<'a> {
     pub exclude: &'a [String],
     /// The available book formats.
     pub registry: &'a Registry,
+    /// Parse every book again, even if its file is unchanged (after a parser fix or a
+    /// damaged cache); a normal scan parses only new and changed files.
+    pub reread: bool,
     /// Read limits for books.
     pub limits: ReadLimits,
     /// Parser threads; 0 for one per CPU.
@@ -262,7 +265,7 @@ impl Scanner<'_> {
         let containers = list_containers(conn)?;
         let books = all_books(conn)?;
         let extensions = self.registry.extensions();
-        let plan = detect::plan(&walk, &containers, &books, &extensions);
+        let plan = detect::plan(&walk, &containers, &books, &extensions, self.reread);
         let formats = crate::storage::containers::listed_formats(&extensions);
 
         // Candidates for moved books: vanished in this scan, or removed earlier.

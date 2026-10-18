@@ -10,10 +10,13 @@ use std::fmt;
 use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::Path;
+use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{Error, Result};
+
+pub mod edit;
 
 /// The default server port.
 pub const DEFAULT_PORT: u16 = 8742;
@@ -25,6 +28,8 @@ pub const DEFAULT_CONFIG_TOML: &str = r#"# shelfgauge library configuration.
 #
 # Created with default values on first run. Missing keys use their defaults.
 # Command-line flags (--port, --bind) override the values in this file.
+# All sections but [server] can also be changed on the Settings page (the gear in
+# the top bar); comments in this file are kept.
 
 [server]
 # Address to listen on.
@@ -280,6 +285,44 @@ pub struct LoadedConfig {
     pub created: bool,
 }
 
+/// The configuration of a running server, shared by the request handlers and the
+/// background scan, and replaced as a whole when the settings page saves.
+///
+/// Readers take a snapshot with [`get`](Self::get) and use it for the whole request, so
+/// a save never mixes old and new values within one request. Clones share the value.
+///
+/// # Examples
+///
+/// ```
+/// use shelfgauge::config::{Config, LiveConfig};
+///
+/// let live = LiveConfig::new(Config::default());
+/// let other = live.clone();
+/// let mut changed = Config::default();
+/// changed.library.page_size = 20;
+/// live.set(changed);
+/// assert_eq!(other.get().library.page_size, 20);
+/// ```
+#[derive(Debug, Clone)]
+pub struct LiveConfig(Arc<RwLock<Arc<Config>>>);
+
+impl LiveConfig {
+    /// Shares `config`, which must be [validated](Config::validate).
+    pub fn new(config: Config) -> Self {
+        Self(Arc::new(RwLock::new(Arc::new(config))))
+    }
+
+    /// The current configuration.
+    pub fn get(&self) -> Arc<Config> {
+        Arc::clone(&self.0.read().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    /// Replaces the configuration; `config` must be [validated](Config::validate).
+    pub fn set(&self, config: Config) {
+        *self.0.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(config);
+    }
+}
+
 impl Config {
     /// Loads the config file at `path`, first creating it with [`DEFAULT_CONFIG_TOML`] if
     /// it does not exist.
@@ -323,21 +366,32 @@ impl Config {
     ///
     /// Returns the config and the sorted dotted paths of unknown keys.
     pub fn from_toml(text: &str, path: &Path) -> Result<(Self, Vec<String>)> {
-        let syntax_error = |e: toml::de::Error| Error::ConfigSyntax {
-            path: path.to_owned(),
-            message: e.to_string().trim_end().to_owned(),
-        };
-        let deserializer = toml::de::Deserializer::parse(text).map_err(syntax_error)?;
-        let mut unknown_keys = Vec::new();
-        let mut config: Self = serde_ignored::deserialize(deserializer, |key| {
-            unknown_keys.push(key.to_string());
-        })
-        .map_err(syntax_error)?;
-        unknown_keys.sort();
+        let (mut config, unknown_keys) =
+            Self::parse_unvalidated(text).map_err(|message| Error::ConfigSyntax {
+                path: path.to_owned(),
+                message,
+            })?;
         config.validate().map_err(|error| Error::InvalidConfig {
             path: path.to_owned(),
             error,
         })?;
+        Ok((config, unknown_keys))
+    }
+
+    /// Parses config file content without [validating](Self::validate) it, so values
+    /// out of range are kept as they are (the settings page shows them at their field).
+    ///
+    /// Returns the config and the sorted dotted paths of unknown keys, or the syntax or
+    /// type error (with its location, without a file name).
+    pub fn parse_unvalidated(text: &str) -> Result<(Self, Vec<String>), String> {
+        let syntax_error = |e: toml::de::Error| e.to_string().trim_end().to_owned();
+        let deserializer = toml::de::Deserializer::parse(text).map_err(syntax_error)?;
+        let mut unknown_keys = Vec::new();
+        let config: Self = serde_ignored::deserialize(deserializer, |key| {
+            unknown_keys.push(key.to_string());
+        })
+        .map_err(syntax_error)?;
+        unknown_keys.sort();
         Ok((config, unknown_keys))
     }
 
