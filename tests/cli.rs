@@ -117,12 +117,12 @@ fn first_run_creates_config_and_serves() {
     assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
     assert!(response.contains("No books yet."), "{response}");
     let err = server.stop();
-    assert!(err.contains("created default config"), "{err}");
+    assert!(err.contains("created the default config"), "{err}");
 
     // The second run reuses the file and does not announce it again.
     let server = Server::start(dir.path(), &["--port", &free_port().to_string()]);
     let err = server.stop();
-    assert!(!err.contains("created default config"), "{err}");
+    assert!(!err.contains("created the default config"), "{err}");
 }
 
 #[test]
@@ -189,7 +189,9 @@ fn unknown_config_keys_are_warnings() {
 
     let err = Server::start(dir.path(), &[]).stop();
     assert!(
-        err.contains("WARN") && err.contains("`server.prot`"),
+        err.contains("WARN")
+            && err.contains("unknown config key")
+            && err.contains("key=\"server.prot\""),
         "{err}"
     );
 }

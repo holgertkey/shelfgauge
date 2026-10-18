@@ -97,11 +97,18 @@ pub fn walk(root: &Path, excludes: &Gitignore, registry: &Registry, cancel: &Ato
             Err(error) => {
                 match error.path().and_then(|p| relative_path(root, p)) {
                     Some(dir) => {
-                        tracing::warn!("cannot read {dir:?}: {error}");
+                        tracing::warn!(
+                            dir = ?dir,
+                            error = ?error.io_error().map(ToString::to_string),
+                            "cannot read a directory"
+                        );
                         walk.unreadable_dirs.push(dir);
                     }
                     None => {
-                        tracing::warn!("error while walking the library: {error}");
+                        tracing::warn!(
+                            error = ?error.io_error().map(ToString::to_string),
+                            "error while walking the library"
+                        );
                         walk.complete = false;
                     }
                 }
@@ -117,8 +124,8 @@ pub fn walk(root: &Path, excludes: &Gitignore, registry: &Registry, cancel: &Ato
         }
         let Some(path) = relative_path(root, entry.path()) else {
             tracing::warn!(
-                "skipping {}: the path is not valid UTF-8",
-                entry.path().display()
+                path = ?entry.path().strip_prefix(root).unwrap_or(entry.path()),
+                "skipping a path that is not valid UTF-8"
             );
             walk.skipped_non_utf8 += 1;
             continue;
@@ -126,7 +133,11 @@ pub fn walk(root: &Path, excludes: &Gitignore, registry: &Registry, cancel: &Ato
         let metadata = match entry.metadata() {
             Ok(metadata) => metadata,
             Err(error) => {
-                tracing::warn!("cannot read metadata of {path:?}: {error}");
+                tracing::warn!(
+                    path = ?path,
+                    error = ?error.io_error().map(ToString::to_string),
+                    "cannot read file metadata"
+                );
                 // Treat it like an unreadable directory: keep its books.
                 walk.unreadable_dirs.push(path);
                 continue;

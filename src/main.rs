@@ -26,7 +26,7 @@ const READ_POOL_SIZE: u32 = 4;
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    cli::init_logging(cli.log_level());
+    cli::init_logging(cli.log_level(), cli.log_format.into());
     let invocation = cli.invocation();
 
     let library = if invocation.explicit_path {
@@ -44,20 +44,18 @@ fn main() -> anyhow::Result<()> {
     let config_path = library.config_path();
     let loaded = Config::load_or_create(&config_path)?;
     if loaded.created {
-        tracing::info!("created default config {}", config_path.display());
+        tracing::info!(config = ?config_path, "created the default config");
     }
     for key in &loaded.unknown_keys {
-        tracing::warn!(
-            "unknown key `{key}` in {} is ignored",
-            config_path.display()
-        );
+        tracing::warn!(key = ?key, config = ?config_path, "unknown config key is ignored");
     }
     let mut config = loaded.config;
     config.apply_overrides(&invocation.overrides)?;
+    // Debug-escaped: one log line, not one per config line.
     tracing::debug!(
-        "config {}, effective values:\n{}",
-        config_path.display(),
-        config.to_toml().trim_end()
+        config = ?config_path,
+        values = ?config.to_toml().trim_end(),
+        "effective config"
     );
 
     match invocation.mode {
@@ -150,7 +148,10 @@ fn serve(
                     if let Err(e) =
                         attach::cleanup_library(&library, &userdata, &exporter, retention)
                     {
-                        tracing::error!("cannot clean up the annotations of removed books: {e}");
+                        tracing::error!(
+                            error = %e,
+                            "cannot clean up the annotations of removed books"
+                        );
                     }
                 }),
         )
@@ -171,7 +172,7 @@ fn serve(
         let shutdown = shutdown_signal().context("cannot listen for Ctrl+C")?;
         println!("Serving {url}  (Ctrl+C to stop)");
         if scan {
-            background.start();
+            background.start(shelfgauge::scanner::ScanTrigger::Startup);
         }
         web::serve(listener, router, shutdown)
             .await
@@ -232,6 +233,7 @@ fn announce_shutdown() {
 
 /// `shelfgauge scan`: updates the index and prints a summary.
 fn scan(library: &Library, config: &Config) -> anyhow::Result<()> {
+    let _span = tracing::info_span!("scan", trigger = %"cli").entered();
     let mut conn = shelfgauge::storage::open_writer(&library.db_path())
         .with_context(|| format!("cannot open the index {}", library.db_path().display()))?;
     let registry = config.scan.registry();

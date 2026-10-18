@@ -12,6 +12,7 @@ use axum::response::{IntoResponse, Response};
 
 use super::AppState;
 use super::layout::Layout;
+use super::trace::RequestId;
 use crate::storage::StorageError;
 
 /// A failed request; rendered as an error page by [`render_errors`].
@@ -48,7 +49,7 @@ impl IntoResponse for AppError {
             Self::NotFound => (StatusCode::NOT_FOUND, ErrorPage::NotFound),
             Self::FileMissing => (StatusCode::NOT_FOUND, ErrorPage::FileMissing),
             Self::Unreadable(reason) => {
-                tracing::warn!("cannot read a book: {reason}");
+                tracing::warn!(reason = ?reason, "cannot read a book");
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     ErrorPage::Unreadable(reason),
@@ -57,7 +58,7 @@ impl IntoResponse for AppError {
             Self::BadRequest(reason) => (StatusCode::BAD_REQUEST, ErrorPage::BadRequest(reason)),
             Self::Protected(scheme) => (StatusCode::FORBIDDEN, ErrorPage::Protected(scheme)),
             Self::Internal(message) => {
-                tracing::error!("{message}");
+                tracing::error!(error = ?message, "internal error");
                 (StatusCode::INTERNAL_SERVER_ERROR, ErrorPage::Internal)
             }
         };
@@ -65,6 +66,14 @@ impl IntoResponse for AppError {
         response.extensions_mut().insert(page);
         response
     }
+}
+
+/// The internal error page (500) without logging anything: for a panic, which the
+/// panic hook has logged.
+pub(crate) fn internal_error() -> Response {
+    let mut response = StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    response.extensions_mut().insert(ErrorPage::Internal);
+    response
 }
 
 impl From<StorageError> for AppError {
@@ -104,6 +113,8 @@ struct ErrorTemplate<'a> {
     status: u16,
     message: &'a str,
     detail: Option<String>,
+    /// The request id on the internal error page, to find the request in the log.
+    error_id: Option<String>,
     rescan: bool,
 }
 
@@ -119,12 +130,13 @@ pub(crate) async fn not_found() -> AppError {
 /// Middleware: renders the error page for responses produced by [`AppError`].
 ///
 /// Error pages have an empty sidebar: they must render even when the index cannot be
-/// read.
+/// read. The internal error page shows the request id (see [`RequestId`]).
 pub(crate) async fn render_errors(
     State(state): State<AppState>,
     req: Request,
     next: Next,
 ) -> Response {
+    let id = req.extensions().get::<RequestId>().copied();
     let response = next.run(req).await;
     let Some(page) = response.extensions().get::<ErrorPage>().cloned() else {
         return response;
@@ -135,6 +147,9 @@ pub(crate) async fn render_errors(
         ErrorPage::Protected(scheme) => Some(format!("Protection: {scheme}.")),
         _ => None,
     };
+    let error_id = id
+        .filter(|_| page == ErrorPage::Internal)
+        .map(|id| id.to_string());
     let (title, message, rescan) = match page {
         ErrorPage::NotFound => ("Not found", "There is no such page in this library.", false),
         ErrorPage::FileMissing => (
@@ -165,6 +180,7 @@ pub(crate) async fn render_errors(
         status: status.as_u16(),
         message,
         detail,
+        error_id,
         rescan,
     };
     match page.render() {
@@ -178,7 +194,7 @@ pub(crate) async fn render_errors(
             Response::from_parts(parts, html.into())
         }
         Err(e) => {
-            tracing::error!("cannot render the error page: {e}");
+            tracing::error!(error = %e, "cannot render the error page");
             (status, title).into_response()
         }
     }

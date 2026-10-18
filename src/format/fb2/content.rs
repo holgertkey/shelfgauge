@@ -200,7 +200,7 @@ fn block(node: Node<'_, '_>, depth: usize, out: &mut Vec<Block>) {
             BlockKind::Paragraph(inlines_of(std::iter::once(node), next))
         }
         name => {
-            tracing::debug!("unknown FB2 element <{name}> at block level");
+            tracing::debug!(element = ?name, "unknown FB2 element at block level");
             if node.children().any(is_block_element) {
                 for child in node.children() {
                     block(child, next, out);
@@ -396,7 +396,7 @@ fn push_inline(node: Node<'_, '_>, depth: usize, out: &mut Vec<Inline>) {
         }
         name => {
             if name != "style" {
-                tracing::debug!("unknown FB2 element <{name}> at inline level");
+                tracing::debug!(element = ?name, "unknown FB2 element at inline level");
             }
             for child in node.children() {
                 push_inline(child, depth + 1, out);

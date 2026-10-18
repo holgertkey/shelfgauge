@@ -8,6 +8,34 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-18
+
+### Added
+
+- **Request logging**: every HTTP request runs under a short id with its method and
+  route template (never the query string); it ends with a line with the status and
+  latency. Failed requests (5xx) are logged as warnings and requests slower than one
+  second as "slow request" at the default level, the rest with `-v`. Lines logged
+  while a request is handled, also on worker and parser threads, carry its id.
+- The "Internal error" page shows the request's error id to look up in the log.
+- `--log-format json`: one JSON object per line, with the request and book spans as
+  fields, for log collectors.
+- With `-vv`/`--trace`, the duration of the expensive steps (scan phases, loading and
+  parsing a book, search in the book, statistics, re-attaching annotations).
+- Background scans log in a `scan{trigger}` span (`startup`, `rescan`, `reread`,
+  `cli`).
+
+### Changed
+
+- A panic in a request handler is answered with the internal error page instead of a
+  dropped connection; panics are logged through the log (with the request id) instead
+  of the default panic message.
+- Colours in the log only on a terminal and never when `NO_COLOR` is set.
+- Log lines use fields (`book_id=7 error=…`) instead of values in the message;
+  untrusted values (archive entry names, headers, parser messages) are escaped, so they
+  cannot start a forged log line. Logs never contain query strings, request bodies or
+  credentials, and name books by id or library-relative path.
+
 ## [0.13.0] - 2026-10-18
 
 ### Added

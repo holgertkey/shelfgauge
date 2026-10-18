@@ -80,7 +80,7 @@ pub(crate) fn with_document<T>(
                 if nesting_exceeds(&fixed, MAX_XML_DEPTH) {
                     return Err(invalid(&error));
                 }
-                tracing::info!("repaired unbalanced tags ({error})");
+                tracing::info!(reason = ?error.to_string(), "repaired unbalanced tags");
                 text = fixed;
                 repaired = true;
             }

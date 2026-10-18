@@ -1,6 +1,6 @@
 [package]
 name = "shelfgauge"
-version = "0.13.0+001"
+version = "0.14.0+000"
 edition = "2024"
 license = "MIT"
 description = "Index a folder of ebooks (FB2, EPUB, plain text and HTML, plain and zipped) and browse it in a local web library"
@@ -38,7 +38,7 @@ thiserror = "2.0.21"
 toml = "1.1.8"
 tokio = { version = "1.53.2", features = ["rt-multi-thread", "net", "signal", "macros"] }
 tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 walkdir = "2.5.0"
 xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
 zip = { version = "9.0.1", default-features = false, features = ["deflate-flate2-zlib-rs", "deflate64", "bzip2", "lzma"] }

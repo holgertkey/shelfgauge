@@ -195,8 +195,7 @@ pub(crate) async fn read(
     let book = book(&state, id).await?;
     let s = state.clone();
     let outcome =
-        tokio::task::spawn_blocking(move || run_with_parser_stack(|| page(&s, &book, &params)))
-            .await??;
+        crate::web::blocking(move || run_with_parser_stack(|| page(&s, &book, &params))).await??;
     match outcome {
         Outcome::Redirect(url) => Ok(Redirect::to(&url).into_response()),
         Outcome::Page(page) => Ok(render(&*page)?.into_response()),
@@ -332,7 +331,7 @@ pub(crate) async fn image(
     let book = book(&state, id).await?;
     let version = book.updated_at;
     let s = state.clone();
-    let (mime, data) = tokio::task::spawn_blocking(move || {
+    let (mime, data) = crate::web::blocking(move || {
         run_with_parser_stack(|| {
             let content = s.content(&book)?;
             let image = content.images().get(&image).ok_or(AppError::NotFound)?;

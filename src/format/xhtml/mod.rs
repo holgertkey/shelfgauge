@@ -788,7 +788,7 @@ impl<'r, R: Resources> Converter<'r, R> {
                 }),
                 Ok(None) => None,
                 Err(e) => {
-                    tracing::debug!("skipping an image: {e}");
+                    tracing::debug!(error = ?e.to_string(), "skipping an image");
                     None
                 }
             };

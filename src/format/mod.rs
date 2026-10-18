@@ -29,7 +29,8 @@ pub const PARSER_STACK_SIZE: usize = 16 * 1024 * 1024;
 
 /// Runs `f` on a new thread with [`PARSER_STACK_SIZE`] of stack and returns its result.
 ///
-/// A panic in `f` is propagated to the caller.
+/// A panic in `f` is propagated to the caller. `f` runs in the caller's span, so its
+/// log lines keep the request or scan they belong to.
 ///
 /// # Examples
 ///
@@ -47,7 +48,7 @@ pub fn run_with_parser_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
         let handle = std::thread::Builder::new()
             .name("parser".to_owned())
             .stack_size(PARSER_STACK_SIZE)
-            .spawn_scoped(scope, f)
+            .spawn_scoped(scope, crate::logging::in_current_span(f))
             .expect("failed to spawn a parser thread");
         match handle.join() {
             Ok(value) => value,

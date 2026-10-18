@@ -270,6 +270,8 @@ impl BookIndex {
 /// assert_eq!(hits.total, 3);
 /// assert_eq!((hits.hits[1].start, hits.hits[1].end), (6, 8));
 /// ```
+// Never record the query: it is what the user searched for.
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn find(text: &BookText, query: &Query, limit: usize) -> Hits {
     let index = text.find_index();
     let leaves = text.leaves();

@@ -504,6 +504,6 @@ fn background_scan_refuses_to_start_after_shutdown() {
     let library = Library::open(dir.path()).unwrap();
     let scan = BackgroundScan::new(library, Vec::new());
     scan.shutdown();
-    assert!(!scan.start());
+    assert!(!scan.start(shelfgauge::scanner::ScanTrigger::Rescan));
     assert!(!scan.is_running());
 }

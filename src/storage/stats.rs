@@ -105,6 +105,7 @@ pub struct DuplicateSummary {
 
 /// Computes the statistics. Slow on large libraries (a few hundred milliseconds for
 /// 100 000 books): cache the result.
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn library_stats(conn: &Connection) -> Result<LibraryStats, StorageError> {
     let (size, zip_size): (i64, i64) = conn.query_row(
         "SELECT coalesce(sum(c.size), 0), coalesce(sum(c.size) FILTER (WHERE c.kind = 'zip'), 0)

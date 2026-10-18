@@ -51,7 +51,7 @@ pub(super) fn parse(
     let mut linear_documents = 0;
     for item in &package.spine {
         let Some(data) = converter.read(&item.path)? else {
-            tracing::debug!("skipping the missing spine document {:?}", item.path);
+            tracing::debug!(path = ?item.path, "skipping a missing spine document");
             continue;
         };
         converter.start_document(&item.path);

@@ -16,6 +16,7 @@ use std::collections::VecDeque;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
@@ -33,6 +34,7 @@ use crate::container::ReadLimits;
 use crate::format::Registry;
 use crate::format::model::BookContent;
 use crate::library::Library;
+use crate::logging::in_current_span;
 use crate::render::load;
 use crate::scanner::BackgroundScan;
 use crate::storage::ReadPool;
@@ -47,6 +49,7 @@ mod layout;
 mod routes;
 pub mod security;
 mod sidebar;
+mod trace;
 mod urls;
 
 use error::AppError;
@@ -116,6 +119,8 @@ struct Inner {
     stats: ScanCache<Arc<LibraryStats>>,
     /// The identical copies (for the library page's notice), until the next scan.
     identical: ScanCache<DuplicateSummary>,
+    /// Requests that take longer are logged as slow.
+    slow_request: Duration,
 }
 
 /// A value derived from the index, kept until a scan is recorded (see
@@ -195,6 +200,7 @@ impl AppState {
             recent: Mutex::new(VecDeque::new()),
             stats: ScanCache::new(),
             identical: ScanCache::new(),
+            slow_request: trace::SLOW_REQUEST,
         }))
     }
 
@@ -228,6 +234,19 @@ impl AppState {
         self
     }
 
+    /// Logs requests that take longer than `threshold` at `info` as slow requests
+    /// (default: one second). Call it right after [`new`](Self::new), before the state
+    /// is shared.
+    ///
+    /// # Panics
+    ///
+    /// If the state has already been cloned.
+    pub fn with_slow_request(mut self, threshold: Duration) -> Self {
+        let inner = Arc::get_mut(&mut self.0).expect("the state is not shared yet");
+        inner.slow_request = threshold;
+        self
+    }
+
     /// The library being served.
     pub fn library(&self) -> &Library {
         &self.0.library
@@ -248,7 +267,7 @@ impl AppState {
         self.0.auth
     }
 
-    /// The read-connection pool (use it from `spawn_blocking`).
+    /// The read-connection pool (use it on a blocking thread).
     pub fn pool(&self) -> &ReadPool {
         &self.0.pool
     }
@@ -331,7 +350,7 @@ impl AppState {
         )
         .map_err(|e| match e {
             load::LoadError::NeedsRescan(reason) => {
-                tracing::info!("book {}: {reason}", book.id);
+                tracing::info!(book_id = book.id, reason = ?reason, "the book needs a rescan");
                 AppError::FileMissing
             }
             load::LoadError::Unreadable(reason) => AppError::Unreadable(reason),
@@ -388,17 +407,19 @@ impl AppState {
         self.0.identical.get(generation, conn, identical_summary)
     }
 
-    /// Runs `f` with a pooled read connection on a blocking thread.
+    /// Runs `f` with a pooled read connection on a blocking thread, in the request's
+    /// span.
     pub(crate) async fn db<T: Send + 'static>(
         &self,
         f: impl FnOnce(&rusqlite::Connection) -> Result<T, AppError> + Send + 'static,
     ) -> Result<T, AppError> {
         let pool = self.0.pool.clone();
-        tokio::task::spawn_blocking(move || f(&*pool.get()?)).await?
+        blocking(move || f(&*pool.get()?)).await?
     }
 
     /// Runs `f` on a blocking thread with the parser stack and a pooled index
-    /// connection, for work that may load a book and use the user-data database.
+    /// connection, in the request's span, for work that may load a book and use the
+    /// user-data database.
     ///
     /// `f` locks [`userdata`](Self::userdata) itself, only around its database calls:
     /// never while a book is loaded or parsed.
@@ -407,7 +428,7 @@ impl AppState {
         f: impl FnOnce(&AppState, &rusqlite::Connection) -> Result<T, AppError> + Send + 'static,
     ) -> Result<T, AppError> {
         let state = self.clone();
-        tokio::task::spawn_blocking(move || {
+        blocking(move || {
             crate::format::run_with_parser_stack(|| {
                 let index = state.0.pool.get()?;
                 f(&state, &index)
@@ -415,6 +436,15 @@ impl AppState {
         })
         .await?
     }
+}
+
+/// Runs `f` on a blocking thread in the caller's span (see [`in_current_span`]).
+///
+/// A panic in `f` becomes [`AppError::Internal`]; the panic hook has logged it.
+pub(crate) async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, AppError> {
+    Ok(tokio::task::spawn_blocking(in_current_span(f)).await?)
 }
 
 /// The request body limit of the annotation write routes: the longest note, at up to
@@ -563,12 +593,24 @@ pub fn router(state: AppState) -> Router {
     if let Some(prefix) = urls.prefix() {
         app = app.route(prefix, get(routes::library::to_home));
     }
-    // The last layer added runs first: headers, then Host, then Origin.
+    with_layers(app, state)
+}
+
+/// Adds the fallback and the layers every request passes through to the routes `app`.
+fn with_layers(app: Router<AppState>, state: AppState) -> Router {
+    let trace = trace::TraceSettings {
+        assets: state.urls().path("/assets/{*path}").into(),
+        slow: state.0.slow_request,
+    };
+    // The last layer added runs first: the request span, headers, Host, Origin, error
+    // pages; a panic is caught inside, so it gets the error page and the request id.
     app.fallback(error::not_found)
+        .layer(from_fn(trace::catch_panics))
         .layer(from_fn_with_state(state.clone(), error::render_errors))
         .layer(from_fn_with_state(state.clone(), security::check_origin))
         .layer(from_fn_with_state(state.clone(), security::check_host))
         .layer(from_fn(security::security_headers))
+        .layer(from_fn_with_state(trace, trace::trace_requests))
         .with_state(state)
 }
 
@@ -606,6 +648,219 @@ mod tests {
     use tower::ServiceExt;
 
     use super::*;
+    use crate::logging::capture::Capture;
+
+    /// A threshold no test request reaches.
+    const SLOW_REQUEST_FOR_TESTS: Duration = Duration::from_secs(10);
+
+    /// The threshold of the level tests; `/slow` takes longer, the other test routes
+    /// stay far below it even on a loaded machine.
+    const SLOW_FOR_TESTS: Duration = Duration::from_millis(500);
+
+    /// The state of an empty library with the default config.
+    fn test_state(slow: Duration) -> (tempfile::TempDir, AppState) {
+        let dir = tempfile::tempdir().unwrap();
+        let library = Library::open(dir.path()).unwrap();
+        crate::storage::open_writer(&library.db_path()).unwrap();
+        let pool = crate::storage::open_read_pool(&library.db_path(), 1).unwrap();
+        let scan = Arc::new(BackgroundScan::new(library.clone(), Vec::new()));
+        let state = AppState::new(library, &Config::default(), pool, scan).with_slow_request(slow);
+        (dir, state)
+    }
+
+    /// Test-only routes behind the layers of the real app: any status, a slow answer,
+    /// a panic, a stand-in for the assets.
+    fn test_app(state: AppState) -> Router {
+        use axum::extract::Path;
+        let routes = Router::new()
+            .route(
+                "/status/{code}",
+                get(|Path(code): Path<u16>| async move { StatusCode::from_u16(code).unwrap() }),
+            )
+            .route(
+                "/slow",
+                get(|| async {
+                    tokio::time::sleep(SLOW_FOR_TESTS + Duration::from_millis(100)).await;
+                    "done"
+                }),
+            )
+            .route(
+                "/panic",
+                get(|| async {
+                    if true {
+                        panic!("a bug in a handler");
+                    }
+                    "unreachable"
+                }),
+            )
+            .route("/assets/{*path}", get(|| async { "body {}" }));
+        with_layers(routes, state)
+    }
+
+    fn get_request(uri: &str) -> Request<Body> {
+        Request::get(uri)
+            .header(header::HOST, "localhost:8742")
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    /// The log line of the request to route template `route` ending with `status`.
+    fn end_line(log: &str, route: &str, status: u16) -> String {
+        log.lines()
+            .find(|l| {
+                l.contains(&format!(" route={route}}}"))
+                    && l.contains(&format!(" status={status} "))
+            })
+            .unwrap_or_else(|| panic!("no line for {route} {status} in\n{log}"))
+            .to_owned()
+    }
+
+    /// Sends panics to the log as the binary does, and still to the default hook so
+    /// failing tests stay readable.
+    fn log_panics() {
+        static HOOK: std::sync::Once = std::sync::Once::new();
+        HOOK.call_once(|| {
+            let previous = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |info| {
+                crate::logging::log_panic(info);
+                previous(info);
+            }));
+        });
+    }
+
+    #[tokio::test]
+    async fn request_end_events_have_levels_by_status_and_time() {
+        let capture = Capture::default();
+        let _log = tracing::dispatcher::set_default(&capture.dispatch("shelfgauge=trace"));
+        let (_dir, state) = test_state(SLOW_FOR_TESTS);
+        let app = test_app(state);
+        for uri in [
+            "/status/200",
+            "/status/404",
+            "/status/503",
+            "/slow",
+            "/assets/style.css",
+            "/unknown?q=secret",
+        ] {
+            app.clone().oneshot(get_request(uri)).await.unwrap();
+        }
+        let log = capture.text();
+        let ok = end_line(&log, "/status/{code}", 200);
+        assert!(ok.contains(" DEBUG ") && ok.contains("method=GET"), "{ok}");
+        assert!(ok.contains("latency_ms="), "{ok}");
+        assert!(end_line(&log, "/status/{code}", 404).contains(" DEBUG "));
+        let failed = end_line(&log, "/status/{code}", 503);
+        assert!(failed.contains(" WARN ") && failed.contains("request failed"));
+        let slow = end_line(&log, "/slow", 200);
+        assert!(
+            slow.contains(" INFO ") && slow.contains("slow request"),
+            "{slow}"
+        );
+        assert!(end_line(&log, "/assets/{*path}", 200).contains(" TRACE "));
+        let unmatched = end_line(&log, "-", 404);
+        assert!(unmatched.contains(" DEBUG "), "{unmatched}");
+        assert!(
+            !log.contains("secret") && !log.contains("/unknown"),
+            "{log}"
+        );
+        // Ids are distinct per request.
+        let ids: std::collections::HashSet<&str> = log
+            .lines()
+            .filter_map(|l| l.split("request{id=").nth(1)?.split(' ').next())
+            .collect();
+        assert_eq!(ids.len(), 6, "{log}");
+    }
+
+    #[tokio::test]
+    async fn default_filter_shows_only_failed_and_slow_requests() {
+        let capture = Capture::default();
+        let _log = tracing::dispatcher::set_default(&capture.dispatch("warn,shelfgauge=info"));
+        let (_dir, state) = test_state(SLOW_FOR_TESTS);
+        let app = test_app(state);
+        for uri in ["/status/200", "/status/404", "/status/500", "/slow"] {
+            app.clone().oneshot(get_request(uri)).await.unwrap();
+        }
+        let log = capture.text();
+        assert_eq!(log.lines().count(), 2, "{log}");
+        end_line(&log, "/status/{code}", 500);
+        end_line(&log, "/slow", 200);
+    }
+
+    #[tokio::test]
+    async fn handler_panics_answer_500_with_the_request_id() {
+        log_panics();
+        let capture = Capture::default();
+        let _log = tracing::dispatcher::set_default(&capture.dispatch("shelfgauge=info"));
+        let (_dir, state) = test_state(SLOW_REQUEST_FOR_TESTS);
+        let app = test_app(state);
+
+        let response = app.clone().oneshot(get_request("/panic")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "text/html; charset=utf-8"
+        );
+        assert!(
+            response
+                .headers()
+                .contains_key(header::CONTENT_SECURITY_POLICY)
+        );
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body.contains("Internal error"), "{body}");
+        let id = body
+            .split("Error id <code>")
+            .nth(1)
+            .and_then(|rest| rest.split("</code>").next())
+            .unwrap_or_else(|| panic!("no error id in {body}"));
+        assert!(!body.contains("a bug in a handler"), "{body}");
+
+        let log = capture.text();
+        let panic = log
+            .lines()
+            .find(|l| l.contains("panicked"))
+            .unwrap_or_else(|| panic!("no panic line in\n{log}"));
+        assert!(panic.contains(" ERROR "), "{panic}");
+        assert!(
+            panic.contains(&format!("request{{id={id} method=GET route=/panic}}")),
+            "{panic}"
+        );
+        assert!(panic.contains("a bug in a handler"), "{panic}");
+        assert!(end_line(&log, "/panic", 500).contains(&format!("id={id} ")));
+
+        // The server keeps serving.
+        let response = app.oneshot(get_request("/status/204")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+
+    /// The internal error page names the request id; other error pages do not.
+    #[tokio::test]
+    async fn only_the_internal_error_page_shows_the_request_id() {
+        let (_dir, state) = test_state(SLOW_REQUEST_FOR_TESTS);
+        let app = with_layers(
+            Router::new()
+                .route(
+                    "/broken",
+                    get(|| async { Err::<(), _>(AppError::Internal("detail".into())) }),
+                )
+                .route(
+                    "/unreadable",
+                    get(|| async { Err::<(), _>(AppError::Unreadable("bad".into())) }),
+                ),
+            state,
+        );
+        let body = |uri: &'static str| {
+            let app = app.clone();
+            async move {
+                let response = app.oneshot(get_request(uri)).await.unwrap();
+                let body = response.into_body().collect().await.unwrap().to_bytes();
+                String::from_utf8(body.to_vec()).unwrap()
+            }
+        };
+        assert!(body("/broken").await.contains("Error id <code>"));
+        assert!(!body("/unreadable").await.contains("Error id"));
+        assert!(!body("/nowhere").await.contains("Error id"));
+    }
 
     /// Error pages that no route produces yet render with the layout and the right status.
     #[tokio::test]

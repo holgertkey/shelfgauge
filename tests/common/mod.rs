@@ -382,3 +382,95 @@ pub fn html_saved_page() -> String {
          </footer></body></html>"
     )
 }
+
+/// A log writer that keeps everything in memory; clones share it.
+#[derive(Debug, Clone, Default)]
+pub struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl Capture {
+    /// Everything written so far.
+    pub fn text(&self) -> String {
+        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+    }
+
+    /// A subscriber for `filter` and `format` writing here, as the binary builds it
+    /// (no colours: the writer is not a terminal).
+    pub fn dispatch(
+        &self,
+        filter: &str,
+        format: shelfgauge::logging::LogFormat,
+        span_timings: bool,
+    ) -> tracing::Dispatch {
+        install_quiet();
+        let options = shelfgauge::logging::LogOptions {
+            filter: filter.to_owned(),
+            format,
+            ansi: false,
+            span_timings,
+        };
+        shelfgauge::logging::dispatch(&options, self.clone()).unwrap()
+    }
+}
+
+/// The global fallback subscriber of the tests: it writes nothing but marks every
+/// callsite as "sometimes" enabled.
+///
+/// Tests install their own subscriber per thread while other tests log in parallel;
+/// without this fallback, a callsite first hit while no test subscriber exists can be
+/// cached as disabled for good (a race in `tracing`'s interest cache), and its events
+/// vanish from a later test's capture.
+struct Quiet;
+
+impl tracing::Subscriber for Quiet {
+    fn register_callsite(
+        &self,
+        _: &'static tracing::Metadata<'static>,
+    ) -> tracing::subscriber::Interest {
+        tracing::subscriber::Interest::sometimes()
+    }
+
+    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+        false
+    }
+
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+
+    fn event(&self, _: &tracing::Event<'_>) {}
+
+    fn enter(&self, _: &tracing::span::Id) {}
+
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
+/// Installs [`Quiet`] as the global subscriber, once per test binary.
+fn install_quiet() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let _ = tracing::subscriber::set_global_default(Quiet);
+    });
+}
+
+impl Write for Capture {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
+    type Writer = Self;
+
+    fn make_writer(&'a self) -> Self {
+        self.clone()
+    }
+}

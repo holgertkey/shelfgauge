@@ -1,11 +1,11 @@
-# shelfgauge v0.13.0
+# shelfgauge v0.14.0
 
 A single-binary tool that indexes a folder tree of ebooks — FB2, EPUB, plain text and
 (optionally) HTML files, plain or inside `.zip` archives — into a local SQLite
 database and serves a browsable, searchable web library on `localhost`, with an
 in-browser reader.
 
-**Current version:** 0.13.0
+**Current version:** 0.14.0
 
 ## Status
 
@@ -43,8 +43,9 @@ shelfgauge annotations export [PATH]   # rewrite the Markdown export of bookmark
 ```
 
 Options: `--port <PORT>`, `--bind <ADDR>`, `--no-scan` (serve without scanning first),
-`-v`/`--verbose` (debug logging), `-vv`/`--trace` (trace logging; without these
-`RUST_LOG` is used), `-V` (version).
+`-v`/`--verbose` (debug logging), `-vv`/`--trace` (trace logging with the duration of
+each step; without these `RUST_LOG` is used), `--log-format text|json` (see
+[Logs](#logs)), `-V` (version).
 
 A new library is created only when PATH is given explicitly (e.g. `shelfgauge .`): its
 working data goes into `.shelfgauge/` inside PATH (configuration, index, cover and
@@ -61,6 +62,41 @@ Books that could not be read are counted as errors in the scan summary and marke
 per book (`archive.zip/entry.fb2` for a book inside an archive). Files that could not be
 opened at all (I/O errors) are not recorded: `scan` logs them as warnings and reads them
 again at the next scan.
+
+### Logs
+
+Logs go to stderr: warnings and a line per scan by default, more with `-v`. Each HTTP
+request runs under an id; with `-v` it ends with a line like
+
+```
+2026-10-18T07:37:27.581520Z DEBUG request{id=e method=GET route=/book/{id}/read}: shelfgauge::web::trace: request status=200 latency_ms=3.175
+```
+
+Failed requests (5xx) are logged as warnings and requests slower than a second as
+"slow request" even without `-v`; lines logged while a request is handled (reading a
+book, a repaired file) carry the same `request{…}` prefix. The "Internal error" page
+shows the request's error id, so the matching lines can be found in the log. Logs show
+the route (`/book/{id}/read`), never the query string, the request body or credentials;
+books are named by id or library-relative path.
+
+`--log-format json` writes one JSON object per line (with the request and book spans
+as fields) for log collectors. Colours are used only on a terminal and never when
+`NO_COLOR` is set. There are no log files: under systemd the journal keeps the log
+(`journalctl -u shelfgauge`), in Docker the container log. A minimal unit:
+
+```ini
+[Unit]
+Description=shelfgauge library
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/shelfgauge /srv/books
+User=books
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
 
 ### Formats
 
@@ -287,4 +323,4 @@ MIT — see [LICENSE](LICENSE).
 
 ---
 
-_shelfgauge v0.13.0 — MIT License_
+_shelfgauge v0.14.0 — MIT License_

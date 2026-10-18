@@ -84,9 +84,9 @@ pub(crate) fn open_wal(path: &Path) -> Result<Connection, StorageError> {
     let mode: String = conn.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get(0))?;
     if !mode.eq_ignore_ascii_case("wal") {
         tracing::warn!(
-            "WAL mode is not available for {} (journal mode: {mode}); readers may be \
-             blocked while it is written",
-            path.display()
+            database = ?path.file_name().unwrap_or_default(),
+            journal_mode = ?mode,
+            "WAL mode is not available; readers may be blocked while it is written"
         );
     }
     conn.pragma_update(None, "synchronous", "NORMAL")?;

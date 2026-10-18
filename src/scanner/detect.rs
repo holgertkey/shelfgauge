@@ -125,7 +125,7 @@ pub(super) fn plan(
                 let entries = match list_books(&found.abs_path, extensions) {
                     Ok(entries) => entries,
                     Err(error) => {
-                        tracing::warn!("cannot list archive {:?}: {error}", found.path);
+                        tracing::warn!(archive = ?found.path, error = %error, "cannot list an archive");
                         plan.errors += 1;
                         continue;
                     }

@@ -261,7 +261,7 @@ fn cover(package: &Package, archive: &mut Archive<'_>, protection: &Protection) 
             Ok(Some(data)) => data,
             Ok(None) => continue,
             Err(e) => {
-                tracing::debug!("skipping the cover: {e}");
+                tracing::debug!(error = ?e.to_string(), "skipping the cover");
                 continue;
             }
         };

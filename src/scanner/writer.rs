@@ -193,7 +193,7 @@ impl Writer {
                     None => covers::remove(&self.covers_dir, id),
                 };
                 if let Err(e) = cover_result {
-                    tracing::warn!("cannot update the cover of book {id}: {e}");
+                    tracing::warn!(book_id = id, error = %e, "cannot update the cover");
                 }
                 if existed {
                     self.stats.updated += 1;

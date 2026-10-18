@@ -34,7 +34,6 @@
 //! [not a book](crate::format::ParseErrorKind::NotABook).
 
 use std::borrow::Cow;
-use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use super::encoding::{Decoded, decode_bom, decode_declared};
 use super::model::{Annotation, Block, BookContent, BookMetadata, Person};
@@ -124,7 +123,7 @@ fn parse(data: &[u8]) -> Result<Dom, ParseError> {
         );
     }
     let text = expand_self_closed(&decoded.text);
-    match catch_unwind(AssertUnwindSafe(|| Dom::parse(&text))) {
+    match crate::logging::catch_expected_panic(|| Dom::parse(&text)) {
         Ok(Ok(dom)) => Ok(dom),
         Ok(Err(dom::TooBig::Deep)) => Err(ParseError::new(format!(
             "elements are nested more than {} levels deep",

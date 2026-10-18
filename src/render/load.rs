@@ -89,6 +89,7 @@ pub fn parse_content_key(key: &[u8]) -> Option<ContentKey<'_>> {
 
 /// Loads the content of `book` from the cache, or reads, verifies, parses and caches
 /// it.
+#[tracing::instrument(level = "debug", skip_all, fields(book_id = book.id))]
 pub fn load(
     library: &Library,
     registry: &Registry,
@@ -121,6 +122,7 @@ pub fn load(
             crc32: entry.crc32,
         }),
     };
+    let read = tracing::debug_span!("read").entered();
     let data = read_book(library.root(), &location, limits).map_err(|e| {
         // The library-relative path, never the absolute one (shown in the UI).
         let reason = format!("{}: {}", book.container_path, e.detail());
@@ -139,6 +141,7 @@ pub fn load(
             book.container_path
         )));
     }
+    drop(read);
     let parser = registry
         .for_extension(&book.format)
         .ok_or_else(|| LoadError::Unreadable(format!("unsupported format {:?}", book.format)))?;
@@ -148,15 +151,17 @@ pub fn load(
             Some(entry) => format!("{}/{}", book.container_path, entry.path),
             None => book.container_path.clone(),
         };
-        let _book = tracing::info_span!("book", %path).entered();
+        let _book = tracing::info_span!("book", path = ?path).entered();
+        let _parse = tracing::debug_span!("parse").entered();
         parser
             .parse_content(&data)
             .map_err(|e| LoadError::Unreadable(e.to_string()))?
     };
     if let Some(key) = &key
-        && let Err(e) = cache.store(book.id, key, &content)
+        && let Err(e) =
+            tracing::debug_span!("store").in_scope(|| cache.store(book.id, key, &content))
     {
-        tracing::warn!("cannot cache the content of book {}: {e}", book.id);
+        tracing::warn!(book_id = book.id, error = %e, "cannot cache the book content");
     }
     Ok(content)
 }

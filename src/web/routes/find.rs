@@ -196,7 +196,7 @@ pub(crate) async fn find(
     let params = Params::from(query);
     let book = super::read::book(&state, id).await?;
     let s = state.clone();
-    let results = tokio::task::spawn_blocking(move || {
+    let results = crate::web::blocking(move || {
         run_with_parser_stack(|| {
             let (content, text) = s.book_text(&book)?;
             let parts = split(&content, &s.config().reader);

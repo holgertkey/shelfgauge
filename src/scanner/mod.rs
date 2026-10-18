@@ -24,7 +24,6 @@
 //! nothing.
 
 use std::collections::{HashMap, HashSet};
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{SyncSender, sync_channel};
@@ -51,7 +50,7 @@ use detect::FileJob;
 use walk::Found;
 use writer::{ContainerRef, Op, Outcome};
 
-pub use background::BackgroundScan;
+pub use background::{BackgroundScan, ScanTrigger};
 pub use walk::{excludes, mtime_ns};
 
 /// The modification time recorded for an archive while its books are being written;
@@ -248,6 +247,8 @@ struct Run<'a> {
     file_candidates: HashMap<Vec<u8>, Vec<i64>>,
     /// New plain files set aside for matching: hash, CRC32 and the file.
     deferred: Mutex<Vec<(Vec<u8>, u32, Found)>>,
+    /// The parent of the `book` spans opened on the worker threads.
+    span: tracing::Span,
 }
 
 impl Scanner<'_> {
@@ -259,13 +260,16 @@ impl Scanner<'_> {
         progress.set_phase(ScanPhase::Walking);
         let root = self.library.root();
         let excludes = walk::excludes(root, self.exclude)?;
-        let walk = walk::walk(root, &excludes, self.registry, self.cancel);
+        let walk = tracing::debug_span!("walk")
+            .in_scope(|| walk::walk(root, &excludes, self.registry, self.cancel));
 
         progress.set_phase(ScanPhase::Comparing);
+        let detect_span = tracing::debug_span!("detect").entered();
         let containers = list_containers(conn)?;
         let books = all_books(conn)?;
         let extensions = self.registry.extensions();
         let plan = detect::plan(&walk, &containers, &books, &extensions, self.reread);
+        drop(detect_span);
         let formats = crate::storage::containers::listed_formats(&extensions);
 
         // Candidates for moved books: vanished in this scan, or removed earlier.
@@ -331,8 +335,11 @@ impl Scanner<'_> {
         let covers_dir = self.library.covers_dir();
 
         let writer_conn = &mut *conn;
+        let parse_span = tracing::debug_span!("parse", books = total).entered();
         let (stats, counters) = std::thread::scope(|scope| {
-            let writer = scope.spawn(move || writer::run(writer_conn, rx, covers_dir));
+            let write = tracing::debug_span!("write");
+            let writer =
+                scope.spawn(move || write.in_scope(|| writer::run(writer_conn, rx, covers_dir)));
             let run = Run {
                 scanner: self,
                 tx,
@@ -343,6 +350,7 @@ impl Scanner<'_> {
                 not_books: AtomicU64::new(0),
                 file_candidates,
                 deferred: Mutex::new(Vec::new()),
+                span: tracing::Span::current(),
             };
 
             for archive in &plan.archives {
@@ -454,6 +462,7 @@ impl Scanner<'_> {
             );
             (writer.join(), counters)
         });
+        drop(parse_span);
         progress.set_phase(ScanPhase::Done);
         let stats = stats.map_err(|_| ScanError::WriterPanicked)??;
         let (unchanged, parsed, errors, not_books) = counters;
@@ -529,7 +538,7 @@ impl Run<'_> {
         let data = match file::read(&found.abs_path, &self.scanner.limits) {
             Ok(data) => data,
             Err(error) if is_transient(&error) => {
-                tracing::warn!("cannot read {:?}: {error}", found.path);
+                tracing::warn!(path = ?found.path, error = %error, "cannot read a book");
                 self.error();
                 self.done();
                 return;
@@ -567,7 +576,8 @@ impl Run<'_> {
         }
         // Parser log lines (e.g. a repaired book) name the book.
         let outcome = {
-            let _book = tracing::info_span!("book", path = %found.path).entered();
+            let _book =
+                tracing::info_span!(parent: &self.span, "book", path = ?found.path).entered();
             self.parse(parser, &data, file_name(&found.path))
         };
         self.send(Op::Book {
@@ -591,7 +601,7 @@ impl Run<'_> {
         let mut reader = match ArchiveReader::open(&archive.abs_path) {
             Ok(reader) => reader,
             Err(error) => {
-                tracing::warn!("cannot open archive {:?}: {error}", archive.path);
+                tracing::warn!(archive = ?archive.path, error = %error, "cannot open an archive");
                 self.error();
                 return false;
             }
@@ -612,16 +622,17 @@ impl Run<'_> {
             };
             let outcome = match reader.read_entry(&entry_ref, &self.scanner.limits) {
                 Ok(data) => {
+                    let path = format!("{}/{}", archive.path, entry.path);
                     let _book =
-                        tracing::info_span!("book", path = %format!("{}/{}", archive.path, entry.path))
-                            .entered();
+                        tracing::info_span!(parent: &self.span, "book", path = ?path).entered();
                     self.parse(parser, &data, file_name(&entry.path))
                 }
                 Err(error) if is_transient(&error) => {
                     tracing::warn!(
-                        "cannot read {:?} in {:?}: {error}",
-                        entry.path,
-                        archive.path
+                        archive = ?archive.path,
+                        entry = ?entry.path,
+                        error = %error,
+                        "cannot read a book in an archive"
                     );
                     self.error();
                     self.done();
@@ -647,10 +658,10 @@ impl Run<'_> {
     /// that are not books into [`Outcome::NotABook`].
     fn parse(&self, parser: &dyn BookParser, data: &[u8], name: &str) -> Outcome {
         self.parsed.fetch_add(1, Ordering::Relaxed);
-        match catch_unwind(AssertUnwindSafe(|| parser.parse_metadata_named(data, name))) {
+        match crate::logging::catch_expected_panic(|| parser.parse_metadata_named(data, name)) {
             Ok(Ok(metadata)) => Outcome::Parsed(Box::new(metadata)),
             Ok(Err(error)) if error.is_not_a_book() => {
-                tracing::debug!("not a book: {}", error.message);
+                tracing::debug!(reason = ?error.message, "not a book");
                 self.not_books.fetch_add(1, Ordering::Relaxed);
                 Outcome::NotABook
             }

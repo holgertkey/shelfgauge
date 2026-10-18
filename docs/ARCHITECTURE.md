@@ -435,6 +435,47 @@ v1 binds to `127.0.0.1` only, but is built to allow remote access later:
 - No built-in TLS: remote access goes through a reverse proxy with HTTPS or a private
   network (Tailscale / WireGuard / SSH tunnel).
 
+## Logging (0.14.0)
+
+`tracing` with `tracing-subscriber`, set up in `logging` (lib, so the tests build the
+same subscriber) and `cli::init_logging`: stderr only, no log files and no rotation (a
+daemon logs to journald or the container log), no metrics endpoint.
+
+- **Filter**: `warn,shelfgauge=info` by default, `-v` debug, `-vv`/`--trace` trace,
+  otherwise `RUST_LOG`. At trace level every closed span logs its duration
+  (`FmtSpan::CLOSE`); the expensive steps have `debug` spans for it (scan phases
+  `walk`, `detect`, `parse`, `write`, `cleanup`; `load` with `read`, `parse`, `store`;
+  `find`; `library_stats`; `reattach`), never per block or element. Below trace
+  nothing changes (the 100 000-book scan is not slower).
+- **Formats**: `--log-format text` (default; ANSI colours only on a terminal and
+  without `NO_COLOR`) or `json` (one object per line, the span chain as `spans`). A
+  flag, not a config key: logging starts before the config is read.
+- **Requests**: `web::trace` is the outermost layer (rejected `Host`/`Origin` requests
+  included). Each request runs in an `info` span `request{id, method, route}`: `id` is
+  a per-process counter in hex, `route` the matched route template or `-`. One event
+  at the end has `status` and `latency_ms`: `warn` for 5xx, `info` for requests over
+  one second ("slow request"), `debug` otherwise, `trace` for assets. The span is
+  carried to blocking threads (`AppState::db`, `user_db`, `web::blocking`) and to the
+  parser thread (`run_with_parser_stack`) together with the current subscriber
+  (`logging::in_current_span`). Background scans run in a root span
+  `scan{trigger}` (`startup`, `rescan`, `reread`, `cli`), never inside a request's span.
+- **Panics**: the panic hook logs them through `tracing` (message, thread, location;
+  the backtrace with `RUST_BACKTRACE`) on the panicking thread, so a handler panic
+  carries its request id. The innermost layer (`trace::catch_panics`, no extra
+  dependency) answers a panicking handler with the internal error page (500), which
+  shows the request id as the error id. Parser panics caught by the scanner and the
+  HTML parser (`logging::catch_expected_panic`) are expected input failures: logged at
+  `debug`, reported with the book.
+- **Never logged**: query strings and request bodies (search queries, notes, quotes,
+  form values); the headers `Authorization`, `Cookie`, `Set-Cookie`; in V2 device
+  tokens, pairing secrets, recovery codes, keys of any kind and publication ids. Books
+  are named by id or library-relative path, never by absolute path at `info` and
+  above. Untrusted values (`Host`/`Origin` headers, paths from archives, parser
+  messages) are logged with `?` (Debug escapes newlines and control characters) or as
+  fields, never interpolated with `{}`, so they cannot forge lines in `text`. New code
+  uses structured fields (`book_id = id, error = %e`) instead of values in the
+  message. `tests/logging.rs` checks the rule at trace level in both formats.
+
 ## V2: hub — books on mobile devices (designed, not built)
 
 Agreed 2026-10-14. A user opens a book on a phone (or any other device) in a browser and
@@ -554,6 +595,7 @@ unchanged (its golden test must not change). TXT and `.fbz` followed in 0.9.0, H
 | Directory walking | walkdir + ignore |
 | Archives | `zip` crate (`.zip` libraries, EPUB containers, `.fbz`) |
 | Parallel parsing | rayon |
+| Logging | tracing + tracing-subscriber (text or JSON on stderr) |
 
 ## Out of scope for v1
 

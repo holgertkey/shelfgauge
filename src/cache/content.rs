@@ -55,7 +55,7 @@ impl ContentCache {
         match postcard::from_bytes(payload) {
             Ok(content) => Some(content),
             Err(e) => {
-                tracing::debug!("discarding unreadable content cache for book {id}: {e}");
+                tracing::debug!(book_id = id, error = %e, "discarding an unreadable content cache entry");
                 None
             }
         }

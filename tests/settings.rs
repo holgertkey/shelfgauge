@@ -707,7 +707,7 @@ async fn scan_changes_report_the_books_that_leave_and_the_rescan_removes_them() 
         page.main()
             .contains("New books are indexed at the next scan.")
     );
-    assert!(h.scan.start());
+    assert!(h.scan.start(shelfgauge::scanner::ScanTrigger::Rescan));
     h.wait_for_scan().await;
     assert_eq!(
         h.live_book("pride.txt"),
@@ -751,7 +751,7 @@ async fn maintenance_actions() {
         let scan = last_scan(&conn).unwrap().unwrap();
         assert_eq!((scan.parsed, scan.updated, scan.added), (4, 4, 0));
     }
-    assert!(h.scan.start());
+    assert!(h.scan.start(shelfgauge::scanner::ScanTrigger::Rescan));
     h.wait_for_scan().await;
     {
         let conn = open_writer(&h.library.db_path()).unwrap();

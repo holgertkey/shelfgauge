@@ -854,9 +854,9 @@ pub(crate) async fn clear_content_cache(
     State(state): State<AppState>,
 ) -> Result<Redirect, AppError> {
     let dir = state.library().content_dir();
-    let removed = tokio::task::spawn_blocking(move || clear_dir(&dir)).await?;
+    let removed = crate::web::blocking(move || clear_dir(&dir)).await?;
     state.forget_loaded_books();
-    tracing::info!("content cache cleared: {removed} files removed");
+    tracing::info!(removed, "content cache cleared");
     Ok(Redirect::to(&format!(
         "{}?done=cache&n={removed}",
         state.urls().settings()
@@ -875,7 +875,11 @@ fn clear_dir(dir: &Path) -> u64 {
             match std::fs::remove_file(entry.path()) {
                 Ok(()) => removed += 1,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => tracing::warn!("cannot remove {}: {e}", entry.path().display()),
+                Err(e) => tracing::warn!(
+                    file = ?entry.file_name(),
+                    error = %e,
+                    "cannot remove a content cache file"
+                ),
             }
         }
     }
@@ -895,9 +899,9 @@ pub(crate) async fn export(State(state): State<AppState>) -> Result<Redirect, Ap
         })
         .await?;
     tracing::info!(
-        "exported {} annotations of {} books",
-        summary.annotations,
-        summary.files
+        annotations = summary.annotations,
+        books = summary.files,
+        "exported the annotations"
     );
     Ok(Redirect::to(&format!(
         "{}?done=export&n={}&books={}",

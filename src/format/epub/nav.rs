@@ -41,14 +41,18 @@ pub(super) fn read(package: &Package, archive: &mut Archive<'_>) -> Vec<Entry> {
             Ok(Some(data)) => data,
             Ok(None) => continue,
             Err(e) => {
-                tracing::debug!("skipping the table of contents: {e}");
+                tracing::debug!(error = ?e.to_string(), "skipping the table of contents");
                 continue;
             }
         };
         match with_document(&data, |doc| parse(doc.root_element(), path)) {
             Ok(entries) if !entries.is_empty() => return entries,
             Ok(_) => {}
-            Err(e) => tracing::debug!("skipping the table of contents {path}: {e}"),
+            Err(e) => tracing::debug!(
+                path = ?path,
+                error = ?e.to_string(),
+                "skipping the table of contents"
+            ),
         }
     }
     Vec::new()

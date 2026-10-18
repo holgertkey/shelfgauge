@@ -65,7 +65,7 @@ pub fn list_books(path: &Path, extensions: &[&str]) -> Result<Vec<ZipEntry>, Con
         }
         let display_name = display_name(raw, file.flags().as_u16() & UTF8_FLAG != 0);
         if file.encrypted() {
-            tracing::debug!(archive = %path.display(), "skipping encrypted entry {display_name:?}");
+            tracing::debug!(archive = ?path, entry = ?display_name, "skipping an encrypted entry");
             continue;
         }
         books.push(ZipEntry {

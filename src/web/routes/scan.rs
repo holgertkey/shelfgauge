@@ -24,7 +24,7 @@ pub(crate) async fn rescan(
     headers: HeaderMap,
     form: Result<Form<Back>, FormRejection>,
 ) -> Response {
-    if state.scan().start() {
+    if state.scan().start(crate::scanner::ScanTrigger::Rescan) {
         tracing::info!("rescan requested");
     }
     let wants_json = headers

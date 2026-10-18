@@ -482,7 +482,7 @@ pub fn file_hash(bytes: &[u8]) -> String {
 /// Reads the config file at `path`.
 pub fn read(path: &Path) -> Result<String, EditError> {
     std::fs::read_to_string(path).map_err(|e| {
-        tracing::error!("cannot read {}: {e}", path.display());
+        tracing::error!(path = ?path, error = %e, "cannot read the config file");
         EditError::Read(e.kind())
     })
 }
@@ -494,7 +494,7 @@ pub fn read(path: &Path) -> Result<String, EditError> {
 /// directory's permissions count).
 pub fn write(path: &Path, text: &str) -> Result<(), EditError> {
     let fail = |e: std::io::Error| {
-        tracing::error!("cannot write {}: {e}", path.display());
+        tracing::error!(path = ?path, error = %e, "cannot write the config file");
         EditError::Write(e.kind())
     };
     let permissions = match std::fs::metadata(path) {

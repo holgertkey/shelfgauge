@@ -181,7 +181,7 @@ pub(crate) async fn check_host(
     match host {
         Some(host) if state.hosts().allows(host) => next.run(req).await,
         _ => {
-            tracing::warn!("rejected a request with Host {host:?}");
+            tracing::warn!(host = ?host, "rejected a request with an unknown Host");
             forbidden(
                 "403 Forbidden: unknown Host header.\n\nTo reach this server under another \
                  name, add it to `server.allowed_hosts` in .shelfgauge/config.toml.\n",
@@ -209,11 +209,8 @@ pub(crate) async fn check_origin(
     match origin {
         Some(origin) if state.hosts().allows_origin(origin) => next.run(req).await,
         _ => {
-            tracing::warn!(
-                "rejected a {} request to {} with Origin {origin:?}",
-                req.method(),
-                req.uri().path()
-            );
+            // The request span has the method and the route; never the raw path.
+            tracing::warn!(origin = ?origin, "rejected a request with a foreign Origin");
             forbidden("403 Forbidden: missing or foreign Origin header.\n")
         }
     }

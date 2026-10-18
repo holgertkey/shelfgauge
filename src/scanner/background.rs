@@ -28,6 +28,24 @@ pub struct BackgroundScan {
     after_complete: Option<AfterScan>,
 }
 
+/// What started a background scan; logged as the `trigger` of the `scan` span.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanTrigger {
+    /// The server started.
+    Startup,
+    /// The user asked for a rescan.
+    Rescan,
+}
+
+impl ScanTrigger {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Startup => "startup",
+            Self::Rescan => "rescan",
+        }
+    }
+}
+
 /// A hook run on the scan thread after every complete, uncancelled scan.
 #[derive(Clone)]
 struct AfterScan(Arc<dyn Fn() + Send + Sync>);
@@ -74,8 +92,8 @@ impl BackgroundScan {
     /// Starts a scan unless one is running or the controller is shut down.
     ///
     /// Returns whether a new scan was started.
-    pub fn start(&self) -> bool {
-        self.start_with(false)
+    pub fn start(&self, trigger: ScanTrigger) -> bool {
+        self.start_with(false, trigger.as_str())
     }
 
     /// Starts a scan that parses every book again, even unchanged ones (after a parser
@@ -83,10 +101,10 @@ impl BackgroundScan {
     ///
     /// Returns whether a new scan was started.
     pub fn start_reread(&self) -> bool {
-        self.start_with(true)
+        self.start_with(true, "reread")
     }
 
-    fn start_with(&self, reread: bool) -> bool {
+    fn start_with(&self, reread: bool, trigger: &'static str) -> bool {
         let mut thread = self.lock();
         if thread.as_ref().is_some_and(|t| !t.is_finished()) || self.cancel.load(Ordering::Relaxed)
         {
@@ -98,10 +116,16 @@ impl BackgroundScan {
         let cancel = Arc::clone(&self.cancel);
         let last = Arc::clone(&self.last);
         let after_complete = self.after_complete.clone();
+        // A root span: a scan started by a request must not carry (or keep open) its span.
+        let span = tracing::info_span!(parent: None, "scan", trigger = %trigger);
+        let dispatch = tracing::dispatcher::get_default(tracing::Dispatch::clone);
         let spawned = std::thread::Builder::new()
             .name("scan".to_owned())
             .spawn(move || {
-                tracing::info!("scanning {}", library.root().display());
+                let _dispatch = tracing::dispatcher::set_default(&dispatch);
+                let _span = span.entered();
+                tracing::info!("scan started");
+                tracing::debug!(root = ?library.root(), "library");
                 let registry = scan.registry();
                 let result = run(
                     &library,
@@ -116,17 +140,16 @@ impl BackgroundScan {
                         tracing::info!("scan cancelled; changes found so far are saved");
                     }
                     Ok(summary) => tracing::info!(
-                        "scan finished: {} added, {} updated, {} moved, {} removed, \
-                         {} unchanged, {} errors, {} not books",
-                        summary.added,
-                        summary.updated,
-                        summary.moved,
-                        summary.removed,
-                        summary.unchanged,
-                        summary.errors,
-                        summary.not_books
+                        added = summary.added,
+                        updated = summary.updated,
+                        moved = summary.moved,
+                        removed = summary.removed,
+                        unchanged = summary.unchanged,
+                        errors = summary.errors,
+                        not_books = summary.not_books,
+                        "scan finished"
                     ),
-                    Err(e) => tracing::error!("scan failed: {e}"),
+                    Err(e) => tracing::error!(error = %e, "scan failed"),
                 }
                 run_after_complete(&result, after_complete.as_ref());
                 *last.lock().unwrap_or_else(|e| e.into_inner()) =
@@ -251,7 +274,7 @@ mod tests {
         let scan = BackgroundScan::new(library, Vec::new()).after_complete_scan(move || {
             counter.fetch_add(1, Ordering::Relaxed);
         });
-        assert!(scan.start());
+        assert!(scan.start(ScanTrigger::Rescan));
         while scan.is_running() {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }

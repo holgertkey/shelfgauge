@@ -129,7 +129,7 @@ fn with_root<T>(data: &[u8], f: impl FnOnce(Node<'_, '_>) -> T) -> Result<T, Par
             }
             let reason = e.to_string();
             let doc = Document::parse_with_options(&repaired, options()).map_err(|_| invalid(e))?;
-            tracing::info!("repaired unbalanced tags ({reason})");
+            tracing::info!(reason = ?reason, "repaired unbalanced tags");
             doc
         }
         Err(e) => return Err(invalid(e)),

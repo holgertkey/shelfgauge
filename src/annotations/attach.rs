@@ -187,6 +187,7 @@ pub fn orphan_candidates(
 
 /// Re-attaches the `candidates` (from [`orphan_candidates`]) to `book`, whose text is
 /// `text`; returns how many groups moved.
+#[tracing::instrument(level = "debug", skip_all, fields(book_id = book.id))]
 pub fn reattach(
     index: &Connection,
     user: &mut Connection,
@@ -214,10 +215,10 @@ pub fn reattach(
         };
         if !enough {
             tracing::debug!(
-                "not re-attaching {} of {} annotations to book {}",
-                hits,
-                annotations.len(),
-                book.id
+                book_id = book.id,
+                found = hits,
+                annotations = annotations.len(),
+                "not re-attaching annotations"
             );
             continue;
         }
@@ -264,10 +265,10 @@ pub fn reattach(
         }
         tx.commit()?;
         tracing::info!(
-            "re-attached {} annotations ({} not found) to book {}",
-            annotations.len(),
-            annotations.len() - hits,
-            book.id
+            book_id = book.id,
+            annotations = annotations.len(),
+            not_found = annotations.len() - hits,
+            "re-attached annotations"
         );
         exporter.remove(&group.key)?;
         moved += 1;
@@ -287,6 +288,7 @@ fn bookmark_quote(suffix: &str) -> super::anchor::Quote {
 
 /// [`cleanup_after_scan`] for a library: opens its index and uses `user` with the
 /// current time.
+#[tracing::instrument(level = "debug", skip_all, name = "cleanup")]
 pub fn cleanup_library(
     library: &crate::library::Library,
     user: &super::store::UserData,
@@ -349,10 +351,10 @@ pub fn cleanup_after_scan(
     summary.purged = store::purge_removed(user, cutoff)?;
     if summary != CleanupSummary::default() {
         tracing::info!(
-            "annotations of removed books: {} groups removed, {} restored, {} rows purged",
-            summary.removed,
-            summary.restored,
-            summary.purged
+            removed = summary.removed,
+            restored = summary.restored,
+            purged = summary.purged,
+            "cleaned up the annotations of removed books"
         );
     }
     Ok(summary)

@@ -3,6 +3,9 @@
 <h1>{{ layout.title }}</h1>
 <p class="muted">Error {{ status }}</p>
 <p>{{ message }}</p>
+{%- if let Some(error_id) = error_id %}
+<p>Error id <code>{{ error_id }}</code>: look for it in the server log.</p>
+{%- endif %}
 {%- if let Some(detail) = detail %}
 <p class="notice error">{{ detail }}</p>
 {%- endif %}

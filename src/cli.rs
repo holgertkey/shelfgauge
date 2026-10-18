@@ -3,8 +3,9 @@
 use std::net::IpAddr;
 use std::path::PathBuf;
 
-use clap::{ArgAction, Args, Parser, Subcommand};
+use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
 use shelfgauge::config::ConfigOverrides;
+use shelfgauge::logging::{self, LogFormat, LogOptions};
 
 /// Index a folder of ebooks and browse it in a local web library.
 ///
@@ -33,6 +34,35 @@ pub struct Cli {
     /// Log at trace level, the same as -vv; overrides RUST_LOG.
     #[arg(long, global = true)]
     pub trace: bool,
+
+    /// Log line format: text, or json (one object per line, for log collectors).
+    #[arg(
+        long,
+        value_enum,
+        default_value_t,
+        global = true,
+        value_name = "FORMAT"
+    )]
+    pub log_format: LogFormatArg,
+}
+
+/// The `--log-format` values.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+pub enum LogFormatArg {
+    /// Human-readable lines.
+    #[default]
+    Text,
+    /// One JSON object per line.
+    Json,
+}
+
+impl From<LogFormatArg> for LogFormat {
+    fn from(arg: LogFormatArg) -> Self {
+        match arg {
+            LogFormatArg::Text => Self::Text,
+            LogFormatArg::Json => Self::Json,
+        }
+    }
 }
 
 impl Cli {
@@ -180,20 +210,45 @@ pub fn log_filter(verbose: u8, rust_log: Option<&str>) -> String {
     }
 }
 
-/// Initializes logging to stderr.
-pub fn init_logging(verbose: u8) {
-    use tracing_subscriber::EnvFilter;
+/// The logging options for verbosity `verbose` (see [`Cli::log_level`]), `format`, the
+/// `RUST_LOG` value and whether stderr gets colours.
+///
+/// At trace level every closed span also logs its duration.
+pub fn log_options(
+    verbose: u8,
+    format: LogFormat,
+    rust_log: Option<&str>,
+    ansi: bool,
+) -> LogOptions {
+    LogOptions {
+        filter: log_filter(verbose, rust_log),
+        format,
+        ansi: ansi && format == LogFormat::Text,
+        span_timings: verbose >= 2,
+    }
+}
+
+/// Initializes logging to stderr and sends panics to the log.
+pub fn init_logging(verbose: u8, format: LogFormat) {
+    use std::io::IsTerminal;
+    use tracing_subscriber::util::SubscriberInitExt;
 
     let rust_log = std::env::var("RUST_LOG").ok();
-    let directives = log_filter(verbose, rust_log.as_deref());
-    let filter = EnvFilter::try_new(&directives).unwrap_or_else(|e| {
-        eprintln!("warning: ignoring invalid RUST_LOG value {directives:?}: {e}");
-        EnvFilter::new(DEFAULT_LOG_FILTER)
+    let ansi = logging::use_ansi(
+        std::io::stderr().is_terminal(),
+        std::env::var_os("NO_COLOR").as_deref(),
+    );
+    let mut options = log_options(verbose, format, rust_log.as_deref(), ansi);
+    let dispatch = logging::dispatch(&options, std::io::stderr).unwrap_or_else(|e| {
+        eprintln!(
+            "warning: ignoring invalid RUST_LOG value {:?}: {e}",
+            options.filter
+        );
+        options.filter = DEFAULT_LOG_FILTER.to_owned();
+        logging::dispatch(&options, std::io::stderr).expect("the default filter is valid")
     });
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_writer(std::io::stderr)
-        .init();
+    dispatch.init();
+    logging::install_panic_hook();
 }
 
 #[cfg(test)]
@@ -348,6 +403,46 @@ mod tests {
                 "{args:?}"
             );
         }
+    }
+
+    #[test]
+    fn log_format_is_global_and_defaults_to_text() {
+        let format = |args: &[&str]| {
+            let argv = std::iter::once("shelfgauge").chain(args.iter().copied());
+            Cli::try_parse_from(argv).map(|cli| LogFormat::from(cli.log_format))
+        };
+        assert_eq!(format(&[]).unwrap(), LogFormat::Text);
+        assert_eq!(format(&["--log-format", "json"]).unwrap(), LogFormat::Json);
+        assert_eq!(
+            format(&["scan", "--log-format", "text"]).unwrap(),
+            LogFormat::Text
+        );
+        assert_eq!(
+            format(&["errors", "--log-format=json", "-v"]).unwrap(),
+            LogFormat::Json
+        );
+        assert_eq!(
+            format(&["--log-format", "xml"]).unwrap_err().kind(),
+            clap::error::ErrorKind::InvalidValue
+        );
+    }
+
+    #[test]
+    fn log_options_combine_format_level_and_colours() {
+        let text = log_options(0, LogFormat::Text, Some("debug"), true);
+        assert_eq!(text.filter, "debug", "RUST_LOG without -v");
+        assert!(text.ansi);
+        assert!(!text.span_timings);
+        let json = log_options(1, LogFormat::Json, Some("debug"), true);
+        assert_eq!(
+            json.filter, "warn,shelfgauge=debug",
+            "-v overrides RUST_LOG"
+        );
+        assert!(!json.ansi, "JSON never has colours");
+        assert!(!json.span_timings);
+        let trace = log_options(2, LogFormat::Text, None, false);
+        assert!(!trace.ansi);
+        assert!(trace.span_timings, "span timings at trace level");
     }
 
     #[test]

@@ -134,7 +134,7 @@ pub(crate) fn book_annotations(
                         Some(&*loaded)
                     }
                     Err(e) => {
-                        tracing::debug!("not re-attaching annotations to book {}: {e:?}", book.id);
+                        tracing::debug!(book_id = book.id, error = ?e, "not re-attaching annotations");
                         None
                     }
                 },
@@ -169,7 +169,7 @@ pub(crate) fn book_annotations(
 /// write it follows has succeeded, and `shelfgauge annotations export` repairs it).
 fn export(state: &AppState, index: &Connection, user: &Connection, key: &[u8]) {
     if let Err(e) = export_key(index, user, state.exporter(), key) {
-        tracing::error!("cannot update the annotation export: {e}");
+        tracing::error!(error = %e, "cannot update the annotation export");
     }
 }
 
@@ -202,11 +202,11 @@ impl From<AppError> for ApiError {
                 format!("the book is protected by DRM ({scheme})"),
             ),
             AppError::Unreadable(reason) => {
-                tracing::warn!("cannot read a book: {reason}");
+                tracing::warn!(reason = ?reason, "cannot read a book");
                 Self(StatusCode::INTERNAL_SERVER_ERROR, reason)
             }
             AppError::Internal(message) => {
-                tracing::error!("{message}");
+                tracing::error!(error = ?message, "internal error");
                 Self(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "internal error (see the server log)".to_owned(),
