@@ -35,6 +35,8 @@ Build numbers (`+NNN`) do not get their own sections.
   untrusted values (archive entry names, headers, parser messages) are escaped, so they
   cannot start a forged log line. Logs never contain query strings, request bodies or
   credentials, and name books by id or library-relative path.
+- Release builds use link-time optimization with one codegen unit and strip symbols:
+  the binary is about a third smaller (about 10 MB on Linux instead of 14.7 MB).
 
 ## [0.13.0] - 2026-10-18
 

@@ -9,7 +9,8 @@ in-browser reader.
 
 ## Status
 
-Early development, not yet published. `shelfgauge [PATH]` indexes a library of FB2, EPUB,
+Early development (0.x): the configuration and the URLs may still change between
+versions. `shelfgauge [PATH]` indexes a library of FB2, EPUB,
 TXT and (if enabled) HTML books (plain files and `.zip` archives, any number of books per archive) in the background and
 serves it as a web library: browse by author or by folder, open a book card (cover,
 series, genres, annotation), search by title, author, series or annotation, and read
@@ -23,8 +24,10 @@ for Linux (x86_64), Windows (x86_64) and macOS (Apple Silicon) are attached to t
 [GitHub releases](https://github.com/holgertkey/shelfgauge/releases):
 
 ```sh
-cargo install shelfgauge
+cargo install --locked shelfgauge
 ```
+
+`--locked` builds with the dependency versions the release was tested with.
 
 Or build from source with a current stable Rust toolchain:
 
