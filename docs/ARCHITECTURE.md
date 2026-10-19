@@ -476,6 +476,37 @@ daemon logs to journald or the container log), no metrics endpoint.
   uses structured fields (`book_id = id, error = %e`) instead of values in the
   message. `tests/logging.rs` checks the rule at trace level in both formats.
 
+## Profiles (planned, 0.15.0)
+
+Several people share one instance and one library; each *profile* has its own
+annotations, reading positions and "Currently reading" list, theme and reader
+settings. The index, scans, caches and `config.toml` stay shared.
+
+- **Data**: `userdata.sqlite` schema v3 adds `profiles` (integer id, name, color,
+  role `admin`/`reader`, optional argon2id PIN hash, activity sharing, settings JSON)
+  and `profile_sessions` (hashed tokens), and a `profile_id` column on annotations and
+  reading positions. The migration creates the *owner* profile (id 1, always admin,
+  cannot be deleted) and moves all existing data to it. Re-attaching, the post-scan
+  cleanup and the retention stay keyed by content key across all profiles.
+- **One profile = no change**: with a single profile there is no picker, no avatar and
+  no cookie. With more, a request without a valid session (cookie
+  `shelfgauge-profile`) is sent to the picker `/profiles`; a profile may have a PIN
+  (4–8 digits, lockout after repeated failures) that its owner can remove at any time.
+- **Not authentication**: a profile separates people, a PIN prevents casual access;
+  neither counts for the bind rule (see Security). The planned password login will log
+  into a profile.
+- **Roles**: `admin` sees Settings, Rescan, maintenance and profile management;
+  `reader` gets `403` on the admin routes.
+- **Settings follow the person**: theme and reader settings are stored in the profile
+  and rendered as attributes of `<html>`; the sidebar state and focus mode stay in the
+  browser. The profile color sets the accent color.
+- **Family activity** is opt-in per profile and shares reading positions only, never
+  annotations.
+- **Export**: the owner's Markdown files stay in `.shelfgauge/annotations/`, other
+  profiles write to `.shelfgauge/annotations/profiles/<name> (<id>)/`.
+- **Logging**: profiles appear by id only (`profile = N` on the request span); names,
+  PINs and session tokens are never logged.
+
 ## V2: hub — books on mobile devices (designed, not built)
 
 Agreed 2026-10-14. A user opens a book on a phone (or any other device) in a browser and
