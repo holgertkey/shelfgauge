@@ -1,0 +1,5 @@
+{%- if !layout.profile.theme.is_empty() %} data-theme="{{ layout.profile.theme }}"{% endif %}
+{%- for (attr, value) in layout.profile.reader %} data-{{ attr }}="{{ value }}"{% endfor %}
+{%- if layout.profile.color != 0 %} data-pcolor="{{ layout.profile.color }}"{% endif %}
+{%- if !layout.profile.name.is_empty() %} data-settings="{{ layout.urls.profile_settings() }}"{% endif %}
+{%- if layout.profile.adopt %} data-adopt{% endif %}

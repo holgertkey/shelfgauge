@@ -114,6 +114,49 @@ pub enum Command {
     /// Work with bookmarks and quotes (`annotations export`: rewrite their Markdown export).
     #[command(subcommand)]
     Annotations(AnnotationsCommand),
+    /// Manage the profiles of the people who read here (`profiles list`, `add`,
+    /// `remove`, `reset-pin`).
+    #[command(subcommand)]
+    Profiles(ProfilesCommand),
+}
+
+/// `shelfgauge profiles` subcommands.
+#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
+pub enum ProfilesCommand {
+    /// List the profiles: id, name, role and whether they have a PIN.
+    List {
+        /// Library directory (default: the current directory).
+        path: Option<PathBuf>,
+    },
+    /// Add a profile (a reader unless --admin), without a PIN.
+    Add {
+        /// The name (1 to 32 characters).
+        name: String,
+        /// Library directory (default: the current directory).
+        path: Option<PathBuf>,
+        /// Give it the admin role (settings, rescans, profiles).
+        #[arg(long)]
+        admin: bool,
+    },
+    /// Delete a profile with its bookmarks, quotes and reading places (its Markdown
+    /// export is kept). The owner profile cannot be deleted.
+    Remove {
+        /// The profile's name.
+        name: String,
+        /// Library directory (default: the current directory).
+        path: Option<PathBuf>,
+        /// Do not ask for confirmation.
+        #[arg(long, short)]
+        yes: bool,
+    },
+    /// Remove a profile's PIN (a forgotten PIN of the owner profile) and sign out its
+    /// devices.
+    ResetPin {
+        /// The profile's name.
+        name: String,
+        /// Library directory (default: the current directory).
+        path: Option<PathBuf>,
+    },
 }
 
 /// `shelfgauge annotations` subcommands.
@@ -123,6 +166,9 @@ pub enum AnnotationsCommand {
     Export {
         /// Library directory (default: the current directory).
         path: Option<PathBuf>,
+        /// Only this profile's export (default: every profile).
+        #[arg(long)]
+        profile: Option<String>,
     },
 }
 
@@ -136,10 +182,41 @@ pub enum Mode {
     },
     /// Update the index and exit.
     Scan,
-    /// Rewrite the annotation export and exit.
-    ExportAnnotations,
+    /// Rewrite the annotation export (of one profile, or of all) and exit.
+    ExportAnnotations {
+        /// The profile's name; `None` for every profile.
+        profile: Option<String>,
+    },
+    /// Manage the profiles and exit.
+    Profiles(ProfilesAction),
     /// List the books that could not be parsed and exit.
     Errors,
+}
+
+/// What `shelfgauge profiles` does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProfilesAction {
+    /// List the profiles.
+    List,
+    /// Add a profile.
+    Add {
+        /// The name.
+        name: String,
+        /// Whether it is an admin.
+        admin: bool,
+    },
+    /// Delete a profile.
+    Remove {
+        /// The name.
+        name: String,
+        /// Whether not to ask for confirmation.
+        yes: bool,
+    },
+    /// Remove a profile's PIN.
+    ResetPin {
+        /// The name.
+        name: String,
+    },
 }
 
 /// The resolved invocation: mode, library root and config overrides.
@@ -172,12 +249,34 @@ impl Cli {
                 path: path.unwrap_or_else(current_dir),
                 overrides: ConfigOverrides::default(),
             },
-            Some(Command::Annotations(AnnotationsCommand::Export { path })) => Invocation {
-                mode: Mode::ExportAnnotations,
-                explicit_path: false,
-                path: path.unwrap_or_else(current_dir),
-                overrides: ConfigOverrides::default(),
-            },
+            Some(Command::Annotations(AnnotationsCommand::Export { path, profile })) => {
+                Invocation {
+                    mode: Mode::ExportAnnotations { profile },
+                    explicit_path: false,
+                    path: path.unwrap_or_else(current_dir),
+                    overrides: ConfigOverrides::default(),
+                }
+            }
+            Some(Command::Profiles(command)) => {
+                let (action, path) = match command {
+                    ProfilesCommand::List { path } => (ProfilesAction::List, path),
+                    ProfilesCommand::Add { name, path, admin } => {
+                        (ProfilesAction::Add { name, admin }, path)
+                    }
+                    ProfilesCommand::Remove { name, path, yes } => {
+                        (ProfilesAction::Remove { name, yes }, path)
+                    }
+                    ProfilesCommand::ResetPin { name, path } => {
+                        (ProfilesAction::ResetPin { name }, path)
+                    }
+                };
+                Invocation {
+                    mode: Mode::Profiles(action),
+                    explicit_path: false,
+                    path: path.unwrap_or_else(current_dir),
+                    overrides: ConfigOverrides::default(),
+                }
+            }
             None => Invocation {
                 mode: Mode::Serve {
                     scan: !self.serve.no_scan,
@@ -321,7 +420,7 @@ mod tests {
     #[test]
     fn annotations_export_never_creates_a_library() {
         let inv = parse(&["annotations", "export", "books"]).unwrap();
-        assert_eq!(inv.mode, Mode::ExportAnnotations);
+        assert_eq!(inv.mode, Mode::ExportAnnotations { profile: None });
         assert_eq!(inv.path, PathBuf::from("books"));
         assert!(!inv.explicit_path, "only an existing library is exported");
         assert_eq!(
@@ -329,6 +428,43 @@ mod tests {
             PathBuf::from(".")
         );
         assert!(parse(&["annotations"]).is_err());
+        assert_eq!(
+            parse(&["annotations", "export", "--profile", "Anna"])
+                .unwrap()
+                .mode,
+            Mode::ExportAnnotations {
+                profile: Some("Anna".into())
+            }
+        );
+    }
+
+    #[test]
+    fn profiles_subcommands() {
+        let inv = parse(&["profiles", "list", "books"]).unwrap();
+        assert_eq!(inv.mode, Mode::Profiles(ProfilesAction::List));
+        assert_eq!(inv.path, PathBuf::from("books"));
+        assert!(!inv.explicit_path, "never creates a library");
+        assert_eq!(
+            parse(&["profiles", "add", "Anna", "--admin"]).unwrap().mode,
+            Mode::Profiles(ProfilesAction::Add {
+                name: "Anna".into(),
+                admin: true
+            })
+        );
+        let inv = parse(&["profiles", "remove", "Anna", "books", "--yes"]).unwrap();
+        assert_eq!(
+            inv.mode,
+            Mode::Profiles(ProfilesAction::Remove {
+                name: "Anna".into(),
+                yes: true
+            })
+        );
+        assert_eq!(inv.path, PathBuf::from("books"));
+        assert_eq!(
+            parse(&["profiles", "reset-pin", "Me"]).unwrap().mode,
+            Mode::Profiles(ProfilesAction::ResetPin { name: "Me".into() })
+        );
+        assert!(parse(&["profiles", "add"]).is_err());
     }
 
     #[test]

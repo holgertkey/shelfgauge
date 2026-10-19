@@ -6,6 +6,7 @@
   <a href="#{{ section.id }}">{{ section.title }}</a>
   {%- endfor %}
   <a href="#server">Server</a>
+  <a href="#profiles">Profiles</a>
   <a href="#browser">This browser</a>
   <a href="#maintenance">Maintenance</a>
   <a href="#about">About</a>
@@ -70,28 +71,97 @@
   </dl>
 </section>
 
+<section class="settings-section" id="profiles">
+  <h2>Profiles</h2>
+  <p class="muted">Each person who reads here can have a profile with their own bookmarks, quotes, reading places and settings; the library is shared. With one profile nothing changes. A profile’s PIN is not a password protection.</p>
+  {%- if let Some((kind, text)) = profiles.notice %}
+  <div class="notice settings-notice {{ kind }}" role="status"><span>{{ text }}</span></div>
+  {%- endif %}
+  <ul class="profile-rows">
+    {%- for profile in profiles.profiles %}
+    <li class="profile-row">
+      <span class="avatar pc-{{ profile.color }}" aria-hidden="true">{{ profile.initials }}</span>
+      <div class="profile-facts">
+        <strong>{{ profile.name }}</strong>
+        <span class="muted">{% if profile.admin %}admin{% else %}reader{% endif %}{% if profile.owner %}, owner{% endif %} · {% if profile.has_pin %}PIN{% else %}no PIN{% endif %} · last seen {{ profile.last_seen }}</span>
+      </div>
+      <details class="profile-edit">
+        <summary>Edit</summary>
+        <div class="profile-actions">
+          <form action="{{ layout.urls.manage_profile(profile.id, "rename") }}" method="post" class="inline-form">
+            <label for="rename-{{ profile.id }}" class="visually-hidden">Name</label>
+            <input type="text" id="rename-{{ profile.id }}" name="name" value="{{ profile.name }}" maxlength="32" required autocomplete="off">
+            <button type="submit">Rename</button>
+          </form>
+          <form action="{{ layout.urls.manage_profile(profile.id, "color") }}" method="post" class="inline-form">
+            <label for="color-{{ profile.id }}" class="visually-hidden">Color</label>
+            <select id="color-{{ profile.id }}" name="color">
+              {%- for color in profiles.colors %}
+              <option value="{{ color.index }}"{% if color.index == profile.color %} selected{% endif %}>{{ color.name }}</option>
+              {%- endfor %}
+            </select>
+            <button type="submit">Change color</button>
+          </form>
+          {%- if !profile.owner %}
+          <form action="{{ layout.urls.manage_profile(profile.id, "role") }}" method="post" class="inline-form">
+            <label for="role-{{ profile.id }}" class="visually-hidden">Role</label>
+            <select id="role-{{ profile.id }}" name="role">
+              <option value="reader"{% if !profile.admin %} selected{% endif %}>Reader</option>
+              <option value="admin"{% if profile.admin %} selected{% endif %}>Admin</option>
+            </select>
+            <button type="submit">Change role</button>
+          </form>
+          {%- endif %}
+          {%- if profile.has_pin %}
+          <form action="{{ layout.urls.manage_profile(profile.id, "remove-pin") }}" method="post" class="inline-form">
+            <button type="submit">Remove PIN</button>
+          </form>
+          {%- endif %}
+          {%- if !profile.owner %}
+          <a class="button danger" href="{{ layout.urls.manage_profile(profile.id, "delete") }}">Delete…</a>
+          {%- endif %}
+        </div>
+      </details>
+    </li>
+    {%- endfor %}
+  </ul>
+  {%- if profiles.can_add %}
+  <form class="settings-form add-profile" action="{{ profiles.add_action }}" method="post">
+    <h3>Add a profile</h3>
+    <div class="field">
+      <label for="new-profile-name">Name</label>
+      <input type="text" id="new-profile-name" name="name" maxlength="32" required autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="new-profile-color">Color</label>
+      <select id="new-profile-color" name="color">
+        {%- for color in profiles.colors %}
+        <option value="{{ color.index }}">{{ color.name }}</option>
+        {%- endfor %}
+      </select>
+    </div>
+    <fieldset class="field">
+      <legend>Role</legend>
+      <label class="check"><input type="radio" name="role" value="reader" checked> Reader <span class="muted">(reads and annotates)</span></label>
+      <label class="check"><input type="radio" name="role" value="admin"> Admin <span class="muted">(also settings, rescans and profiles)</span></label>
+    </fieldset>
+    <div class="field">
+      <label for="new-profile-pin">PIN (optional)</label>
+      <input type="password" id="new-profile-pin" name="pin" inputmode="numeric" autocomplete="off" pattern="[0-9]{4,8}" minlength="4" maxlength="8" aria-describedby="new-profile-pin-hint">
+      <p class="hint" id="new-profile-pin-hint">4 to 8 digits; the person can change or remove it on My profile.</p>
+    </div>
+    <div class="form-actions">
+      <button type="submit" class="primary">Add profile</button>
+    </div>
+  </form>
+  {%- endif %}
+</section>
+
 <section class="settings-section" id="browser">
   <h2>This browser</h2>
-  <p class="muted">These settings live only in this browser, not in config.toml.</p>
+  <p class="muted">These settings live only in this browser. The theme and the reading settings are on <a href="{{ layout.urls.my_profile() }}">My profile</a>.</p>
   <p class="no-js-note">They need JavaScript, which is turned off.</p>
   <div class="browser-settings">
-    <div class="field">
-      <label for="browser-theme">Theme</label>
-      <select id="browser-theme" class="theme-choice">
-        <option value="">Auto</option>
-        <option value="light">Light</option>
-        <option value="dark">Dark</option>
-        <option value="sepia">Sepia</option>
-        <option value="navy">Navy</option>
-        <option value="black">Black</option>
-      </select>
-      <p class="hint">The same as the menu in the top bar; the <kbd>t</kbd> key switches to the next one.</p>
-    </div>
-    <div class="field">
-      <p><strong>Reading settings</strong>: <span class="reader-summary">default</span></p>
-      <button type="button" class="reset-reader">Reset reading settings</button>
-      <p class="hint">Font, size, width and spacing of the text, set with the Aa button in reading mode.</p>
-    </div>
     <div class="field">
       <button type="button" class="reset-sidebar">Reset sidebar</button>
       <p class="hint">Its width, whether it is hidden, its scroll position and the Authors/Folders choice.</p>

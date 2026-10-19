@@ -1,0 +1,17 @@
+{% extends "minimal.html" %}
+{% block main %}
+<div class="pin-box">
+  <span class="avatar avatar-large pc-{{ profile.color }}" aria-hidden="true">{{ profile.initials }}</span>
+  <h1>{{ profile.name }}</h1>
+  <form action="{{ action }}" method="post" class="pin-form">
+    <input type="hidden" name="next" value="{{ next }}">
+    <label for="pin">PIN</label>
+    <input type="password" id="pin" name="pin" inputmode="numeric" autocomplete="off" pattern="[0-9]{4,8}" minlength="4" maxlength="8" required autofocus{% if locked %} disabled{% endif %}{% if error.is_some() %} aria-invalid="true" aria-describedby="pin-error"{% endif %}>
+    {%- if let Some(error) = error %}
+    <p class="field-error" id="pin-error" role="alert">{{ error }}</p>
+    {%- endif %}
+    <button type="submit" class="primary"{% if locked %} disabled{% endif %}>Continue</button>
+  </form>
+  <p><a href="{{ layout.urls.profiles(Some(next.as_str())) }}">Choose another profile</a></p>
+</div>
+{%- endblock %}

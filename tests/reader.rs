@@ -734,7 +734,6 @@ async fn reader_settings_assets_agree_on_the_values() {
         .await
         .body
         .replace("\r\n", "\n");
-    let app_js = server.ok("/assets/app.js").await.body;
 
     // theme.js whitelists exactly the panel's values, the default first; reader.css has
     // a preset for every value but the default (which is the stylesheet's own value).
@@ -775,10 +774,11 @@ async fn reader_settings_assets_agree_on_the_values() {
     ] {
         assert!(style_css.contains(rule), "{rule} missing");
     }
-    // Every theme of the panel exists (light is the plain `:root` palette).
+    // Every theme of the panel exists (light is the plain `:root` palette); the
+    // list of themes `t` cycles through is theme.js's.
     for theme in &THEMES[1..] {
         assert!(
-            app_js.contains(&format!("\"{theme}\"")),
+            theme_js.contains(&format!("\"{theme}\"")),
             "{theme} in THEMES"
         );
         if *theme != "light" {

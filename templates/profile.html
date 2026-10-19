@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block main %}
+<h1>My profile</h1>
+{%- if let Some(notice) = notice %}
+<div class="notice settings-notice ok" role="status"><span>{{ notice }}</span></div>
+{%- endif %}
+{%- if !errors.is_empty() %}
+<div class="notice settings-notice error" role="alert"><span>Some values are invalid; nothing was saved.</span></div>
+{%- endif %}
+
+<section class="settings-section" id="details">
+  <h2>{% if several %}Name and color{% else %}Look{% endif %}</h2>
+  <form class="settings-form" action="{{ action }}" method="post">
+    <input type="hidden" name="action" value="details">
+    <div class="field{% if self.error("name").is_some() %} invalid{% endif %}">
+      <label for="profile-name">Name</label>
+      <input type="text" id="profile-name" name="name" value="{{ name }}" maxlength="32" required autocomplete="off"{% if self.error("name").is_some() %} aria-invalid="true" aria-describedby="profile-name-error"{% endif %}>
+      {%- if let Some(error) = self.error("name") %}
+      <p class="field-error" id="profile-name-error">{{ error }}</p>
+      {%- endif %}
+      {%- if profile.owner %}
+      <p class="hint">The owner profile: always an admin.</p>
+      {%- endif %}
+    </div>
+    <fieldset class="field color-choice">
+      <legend>Color</legend>
+      <p class="hint">Used for your avatar and for links and buttons.</p>
+      <div class="swatches">
+        {%- for color in colors %}
+        <label class="swatch"><input type="radio" name="color" value="{{ color.index }}"{% if color.checked %} checked{% endif %}><span class="avatar pc-{{ color.index }}" aria-hidden="true">{{ profile.initials }}</span><span class="visually-hidden">{{ color.name }}</span></label>
+        {%- endfor %}
+      </div>
+    </fieldset>
+    <div class="field">
+      <label for="profile-theme">Theme</label>
+      <select id="profile-theme" name="theme">
+        {%- for theme in themes %}
+        <option value="{{ theme.value }}"{% if theme.selected %} selected{% endif %}>{{ theme.label }}</option>
+        {%- endfor %}
+      </select>
+      <p class="hint">The same as the menu in the top bar; the <kbd>t</kbd> key switches to the next one. Saved in your profile, so it is the same on every device.</p>
+    </div>
+    {%- if several %}
+    <div class="field">
+      <label class="check"><input type="checkbox" name="share" value="on"{% if share %} checked{% endif %} aria-describedby="share-hint"> Show my reading to the other profiles</label>
+      <p class="hint" id="share-hint">They see the books you are reading and how far you are; never your bookmarks, quotes or notes.</p>
+    </div>
+    {%- endif %}
+    <div class="form-actions">
+      <button type="submit" class="primary">Save</button>
+    </div>
+  </form>
+</section>
+
+<section class="settings-section" id="reading">
+  <h2>Reading settings</h2>
+  <p><strong>Now</strong>: {{ reader_summary }}</p>
+  <p class="hint">Font, size, width and spacing of the text, set with the Aa button in reading mode. Saved in your profile.</p>
+  <form action="{{ action }}" method="post">
+    <input type="hidden" name="action" value="reset-reading">
+    <button type="submit"{% if reader_default %} disabled{% endif %}>Reset reading settings</button>
+  </form>
+</section>
+
+{%- if several %}
+<section class="settings-section" id="pin">
+  <h2>PIN</h2>
+  <p class="muted">A PIN keeps the other people at this computer out of your profile. It is not a password protection: anyone with access to the computer can read the library’s files.</p>
+  <form class="settings-form" action="{{ action }}" method="post">
+    {%- if profile.has_pin %}
+    <div class="field{% if self.error("current_pin").is_some() %} invalid{% endif %}">
+      <label for="current-pin">Current PIN</label>
+      <input type="password" id="current-pin" name="current_pin" inputmode="numeric" autocomplete="off" pattern="[0-9]{4,8}" maxlength="8"{% if self.error("current_pin").is_some() %} aria-invalid="true" aria-describedby="current-pin-error"{% endif %}>
+      {%- if let Some(error) = self.error("current_pin") %}
+      <p class="field-error" id="current-pin-error">{{ error }}</p>
+      {%- endif %}
+      {%- if profile.owner %}
+      <p class="hint">Forgot it? Run <code>shelfgauge profiles reset-pin &lt;name&gt;</code> on the computer.</p>
+      {%- else %}
+      <p class="hint">Forgot it? An admin can remove it in Settings → Profiles.</p>
+      {%- endif %}
+    </div>
+    {%- endif %}
+    <div class="field{% if self.error("new_pin").is_some() %} invalid{% endif %}">
+      <label for="new-pin">{% if profile.has_pin %}New PIN{% else %}PIN{% endif %}</label>
+      <input type="password" id="new-pin" name="new_pin" inputmode="numeric" autocomplete="off" pattern="[0-9]{4,8}" minlength="4" maxlength="8" aria-describedby="new-pin-hint">
+      {%- if let Some(error) = self.error("new_pin") %}
+      <p class="field-error">{{ error }}</p>
+      {%- endif %}
+      <p class="hint" id="new-pin-hint">4 to 8 digits. Your other devices are signed out.</p>
+    </div>
+    <div class="field{% if self.error("confirm_pin").is_some() %} invalid{% endif %}">
+      <label for="confirm-pin">Repeat the PIN</label>
+      <input type="password" id="confirm-pin" name="confirm_pin" inputmode="numeric" autocomplete="off" pattern="[0-9]{4,8}" minlength="4" maxlength="8">
+      {%- if let Some(error) = self.error("confirm_pin") %}
+      <p class="field-error">{{ error }}</p>
+      {%- endif %}
+    </div>
+    <div class="form-actions">
+      <button type="submit" class="primary" name="action" value="set-pin">{% if profile.has_pin %}Change PIN{% else %}Set PIN{% endif %}</button>
+      {%- if profile.has_pin %}
+      <button type="submit" name="action" value="remove-pin">Remove PIN</button>
+      {%- endif %}
+    </div>
+  </form>
+</section>
+
+<section class="settings-section" id="devices">
+  <h2>Devices</h2>
+  <div class="actions">
+    <div class="action">
+      <form action="{{ action }}" method="post">
+        <input type="hidden" name="action" value="sign-out-others">
+        <button type="submit">Sign out on other devices</button>
+      </form>
+      <p class="hint">Other browsers that use this profile go back to the profile choice.</p>
+    </div>
+    <div class="action">
+      <form action="{{ leave_action }}" method="post">
+        <button type="submit">Switch profile</button>
+      </form>
+      <p class="hint">Signs out in this browser and shows the profile choice.</p>
+    </div>
+  </div>
+</section>
+{%- endif %}
+{%- endblock %}

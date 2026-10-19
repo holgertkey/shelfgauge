@@ -55,6 +55,10 @@ pub enum StorageError {
         /// What went wrong.
         message: String,
     },
+
+    /// The operating system's random number generator failed (session tokens).
+    #[error("the system random number generator failed: {0}")]
+    Random(String),
 }
 
 /// Opens (creating if needed) the database for writing and migrates it.

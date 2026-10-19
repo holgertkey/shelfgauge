@@ -8,6 +8,48 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-19
+
+### Added
+
+- **Profiles**: several people can share one library, each with their own bookmarks,
+  quotes, reading places, "Currently reading", theme and reading settings. With one
+  profile nothing changes: your data belongs to the owner profile ("Me" until
+  renamed). An admin adds profiles under Settings → Profiles; then each browser asks
+  "Who is reading?" (a picker with round avatars) and remembers the choice; the avatar
+  menu in the top bar has My profile and Switch profile.
+- An optional **PIN** per profile (4 to 8 digits, stored as an argon2id hash): after 5
+  wrong tries the profile is locked for 30 seconds, doubling up to 15 minutes. Each
+  person can set, change or remove their PIN; an admin can remove another profile's
+  PIN. A PIN is not authentication: it keeps family members apart and does not allow
+  listening on a non-loopback address.
+- **Roles**: admins change the settings, rescan and manage profiles; readers read and
+  annotate (the admin pages answer 403, and the gear and Rescan are hidden).
+- **My profile** (`/profile`): name, color, PIN, the theme, a reset of the reading
+  settings, "Sign out on other devices" and "Show my reading to the other profiles".
+- **Profile colors**: eight colors for every theme, used for the avatar and as the
+  accent of links and buttons; color 0 is each theme's own accent.
+- **Family activity** (off by default): "Family is reading" on the library page and
+  "Also reading" on the book card show the books of the profiles that share their
+  reading; never bookmarks, quotes or notes.
+- `shelfgauge profiles list`, `add NAME [--admin]`, `remove NAME [--yes]` and
+  `reset-pin NAME`; `shelfgauge annotations export --profile NAME`.
+
+### Changed
+
+- The theme and the reading settings are saved in the profile instead of the browser,
+  so they are the same on every device; settings that a browser kept before are taken
+  over once. The settings page's "This browser" section keeps the sidebar and focus
+  mode resets; the theme and the reading settings moved to My profile.
+- The Markdown export of profiles other than the owner goes to
+  `.shelfgauge/annotations/profiles/<name> (<id>)/`; the owner's stays in
+  `.shelfgauge/annotations/`.
+- The statistics page shows the current profile's reading ("Your reading").
+- Request log lines carry the profile id (`profile=2`); profile names, PINs and session
+  tokens are never logged.
+- `userdata.sqlite` schema version 3 (migrated automatically; older shelfgauge
+  versions cannot open it afterwards).
+
 ## [0.14.0] - 2026-10-18
 
 ### Added

@@ -12,6 +12,7 @@ use axum::response::{IntoResponse, Response};
 
 use super::AppState;
 use super::layout::Layout;
+use super::profile::CurrentProfile;
 use super::trace::RequestId;
 use crate::storage::StorageError;
 
@@ -28,6 +29,8 @@ pub(crate) enum AppError {
     BadRequest(String),
     /// The book is protected by DRM (403); the scheme is shown.
     Protected(String),
+    /// The profile may not do this: an admin page for a reader (403).
+    Forbidden,
     /// An unexpected failure (500); the message is logged, not shown.
     Internal(String),
 }
@@ -40,6 +43,7 @@ pub(crate) enum ErrorPage {
     Unreadable(String),
     BadRequest(String),
     Protected(String),
+    Forbidden,
     Internal,
 }
 
@@ -57,6 +61,7 @@ impl IntoResponse for AppError {
             }
             Self::BadRequest(reason) => (StatusCode::BAD_REQUEST, ErrorPage::BadRequest(reason)),
             Self::Protected(scheme) => (StatusCode::FORBIDDEN, ErrorPage::Protected(scheme)),
+            Self::Forbidden => (StatusCode::FORBIDDEN, ErrorPage::Forbidden),
             Self::Internal(message) => {
                 tracing::error!(error = ?message, "internal error");
                 (StatusCode::INTERNAL_SERVER_ERROR, ErrorPage::Internal)
@@ -137,9 +142,23 @@ pub(crate) async fn render_errors(
     next: Next,
 ) -> Response {
     let id = req.extensions().get::<RequestId>().copied();
+    let tokens = super::profile::cookie_tokens(req.headers());
     let response = next.run(req).await;
     let Some(page) = response.extensions().get::<ErrorPage>().cloned() else {
         return response;
+    };
+    // Routes without the profile middleware (unknown paths, the picker): the profile
+    // of the cookie, if any, for the theme and the role.
+    let profile = match response.extensions().get::<CurrentProfile>().cloned() {
+        Some(profile) => Some(profile),
+        None => {
+            let s = state.clone();
+            super::blocking(move || super::profile::resolve(&s, &tokens))
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .flatten()
+        }
     };
     let status = response.status();
     let detail = match &page {
@@ -169,6 +188,11 @@ pub(crate) async fn render_errors(
             false,
         ),
         ErrorPage::Protected(_) => ("Protected by DRM", PROTECTED, false),
+        ErrorPage::Forbidden => (
+            "Not allowed",
+            "This page is for profiles with the admin role.",
+            false,
+        ),
         ErrorPage::Internal => (
             "Internal error",
             "Something went wrong on the server. The details are in the server log.",
@@ -176,7 +200,7 @@ pub(crate) async fn render_errors(
         ),
     };
     let page = ErrorTemplate {
-        layout: Layout::without_sidebar(&state, title),
+        layout: Layout::without_sidebar(&state, profile.as_ref(), title),
         status: status.as_u16(),
         message,
         detail,

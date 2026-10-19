@@ -19,6 +19,7 @@ use shelfgauge::config::{Config, SplitMode};
 use shelfgauge::container::ReadLimits;
 use shelfgauge::format::Registry;
 use shelfgauge::library::Library;
+use shelfgauge::profiles::ProfileId;
 use shelfgauge::scanner::{BackgroundScan, ScanProgress, Scanner};
 use shelfgauge::storage::books::{all_books, book_by_id};
 use shelfgauge::storage::{open_read_pool, open_writer};
@@ -524,7 +525,7 @@ async fn invalid_requests_are_rejected() {
         reply.body
     );
     // A note over the limit through the card's form: an error page.
-    let mark = store::for_book(&lib.userdata.lock(), &lib.key_of(id)).unwrap()[0]
+    let mark = store::for_book(&lib.userdata.lock(), ProfileId::OWNER, &lib.key_of(id)).unwrap()[0]
         .id
         .clone();
     let reply = server
@@ -561,7 +562,7 @@ async fn write_routes_need_an_allowed_origin() {
         }
     }
     assert!(
-        store::for_book(&lib.userdata.lock(), &lib.key_of(id))
+        store::for_book(&lib.userdata.lock(), ProfileId::OWNER, &lib.key_of(id))
             .unwrap()
             .is_empty()
     );
@@ -654,7 +655,7 @@ async fn reading_position() {
     let read = off.ok(&format!("/book/{id}/read")).await;
     assert!(read.contains("data-position=\"\""), "{read}");
     off.json(&url, serde_json::json!({"block": p21})).await;
-    let saved = store::position(&lib.userdata.lock(), &lib.key_of(id))
+    let saved = store::position(&lib.userdata.lock(), ProfileId::OWNER, &lib.key_of(id))
         .unwrap()
         .unwrap();
     assert_eq!(saved.block.to_string(), last, "not saved while disabled");
@@ -704,7 +705,8 @@ async fn annotations_follow_moves_and_reattach_across_containers() {
         "position follows: {card}"
     );
     assert!(!card.contains("place not found"));
-    let marks = store::for_book(&lib.userdata.lock(), &lib.key_of(zip_id)).unwrap();
+    let marks =
+        store::for_book(&lib.userdata.lock(), ProfileId::OWNER, &lib.key_of(zip_id)).unwrap();
     assert_eq!(marks[0].quote.text, "the sly");
     assert_eq!(marks[0].book_id, zip_id);
     let md = lib.export_text();
@@ -752,7 +754,7 @@ async fn replaced_books_reattach_above_the_threshold_only() {
     assert_eq!(read.matches("class=\"mark-item\"").count(), 5, "{read}");
     assert_eq!(read.matches("data-lost").count(), 1);
     assert!(read.contains("place not found"));
-    let marks = store::for_book(&lib.userdata.lock(), &lib.key_of(id)).unwrap();
+    let marks = store::for_book(&lib.userdata.lock(), ProfileId::OWNER, &lib.key_of(id)).unwrap();
     let found: Vec<_> = marks.iter().filter(|m| !m.anchor_lost).collect();
     assert_eq!(found.len(), 4);
     // The found marks moved one block down.
@@ -795,7 +797,7 @@ async fn replaced_books_reattach_above_the_threshold_only() {
     let card = server.ok(&format!("/book/{other}")).await;
     assert!(card.contains("Quotes (0)"), "{card}");
     assert_eq!(
-        store::for_book(&lib.userdata.lock(), &old_key)
+        store::for_book(&lib.userdata.lock(), ProfileId::OWNER, &old_key)
             .unwrap()
             .len(),
         3,
@@ -828,14 +830,16 @@ async fn removed_books_are_cleaned_up_restored_and_purged() {
     std::fs::remove_file(lib.path("gone.fb2")).unwrap();
     lib.scan_only();
     assert_eq!(
-        store::for_book(&lib.userdata.lock(), &key).unwrap().len(),
+        store::for_book(&lib.userdata.lock(), ProfileId::OWNER, &key)
+            .unwrap()
+            .len(),
         1
     );
 
     // The cleanup after a complete scan: soft-deleted, the export file goes.
     lib.scan();
     assert!(
-        store::for_book(&lib.userdata.lock(), &key)
+        store::for_book(&lib.userdata.lock(), ProfileId::OWNER, &key)
             .unwrap()
             .is_empty()
     );
@@ -845,7 +849,7 @@ async fn removed_books_are_cleaned_up_restored_and_purged() {
     std::fs::create_dir_all(lib.path("back")).unwrap();
     lib.write("back/gone.fb2", &data);
     lib.scan();
-    let restored = store::for_book(&lib.userdata.lock(), &key).unwrap();
+    let restored = store::for_book(&lib.userdata.lock(), ProfileId::OWNER, &key).unwrap();
     assert_eq!(restored.len(), 1);
     assert_eq!(restored[0].id, kept);
     assert_eq!(lib.export_files().len(), 1);
@@ -859,7 +863,9 @@ async fn removed_books_are_cleaned_up_restored_and_purged() {
     );
     lib.scan();
     assert_eq!(
-        store::for_book(&lib.userdata.lock(), &key).unwrap().len(),
+        store::for_book(&lib.userdata.lock(), ProfileId::OWNER, &key)
+            .unwrap()
+            .len(),
         1
     );
 
@@ -867,7 +873,7 @@ async fn removed_books_are_cleaned_up_restored_and_purged() {
     std::fs::remove_file(lib.path("edition.fb2")).unwrap();
     lib.scan();
     assert!(
-        store::for_book(&lib.userdata.lock(), &key)
+        store::for_book(&lib.userdata.lock(), ProfileId::OWNER, &key)
             .unwrap()
             .is_empty()
     );
@@ -892,9 +898,15 @@ async fn removed_books_are_cleaned_up_restored_and_purged() {
     .unwrap();
     assert_eq!(summary.purged, 1);
     let user = lib.userdata.lock();
-    assert!(store::get(&user, &kept).unwrap().is_none());
     assert!(
-        store::get(&user, &tomb).unwrap().is_some(),
+        store::get(&user, ProfileId::OWNER, &kept)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store::get(&user, ProfileId::OWNER, &tomb)
+            .unwrap()
+            .is_some(),
         "user tombstones are never purged"
     );
 }
@@ -920,7 +932,11 @@ async fn zero_retention_purges_at_once() {
     )
     .unwrap();
     assert_eq!((summary.removed, summary.purged), (1, 1));
-    assert!(store::get(&lib.userdata.lock(), &mark).unwrap().is_none());
+    assert!(
+        store::get(&lib.userdata.lock(), ProfileId::OWNER, &mark)
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -945,7 +961,7 @@ async fn export_all_rewrites_files_and_removes_only_marked_ones() {
     std::fs::write(dir.join("mine.md"), "my own notes").unwrap();
 
     let index = open_writer(&lib.library.db_path()).unwrap();
-    let summary = export_all(&index, &lib.userdata.lock(), &lib.exporter).unwrap();
+    let summary = export_all(&index, &lib.userdata.lock(), &lib.exporter, None).unwrap();
     assert_eq!(
         (summary.files, summary.annotations, summary.removed),
         (2, 4, 1)
@@ -1178,4 +1194,114 @@ async fn bookmarks_carry_their_place_for_the_status_line() {
     // The book card has no status line: no places there.
     let card = server.ok(&format!("/book/{id}")).await;
     assert!(places(&card).is_empty());
+}
+
+/// Re-attaching moves the marks and positions of every profile in one group, the
+/// threshold counts all their quotes, and each profile's export follows; the cleanup
+/// removes and purges the group for all of them.
+#[tokio::test]
+async fn reattach_and_cleanup_cover_every_profile() {
+    use shelfgauge::annotations::store::{NewAnnotation, ReadingPosition};
+    use shelfgauge::profiles::{Role, session, store as profiles};
+
+    let lib = TestLibrary::new();
+    lib.write("book.fb2", &book("Two Readers", "Writer", 2, false, &[]));
+    lib.scan();
+    let id = lib.id_of("book.fb2");
+    let server = lib.server(|_| {});
+    let block = server.block_of(id, &para(1, 2)).await;
+    server.mark(id, &block, 0, 20, "owner's").await;
+    let old_key = lib.key_of(id);
+    let (anna, owner_token) = {
+        let user = lib.userdata.lock();
+        let anna = profiles::create(&user, "Anna", 1, Role::Reader, 0)
+            .unwrap()
+            .id;
+        let mark = store::for_book(&user, ProfileId::OWNER, &old_key).unwrap()[0].clone();
+        let snapshot = shelfgauge::annotations::BookSnapshot {
+            key: old_key.clone(),
+            id,
+            title: mark.book_title.clone(),
+            authors: mark.book_authors.clone(),
+        };
+        store::insert(
+            &user,
+            anna,
+            &NewAnnotation {
+                book: snapshot.clone(),
+                anchor: mark.anchor,
+                quote: mark.quote.clone(),
+                section_title: mark.section_title.clone(),
+                note: Some("Anna's".into()),
+            },
+            1,
+        )
+        .unwrap();
+        for profile in [ProfileId::OWNER, anna] {
+            store::save_position(
+                &user,
+                profile,
+                &ReadingPosition {
+                    book: snapshot.clone(),
+                    block: mark.anchor.start_block,
+                    suffix: mark.quote.text.clone(),
+                    progress: 300,
+                    updated_at: 5,
+                },
+            )
+            .unwrap();
+        }
+        (anna, session::create(&user, ProfileId::OWNER, 0).unwrap())
+    };
+    let anna_dir = lib.exporter.profile_dir(anna, "Anna");
+
+    // A new edition: a paragraph inserted at the start moves every block.
+    let edition = String::from_utf8(book("Two Readers", "Writer", 2, false, &[]))
+        .unwrap()
+        .replacen(
+            "<title><p>Chapter 1</p></title>",
+            "<title><p>Chapter 1</p></title><p>Preface added.</p>",
+            1,
+        );
+    lib.write("book.fb2", edition.as_bytes());
+    lib.scan();
+    let new_key = lib.key_of(id);
+    assert_ne!(new_key, old_key);
+    let request = Request::get(format!("/book/{id}"))
+        .header(header::HOST, "127.0.0.1:8742")
+        .header(
+            header::COOKIE,
+            format!("shelfgauge-profile={}", owner_token.as_str()),
+        )
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(server.send(request).await.status, StatusCode::OK);
+
+    let user = lib.userdata.lock();
+    assert!(store::for_key(&user, &old_key).unwrap().is_empty());
+    let moved = store::for_key(&user, &new_key).unwrap();
+    assert_eq!(moved.len(), 2);
+    assert!(moved.iter().all(|m| !m.anchor_lost));
+    let positions = store::positions_for_key(&user, &new_key).unwrap();
+    assert_eq!(positions.len(), 2, "both profiles' positions moved");
+    assert_eq!(positions[0].1.block, positions[1].1.block);
+    drop(user);
+    let anna_files: Vec<_> = std::fs::read_dir(&anna_dir).unwrap().collect();
+    assert_eq!(anna_files.len(), 1, "Anna's export follows the book");
+    assert_eq!(
+        lib.export_files()
+            .iter()
+            .filter(|f| f.ends_with(".md"))
+            .count(),
+        1
+    );
+
+    // The book goes: both profiles' rows are removed together, then purged.
+    std::fs::remove_file(lib.path("book.fb2")).unwrap();
+    lib.scan_only();
+    let index = open_writer(&lib.library.db_path()).unwrap();
+    let summary = cleanup_after_scan(&index, &lib.userdata.lock(), &lib.exporter, 0, 100).unwrap();
+    assert_eq!(summary.removed, 1);
+    assert_eq!(summary.purged, 4, "two marks and two positions");
+    assert_eq!(std::fs::read_dir(&anna_dir).unwrap().count(), 0);
 }

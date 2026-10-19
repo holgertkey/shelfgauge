@@ -9,6 +9,7 @@ use axum::response::Html;
 use super::{BookRow, Params, Row, render};
 use crate::storage::search::search as search_books;
 use crate::web::layout::{Layout, PageLink, Pager, SidebarMode};
+use crate::web::profile::CurrentProfile;
 use crate::web::sidebar::{self, Focus};
 use crate::web::{AppError, AppState};
 
@@ -26,6 +27,7 @@ struct SearchPage {
 /// The total is not counted: one extra result tells whether there is a next page.
 pub(crate) async fn search(
     State(state): State<AppState>,
+    current: CurrentProfile,
     headers: HeaderMap,
     query: Result<Query<Params>, QueryRejection>,
 ) -> Result<Html<String>, AppError> {
@@ -71,7 +73,7 @@ pub(crate) async fn search(
         format!("Search: {text}")
     };
     render(&SearchPage {
-        layout: Layout::new(&state, title, sidebar).with_query(&text),
+        layout: Layout::new(&state, &current, title, sidebar).with_query(&text),
         rows: books
             .into_iter()
             .map(|book| Row::Book(BookRow::new(urls, book)))

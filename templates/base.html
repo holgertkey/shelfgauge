@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="{{ layout.lang }}" class="no-js">
+<html lang="{{ layout.lang }}" class="no-js"{% include "partials/html_attrs.html" %}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -45,6 +45,7 @@
     <option value="navy">Navy</option>
     <option value="black">Black</option>
   </select>
+  {%- if layout.profile.admin %}
   <form class="rescan" action="{{ layout.urls.scan() }}" method="post">
     <button type="submit" class="icon-button" title="Rescan the library">
       <svg class="icon" aria-hidden="true"><use href="#i-rescan"></use></svg>
@@ -53,6 +54,28 @@
   <a class="icon-button settings-link" href="{{ layout.urls.settings() }}" title="Settings" aria-label="Settings">
     <svg class="icon" aria-hidden="true"><use href="#i-settings"></use></svg>
   </a>
+  {%- endif %}
+  {%- if layout.profile.several %}
+  <details class="profile-menu">
+    <summary class="avatar-button" title="{{ layout.profile.name }}" aria-label="Profile: {{ layout.profile.name }}">
+      <span class="avatar pc-{{ layout.profile.color }}" aria-hidden="true">{{ layout.profile.initials }}</span>
+    </summary>
+    <div class="menu">
+      <p class="menu-name">{{ layout.profile.name }}</p>
+      <a href="{{ layout.urls.my_profile() }}">My profile</a>
+      <form action="{{ layout.urls.leave_profile() }}" method="post">
+        <button type="submit">Switch profile</button>
+      </form>
+      {%- if layout.profile.admin %}
+      <a href="{{ layout.urls.settings() }}#profiles">Profiles</a>
+      <a class="narrow-only" href="{{ layout.urls.settings() }}">Settings</a>
+      <form class="rescan narrow-only" action="{{ layout.urls.scan() }}" method="post">
+        <button type="submit">Rescan the library</button>
+      </form>
+      {%- endif %}
+    </div>
+  </details>
+  {%- endif %}
 </header>
 <div id="scan-banner" class="banner" role="status" data-src="{{ layout.urls.scan_status() }}"{% if !layout.scan.running %} hidden{% endif %}>
   <span class="message">{{ layout.scan.message }}</span>

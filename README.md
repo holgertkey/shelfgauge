@@ -1,11 +1,11 @@
-# shelfgauge v0.14.0
+# shelfgauge v0.15.0
 
 A single-binary tool that indexes a folder tree of ebooks — FB2, EPUB, plain text and
 (optionally) HTML files, plain or inside `.zip` archives — into a local SQLite
 database and serves a browsable, searchable web library on `localhost`, with an
 in-browser reader.
 
-**Current version:** 0.14.0
+**Current version:** 0.15.0
 
 ## Status
 
@@ -42,7 +42,11 @@ cargo build --release
 shelfgauge [PATH]        # serve the library at PATH (default: current directory)
 shelfgauge scan [PATH]   # update the library index and exit
 shelfgauge errors [PATH] # list the books that could not be read, with the reason
-shelfgauge annotations export [PATH]   # rewrite the Markdown export of bookmarks and quotes
+shelfgauge annotations export [PATH] [--profile NAME]   # rewrite the Markdown export of bookmarks and quotes
+shelfgauge profiles list [PATH]                # the profiles: id, name, role, PIN or not
+shelfgauge profiles add NAME [PATH] [--admin]  # add a profile (a reader unless --admin)
+shelfgauge profiles remove NAME [PATH] [--yes] # delete a profile with its reading data
+shelfgauge profiles reset-pin NAME [PATH]      # remove a forgotten PIN
 ```
 
 Options: `--port <PORT>`, `--bind <ADDR>`, `--no-scan` (serve without scanning first),
@@ -166,8 +170,9 @@ WantedBy=multi-user.target
 - Themes: auto (system), light, dark, sepia, navy, black.
 - While reading, the **Aa** button (top bar) sets the theme, the font (sans or serif,
   from the fonts installed on your system), the text size, line spacing, column width
-  and alignment of the book text. Settings are kept per browser and apply at once,
-  keeping your place in the text; **Defaults** resets them.
+  and alignment of the book text. They apply at once, keeping your place in the text,
+  and are saved in your profile, so they are the same on every device (settings that an
+  older version kept in the browser are taken over once); **Defaults** resets them.
 - **Focus mode** (`f`, or the button next to **Aa**) hides the sidebar and the top bar;
   the top bar comes back when you scroll up or move the mouse to the top edge. A thin
   running head shows the author and title, and a status line the current chapter and
@@ -196,9 +201,12 @@ WantedBy=multi-user.target
   result, `←`/`→` previous/next part, `b` bookmark, `f` focus mode, `-`/`+`
   text size (`0` resets it); in the **Quote** dialog `Ctrl+Enter` saves, `Esc` cancels.
 - **Rescan** (top bar) updates the index while the library stays usable.
+- **My profile** (`/profile`): the theme and a reset of the reading settings; with
+  several profiles also the name, color, PIN and activity sharing (see
+  [Profiles](#profiles)).
 - **Settings** (the gear in the top bar, `/settings`): change the configuration from
-  the browser (see [Configuration](#configuration)); reset what this browser remembers
-  (theme, reading settings, the sidebar, focus mode); maintenance: rescan, **Re-read all
+  the browser (see [Configuration](#configuration)); manage the profiles; reset what
+  this browser remembers (the sidebar, focus mode); maintenance: rescan, **Re-read all
   books** (parses every book again, also unchanged ones, e.g. after an update of
   shelfgauge), clear the content cache, export the annotations, clear "Currently
   reading"; and facts about the library (version, paths, sizes, the last scan, unknown
@@ -238,6 +246,40 @@ WantedBy=multi-user.target
 
 Books whose XML has unbalanced tags (e.g. a stray `</section>`) are repaired when they
 are parsed; books that cannot be read are listed with the reason on their card.
+
+### Profiles
+
+Several people can share one library, each with their own bookmarks, quotes, reading
+places, "Currently reading" list, theme and reading settings; the books, the index and
+the configuration are shared.
+
+- With one profile nothing changes: there is no profile choice and no avatar. Your
+  data belongs to the *owner* profile ("Me" until you rename it on **My profile**).
+- An admin adds profiles under **Settings → Profiles** (name, color, role, optional
+  PIN). From then on each browser first asks **Who is reading?**; the choice is
+  remembered in the browser (a cookie) until **Switch profile** in the avatar menu at
+  the right of the top bar. The admin who adds the second profile stays signed in.
+- **Roles**: an *admin* changes the settings, rescans and manages profiles; a *reader*
+  reads and annotates and does not see the gear or **Rescan**. The owner is always an
+  admin and cannot be deleted.
+- **PIN** (optional, 4 to 8 digits): asked for when the profile is chosen. After 5 wrong
+  tries the profile is locked for 30 seconds, then longer. Each person can set, change
+  or remove their PIN on **My profile** (which also signs out their other devices); an
+  admin can remove a forgotten PIN of another profile, and
+  `shelfgauge profiles reset-pin NAME` removes the owner's. **A PIN is not a password
+  protection**: it keeps family members apart, but anyone with access to the computer
+  can read `.shelfgauge/userdata.sqlite`, and it does not make remote access safe (see
+  [Remote access](#remote-access)).
+- **Colors**: a profile's color is its avatar and the color of links and buttons.
+- **Family activity** (off by default): with **Show my reading to the other profiles**
+  on **My profile**, the others see the books you are reading and how far you are, on
+  the library page and on the book card. Bookmarks, quotes and notes are never shown
+  to others.
+- The library statistics show the reading figures and quotes of the current profile.
+- **Export**: the owner's Markdown files are in `.shelfgauge/annotations/`, those of
+  the other profiles in `.shelfgauge/annotations/profiles/<name> (<id>)/` (renamed with
+  the profile; kept when a profile is deleted). `shelfgauge annotations export` rewrites
+  all of them, `--profile NAME` one profile's.
 
 ## Configuration
 
@@ -282,7 +324,7 @@ as it is now. When changes take effect:
 ## Remote access
 
 shelfgauge listens on `127.0.0.1` and has no authentication, so it refuses a non-loopback
-`bind`. It accepts requests only for the host names `localhost`, `127.0.0.1` and `[::1]`
+`bind`; profiles and their PINs are not authentication and do not change this. It accepts requests only for the host names `localhost`, `127.0.0.1` and `[::1]`
 with its port, plus `server.allowed_hosts` (protection against DNS rebinding), and every
 state-changing request (rescan) must come with a matching `Origin` (CSRF protection).
 
@@ -326,4 +368,4 @@ MIT — see [LICENSE](LICENSE).
 
 ---
 
-_shelfgauge v0.14.0 — MIT License_
+_shelfgauge v0.15.0 — MIT License_

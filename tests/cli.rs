@@ -361,3 +361,108 @@ fn no_library_is_created_without_an_explicit_path() {
     assert!(run(dir.path(), &["scan"]).status.success());
     Server::start(dir.path(), &["-v", "--port", &free_port().to_string()]).stop();
 }
+
+/// Runs shelfgauge with `input` on stdin.
+fn run_with_input(dir: &Path, args: &[&str], input: &str) -> Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_shelfgauge"))
+        .args(args)
+        .current_dir(dir)
+        .env_remove("RUST_LOG")
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to run shelfgauge");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+#[test]
+fn profiles_list_add_remove_reset_pin_and_export() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("book.fb2"),
+        include_bytes!("fixtures/fb2/minimal.fb2"),
+    )
+    .unwrap();
+    assert!(run(dir.path(), &["scan", "."]).status.success());
+
+    let out = stdout(&run(dir.path(), &["profiles", "list"]));
+    assert_eq!(out.trim(), "1  Me  admin, owner  no PIN");
+    let output = run(dir.path(), &["profiles", "add", "Anna", "--admin"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(stdout(&output).contains("Added the profile Anna (admin)"));
+    assert!(
+        run(dir.path(), &["profiles", "add", "Ben"])
+            .status
+            .success()
+    );
+    let output = run(dir.path(), &["profiles", "add", "anna"]);
+    assert!(!output.status.success());
+    assert!(
+        stderr(&output).contains("already has this name"),
+        "{}",
+        stderr(&output)
+    );
+    let out = stdout(&run(dir.path(), &["profiles", "list", "."]));
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[1].trim(), "2  Anna  admin  no PIN", "{out}");
+    assert_eq!(lines[2].trim(), "3  Ben  reader  no PIN", "{out}");
+
+    // An unknown name lists the profiles.
+    let output = run(dir.path(), &["profiles", "remove", "Carl", "--yes"]);
+    assert!(!output.status.success());
+    let err = stderr(&output);
+    assert!(
+        err.contains("no profile named \"Carl\"") && err.contains("Me, Anna, Ben"),
+        "{err}"
+    );
+    // Removal asks first; anything but yes keeps the profile.
+    let output = run_with_input(dir.path(), &["profiles", "remove", "ben"], "n\n");
+    assert!(output.status.success());
+    assert!(stdout(&output).contains("Nothing was deleted."));
+    let output = run_with_input(dir.path(), &["profiles", "remove", "ben"], "y\n");
+    assert!(
+        stdout(&output).contains("Deleted the profile Ben."),
+        "{}",
+        stdout(&output)
+    );
+    let output = run(dir.path(), &["profiles", "remove", "Me", "--yes"]);
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("cannot be removed"));
+
+    // reset-pin removes a forgotten PIN.
+    {
+        let data = shelfgauge::annotations::store::UserData::open(
+            &dir.path().join(".shelfgauge/userdata.sqlite"),
+        )
+        .unwrap();
+        let hash = shelfgauge::profiles::pin::hash("2468").unwrap();
+        shelfgauge::profiles::store::set_pin_hash(
+            &data.lock(),
+            shelfgauge::profiles::ProfileId::OWNER,
+            Some(&hash),
+        )
+        .unwrap();
+    }
+    assert!(stdout(&run(dir.path(), &["profiles", "list"])).contains("Me  admin, owner  PIN"));
+    let output = run(dir.path(), &["profiles", "reset-pin", "me"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(stdout(&run(dir.path(), &["profiles", "list"])).contains("owner  no PIN"));
+
+    // Export of one profile goes to its folder.
+    let output = run(dir.path(), &["annotations", "export", "--profile", "anna"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(stdout(&output).contains("Anna (2)"), "{}", stdout(&output));
+    let output = run(
+        dir.path(),
+        &["annotations", "export", "--profile", "nobody"],
+    );
+    assert!(!output.status.success());
+}

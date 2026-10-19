@@ -4,7 +4,8 @@
 //! rejects, runs in a `request{id, method, route}` span and ends with one event that
 //! has its status and latency. `route` is the route template (`/book/{id}/read`), `-`
 //! when no route matched: never the raw path and never the query string, which may
-//! hold a search query. The id is a per-process counter, printed in hex; the internal
+//! hold a search query. `profile` is the request's profile id, recorded by the profile
+//! middleware when it is known (never the name). The id is a per-process counter, printed in hex; the internal
 //! error page shows it so a user can find the matching log lines.
 //!
 //! [`catch_panics`] is the innermost layer: a panic in a handler is answered with the
@@ -70,6 +71,7 @@ pub(crate) async fn trace_requests(
         id = %id,
         method = %req.method(),
         route = %route.unwrap_or("-"),
+        profile = tracing::field::Empty,
     );
     req.extensions_mut().insert(id);
     let started = Instant::now();

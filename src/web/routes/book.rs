@@ -7,12 +7,14 @@ use axum::response::{Html, Response};
 
 use super::annotations::{Lists, book_annotations, progress_label};
 use super::{date, parse_id, render};
+use crate::annotations::attach;
 use crate::cache::covers;
 use crate::format::fb2::genres::genre_label;
 use crate::storage::books::{BookStatus, book_by_id};
 use crate::storage::stats::BookFilter;
 use crate::web::error::PROTECTED;
 use crate::web::layout::{Layout, SidebarMode};
+use crate::web::profile::CurrentProfile;
 use crate::web::sidebar::{self, Focus};
 use crate::web::{AppError, AppState};
 
@@ -41,17 +43,22 @@ struct BookPage {
     annotation: Vec<String>,
     /// The bookmarks and marks (`None` for a book that cannot have any).
     lists: Option<Lists>,
+    /// The other sharing profiles reading this book.
+    family: Vec<super::annotations::FamilyReader>,
 }
 
 /// `GET /book/{id}`: the book card.
 pub(crate) async fn card(
     State(state): State<AppState>,
+    current: CurrentProfile,
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Html<String>, AppError> {
     let id = parse_id(&id)?;
     let mode = SidebarMode::from_headers(&headers);
-    let (book, file_present, sidebar, annotations) = state
+    let profile = current.id();
+    let several = current.several();
+    let (book, file_present, sidebar, annotations, family) = state
         .user_db(move |s, conn| {
             let book = book_by_id(conn, id)?.ok_or(AppError::NotFound)?;
             let file_present = book.status != BookStatus::Removed
@@ -64,11 +71,17 @@ pub(crate) async fn card(
             let sidebar = sidebar::build(conn, s, mode, &focus)?;
             // Re-attaching may load the book: only when its file is there.
             let annotations = if file_present || book.status == BookStatus::Removed {
-                book_annotations(s, conn, s.userdata(), &book, None)?
+                book_annotations(s, profile, conn, s.userdata(), &book, None)?
             } else {
                 None
             };
-            Ok((book, file_present, sidebar, annotations))
+            let family = match attach::snapshot(&book) {
+                Some(snapshot) if several && book.status != BookStatus::Removed => {
+                    super::annotations::also_reading(s, profile, &snapshot.key)?
+                }
+                _ => Vec::new(),
+            };
+            Ok((book, file_present, sidebar, annotations, family))
         })
         .await?;
 
@@ -133,8 +146,9 @@ pub(crate) async fn card(
     render(&BookPage {
         continue_href: position.map(|p| urls.read_at(book.id, p.block)),
         progress: position.map(|p| progress_label(p.progress)),
+        family,
         lists,
-        layout: Layout::new(&state, book.title.clone(), sidebar),
+        layout: Layout::new(&state, &current, book.title.clone(), sidebar),
         cover,
         authors: book
             .authors

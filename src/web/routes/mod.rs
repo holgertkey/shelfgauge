@@ -20,6 +20,7 @@ pub(crate) mod book;
 pub(crate) mod figures;
 pub(crate) mod find;
 pub(crate) mod library;
+pub(crate) mod profiles;
 pub(crate) mod read;
 pub(crate) mod scan;
 pub(crate) mod search;

@@ -341,6 +341,59 @@ impl Urls {
         self.path(&format!("/settings/{action}"))
     }
 
+    /// The profile picker, returning to `next` (a local path) after a choice.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use shelfgauge::web::Urls;
+    ///
+    /// let urls = Urls::new("/books");
+    /// assert_eq!(urls.profiles(None), "/books/profiles");
+    /// assert_eq!(urls.profiles(Some("/books/book/1?part=2")), "/books/profiles?next=/books/book/1%3Fpart%3D2");
+    /// ```
+    pub fn profiles(&self, next: Option<&str>) -> String {
+        match next {
+            Some(next) => format!(
+                "{}?next={}",
+                self.path("/profiles"),
+                utf8_percent_encode(next, QUERY_VALUE)
+            ),
+            None => self.path("/profiles"),
+        }
+    }
+
+    /// A profile action of the picker (`POST`): `select` or `pin` (also `GET`: the PIN
+    /// page).
+    pub fn profile_action(&self, id: impl std::borrow::Borrow<i64>, action: &str) -> String {
+        self.path(&format!("/profiles/{}/{action}", id.borrow()))
+    }
+
+    /// Ends the current profile session (`POST`).
+    pub fn leave_profile(&self) -> String {
+        self.path("/profiles/leave")
+    }
+
+    /// My profile (`GET`; `POST` saves it).
+    pub fn my_profile(&self) -> String {
+        self.path("/profile")
+    }
+
+    /// Saves the current profile's theme and reader settings (`POST`, JSON).
+    pub fn profile_settings(&self) -> String {
+        self.path("/profile/settings")
+    }
+
+    /// The admin's profile management: `POST` adds a profile.
+    pub fn manage_profiles(&self) -> String {
+        self.path("/settings/profiles")
+    }
+
+    /// An admin action on profile `id` (`POST`; `GET` for the delete confirmation).
+    pub fn manage_profile(&self, id: impl std::borrow::Borrow<i64>, action: &str) -> String {
+        self.path(&format!("/settings/profiles/{}/{action}", id.borrow()))
+    }
+
     /// The scan progress (JSON).
     pub fn scan_status(&self) -> String {
         self.path("/scan/status")

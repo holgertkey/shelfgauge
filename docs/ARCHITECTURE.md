@@ -223,10 +223,11 @@ Key design points to keep in mind when implementing:
     no recursion, so levels are rendered bottom-up into strings). Main area shows the
     book card; every page also works without JavaScript.
   - The sidebar mode is a cookie (the server must know it to render the sidebar;
-    cookies ignore the port, so libraries on one host share it); the theme is in
-    `localStorage`, applied by a small blocking script in `<head>` (the CSP allows no
-    inline scripts or styles, and all URLs reach the scripts through `data-` attributes
-    so `base_path` keeps working).
+    cookies ignore the port, so libraries on one host share it); the theme is stored in
+    the profile (0.15.0, see Profiles) and rendered on `<html>`; a small blocking script
+    in `<head>` applies the browser's own layout state (the CSP allows no inline scripts
+    or styles, and all URLs reach the scripts through `data-` attributes so `base_path`
+    keeps working).
   - Scan progress is polled (`/scan/status`, JSON), not streamed: an open SSE
     connection would hold up the graceful shutdown.
   - *Library page* (0.12.0): "Currently reading" as cards (cover, progress bar),
@@ -396,8 +397,9 @@ Code: `src/annotations/` (`text`, `anchor`, `store`, `export`, `attach`),
   main text in ten-thousandths (`BookText::share_before`: the part's bounds, chapter
   ticks, `data-progress` on bookmark list items) and resolves `?progress=` back to a
   block (`BookText::block_at_share`) with the `?at=` redirect. Settings are
-  whitelisted values in `localStorage`, applied by `theme.js` before the first paint as
-  `data-` attributes on `<html>` that `reader.css` maps to CSS custom properties. They affect only the book text on read
+  whitelisted values stored in the profile (0.15.0; `localStorage` before), rendered
+  by the server as `data-` attributes on `<html>` that `reader.css` maps to CSS custom
+  properties; `theme.js` applies changes at once and saves them to the profile. They affect only the book text on read
   pages and keep the block at the top of the screen in place. The reader is not a
   separate crate.
 
@@ -418,8 +420,11 @@ v1 binds to `127.0.0.1` only, but is built to allow remote access later:
   refuses to start.
 - Routes are split into a *read* group, an *admin* group (`POST /scan`, `GET`/`POST
   /settings`, the maintenance actions `POST /settings/reread`, `/settings/content-cache`
-  and `/settings/export`) and a *user writes* group (annotations, reading position,
-  `POST /reading/clear`), with an auth middleware slot; the admin group may stay
+  and `/settings/export`, profile management under `/settings/profiles`), a *user
+  writes* group (annotations, reading position, `POST /reading/clear`, the own
+  profile) and the profile *picker* (`/profiles`, which needs no profile), with an auth
+  middleware slot; the read, admin and write groups then resolve the request's profile,
+  and the admin group answers `403` to a reader (see Profiles); the admin group may stay
   localhost-only, user writes need authentication for remote access. The admin pages
   are the one place that shows absolute paths (the library root in *About*); error
   messages stay path-free.
@@ -467,7 +472,11 @@ daemon logs to journald or the container log), no metrics endpoint.
   HTML parser (`logging::catch_expected_panic`) are expected input failures: logged at
   `debug`, reported with the book.
 - **Never logged**: query strings and request bodies (search queries, notes, quotes,
-  form values); the headers `Authorization`, `Cookie`, `Set-Cookie`; in V2 device
+  form values); the headers `Authorization`, `Cookie`, `Set-Cookie`; profile names,
+  PINs, PIN hashes and session tokens (the `shelfgauge-profile` cookie) — profiles
+  appear only as `profile = N` (on the `request` span and in the events `profile
+  selected`, `profile added`, `pin rejected`, `pin locked`, `pin changed`, `profile
+  deleted`); `Profile` and the session `Token` have redacted `Debug` output; in V2 device
   tokens, pairing secrets, recovery codes, keys of any kind and publication ids. Books
   are named by id or library-relative path, never by absolute path at `info` and
   above. Untrusted values (`Host`/`Origin` headers, paths from archives, parser
@@ -476,36 +485,81 @@ daemon logs to journald or the container log), no metrics endpoint.
   uses structured fields (`book_id = id, error = %e`) instead of values in the
   message. `tests/logging.rs` checks the rule at trace level in both formats.
 
-## Profiles (planned, 0.15.0)
+## Profiles (0.15.0)
 
 Several people share one instance and one library; each *profile* has its own
 annotations, reading positions and "Currently reading" list, theme and reader
-settings. The index, scans, caches and `config.toml` stay shared.
+settings. The index, scans, caches and `config.toml` stay shared. A profile is a
+person, not authentication.
 
-- **Data**: `userdata.sqlite` schema v3 adds `profiles` (integer id, name, color,
-  role `admin`/`reader`, optional argon2id PIN hash, activity sharing, settings JSON)
-  and `profile_sessions` (hashed tokens), and a `profile_id` column on annotations and
-  reading positions. The migration creates the *owner* profile (id 1, always admin,
-  cannot be deleted) and moves all existing data to it. Re-attaching, the post-scan
-  cleanup and the retention stay keyed by content key across all profiles.
-- **One profile = no change**: with a single profile there is no picker, no avatar and
-  no cookie. With more, a request without a valid session (cookie
-  `shelfgauge-profile`) is sent to the picker `/profiles`; a profile may have a PIN
-  (4–8 digits, lockout after repeated failures) that its owner can remove at any time.
-- **Not authentication**: a profile separates people, a PIN prevents casual access;
-  neither counts for the bind rule (see Security). The planned password login will log
-  into a profile.
-- **Roles**: `admin` sees Settings, Rescan, maintenance and profile management;
-  `reader` gets `403` on the admin routes.
-- **Settings follow the person**: theme and reader settings are stored in the profile
-  and rendered as attributes of `<html>`; the sidebar state and focus mode stay in the
-  browser. The profile color sets the accent color.
-- **Family activity** is opt-in per profile and shares reading positions only, never
-  annotations.
+- **Data** (`profiles` module, `userdata.sqlite` schema v3): `profiles` (integer id,
+  name 1–32 characters unique ignoring case, color 0–7, role `admin`/`reader`,
+  optional argon2id PHC PIN hash, `share_activity`, settings JSON or NULL, sort,
+  created) and `profile_sessions` (SHA-256 of a 32-byte random token from `getrandom`,
+  profile, created, last seen — written at most hourly). `annotations` and
+  `reading_positions` were rebuilt with `profile_id … ON DELETE CASCADE`
+  (`reading_positions` keyed by `(profile_id, book_key)`). The migration creates the
+  *owner* (id 1, "Me", always admin, cannot be deleted) and moves all existing rows to
+  it. At most 16 profiles. Per-person store functions take a `ProfileId`; another
+  profile's annotation id is "not found". Groups, re-attaching (the threshold counts
+  all profiles' quotes; each profile's position moves with its own dismissal), the
+  post-scan cleanup and the retention work on content keys for all profiles.
+- **Request profile** (`web::profile`): a middleware on the read, admin and write
+  groups resolves a `CurrentProfile` extension — the owner while it is the only
+  profile (no cookie, no picker, no avatar), else the session in the cookie
+  `shelfgauge-profile` (HttpOnly, SameSite=Strict, `Path` = base path, 400 days,
+  `Secure` behind an HTTPS proxy on an `allowed_hosts` name). Without a session a page
+  `GET` gets `303` to `/profiles?next=<local path>`; fragments (sidebar, scan status,
+  annotation lists, find, covers, images — told apart by route) and every `POST` get
+  `401`, and the scripts reload the page. `next` must be a local path under the base
+  path. The extension is also put on the response, so error pages use the profile's
+  theme and role; error pages of routes without the middleware (unknown paths, the
+  picker) resolve the cookie's profile themselves. A second middleware answers `403` to a reader on the admin routes (built from
+  one table that the role test iterates).
+- **Picker and PIN**: `/profiles` (a page without the sidebar; tiles are buttons of
+  POST forms), `POST /profiles/{id}/select` and `GET`/`POST /profiles/{id}/pin`. Every
+  choice starts a new session (no fixation) and ends the sessions in the request's
+  cookies. A PIN is 4–8 digits, hashed with `argon2` defaults on a blocking thread,
+  one run at a time and outside the user-data lock; after 5 tries without the right
+  PIN (malformed ones count) the profile is locked for 30 s, doubling to 15 min, in
+  memory (`PinLimiter`). A try is counted before the hash is checked, so parallel
+  requests get no more guesses and a locked profile costs no hashing; `422` with the
+  tries left, `429` with the wait. Setting, changing or removing a PIN ends the profile's
+  other sessions and renews the current token; an admin can remove another profile's
+  PIN, `shelfgauge profiles reset-pin` the owner's.
+- **Not authentication**: `Auth` and the bind rule are unchanged; a PIN never makes a
+  non-loopback bind allowed. The planned password login will log into a profile.
+- **Roles**: `admin` sees Settings, Rescan, maintenance and Settings → Profiles (add,
+  rename, recolor, role, remove PIN, delete with typed-name confirmation and "Export
+  first"); `reader` sees neither the gear nor Rescan. Everyone edits their own name,
+  color, PIN, activity sharing and settings on My profile (`/profile`). Adding the
+  second profile starts an owner session in the admin's browser.
+- **Look**: with two or more profiles an avatar (initials on the profile color) with a
+  `<details>` menu (My profile, Switch profile, Profiles for admins; on narrow screens
+  also Settings and Rescan, which leave the bar). `data-pcolor` on `<html>` sets
+  `--accent` and `--on-accent` from a palette of 8 colors defined for each theme;
+  color 0 is each theme's own accent, so one user sees no change. Every color has at
+  least 4.5:1 against its theme's background and against the text on it
+  (`.debug/TESTS/pcolor_contrast.py`).
+- **Settings follow the person**: theme and reader settings (whitelist
+  `profiles::SETTINGS`, equal to `theme.js`'s `OPTIONS` through
+  `tests/fixtures/profiles/settings.json`) are rendered as `data-theme`/`data-r*` on
+  `<html>`; `theme.js` applies a change at once and saves it with `POST
+  /profile/settings` (JSON, debounced, `keepalive`; a failure shows a notice). Values
+  older versions kept in `localStorage` are adopted once: while the owner's settings
+  are NULL the page carries `data-adopt`. Sidebar state and focus mode stay in the
+  browser (*This browser* on the Settings page).
+- **Family activity**: opt-in per profile (off by default); the others see its
+  "Currently reading" books as "Family is reading" on the library page and "Also
+  reading" on the book card. Positions only, never annotations. Statistics show the
+  current profile's reading ("Your reading").
 - **Export**: the owner's Markdown files stay in `.shelfgauge/annotations/`, other
-  profiles write to `.shelfgauge/annotations/profiles/<name> (<id>)/`.
-- **Logging**: profiles appear by id only (`profile = N` on the request span); names,
-  PINs and session tokens are never logged.
+  profiles write to `.shelfgauge/annotations/profiles/<name> (<id>)/` (renamed with the
+  profile, kept when it is deleted; the owner's stale-file sweep never descends into
+  `profiles/`).
+- **CLI**: `shelfgauge profiles list | add <name> [--admin] | remove <name> [--yes] |
+  reset-pin <name>`; `shelfgauge annotations export [--profile <name>]`. Unknown names
+  are errors that list the profiles.
 
 ## V2: hub — books on mobile devices (designed, not built)
 

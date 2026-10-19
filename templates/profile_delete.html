@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block main %}
+<h1>Delete the profile {{ profile.name }}?</h1>
+<p>Its bookmarks, quotes, notes, reading places and settings are deleted, and its devices are signed out. This cannot be undone.</p>
+<p>Its Markdown export is kept in <code>{{ folder }}</code>.</p>
+{%- if let Some(n) = exported %}
+<div class="notice settings-notice ok" role="status"><span>Exported {{ n }} annotations to {{ folder }}.</span></div>
+{%- endif %}
+<div class="actions">
+  <div class="action">
+    <form action="{{ export_action }}" method="post">
+      <button type="submit">Export first</button>
+    </form>
+    <p class="hint">Writes the profile’s bookmarks, quotes and notes as Markdown files.</p>
+  </div>
+</div>
+<form class="settings-form" action="{{ action }}" method="post">
+  <div class="field{% if mismatch %} invalid{% endif %}">
+    <label for="confirm-name">Type the profile’s name to confirm</label>
+    <input type="text" id="confirm-name" name="name" autocomplete="off" required{% if mismatch %} aria-invalid="true" aria-describedby="confirm-error"{% endif %}>
+    {%- if mismatch %}
+    <p class="field-error" id="confirm-error">The name does not match.</p>
+    {%- endif %}
+  </div>
+  <div class="form-actions">
+    <button type="submit" class="danger">Delete</button>
+    <a href="{{ layout.urls.settings() }}#profiles">Cancel</a>
+  </div>
+</form>
+{%- endblock %}

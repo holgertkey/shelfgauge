@@ -1,0 +1,9 @@
+{
+  "theme": ["", "light", "dark", "sepia", "navy", "black"],
+  "font": ["sans", "serif"],
+  "size": ["3", "0", "1", "2", "4", "5", "6", "7"],
+  "leading": ["normal", "tight", "loose"],
+  "width": ["medium", "narrow", "wide", "full"],
+  "align": ["left", "justify"],
+  "status": ["on", "off"]
+}

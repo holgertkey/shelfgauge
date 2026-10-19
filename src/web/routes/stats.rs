@@ -11,12 +11,14 @@ use super::figures::{count, duration, file_size, group_digits, width_class};
 use super::{BookRow, Params, Row, date_time, render};
 use crate::annotations::store;
 use crate::format::fb2::genres::genre_label;
+use crate::profiles::ProfileId;
 use crate::storage::books::live_books_by_key;
 use crate::storage::stats::{
     BookFilter, DuplicateKind, LibraryStats, Share, count_books_where, duplicate_copies,
     duplicate_groups, list_books,
 };
 use crate::web::layout::{Layout, PageLink, Pager, Paging, SidebarMode};
+use crate::web::profile::CurrentProfile;
 use crate::web::sidebar::{self, Focus};
 use crate::web::{AppError, AppState, Urls};
 
@@ -74,6 +76,7 @@ struct StatsPage {
 /// `GET /stats`: the library statistics.
 pub(crate) async fn stats(
     State(state): State<AppState>,
+    current: CurrentProfile,
     headers: HeaderMap,
 ) -> Result<Html<String>, AppError> {
     let mode = SidebarMode::from_headers(&headers);
@@ -86,10 +89,13 @@ pub(crate) async fn stats(
             ))
         })
         .await?;
-    let (reading, quotes) = state.user_db(reading_and_quotes).await?;
+    let profile = current.id();
+    let (reading, quotes) = state
+        .user_db(move |state, index| reading_and_quotes(state, profile, index))
+        .await?;
     let urls = state.urls();
     render(&StatsPage {
-        layout: Layout::new(&state, "Library statistics", sidebar),
+        layout: Layout::new(&state, &current, "Library statistics", sidebar),
         cards: cards(urls, &stats),
         charts: charts(urls, &stats),
         health: health(urls, &stats),
@@ -299,18 +305,20 @@ fn health(urls: &Urls, stats: &LibraryStats) -> Vec<Fact> {
     facts
 }
 
-/// The reading figures and the latest quotes of books in the library.
+/// The reading figures and the latest quotes of `profile` in books in the library
+/// (computed per request: the statistics cache holds nothing per profile).
 fn reading_and_quotes(
     state: &AppState,
+    profile: ProfileId,
     index: &Connection,
 ) -> Result<(Vec<Fact>, Vec<QuoteLine>), AppError> {
     let (progress, counts, latest) = {
         let user = state.userdata().lock();
         (
-            store::progress_by_book(&user)?,
-            store::counts_by_book(&user)?,
+            store::progress_by_book(&user, profile)?,
+            store::counts_by_book(&user, profile)?,
             // More than shown: some may be of books no longer in the library.
-            store::latest_marks(&user, 50)?,
+            store::latest_marks(&user, profile, 50)?,
         )
     };
     let in_library = |key: &[u8]| -> Result<Option<i64>, AppError> {
@@ -414,6 +422,7 @@ fn filter(params: &Params) -> Option<BookFilter> {
 /// behind a figure of the statistics, by title.
 pub(crate) async fn books(
     State(state): State<AppState>,
+    current: CurrentProfile,
     headers: HeaderMap,
     query: Result<Query<Params>, QueryRejection>,
 ) -> Result<Html<String>, AppError> {
@@ -445,7 +454,7 @@ pub(crate) async fn books(
         BookFilter::WithoutAuthor => "Books without an author".to_owned(),
     };
     render(&ListPage {
-        layout: Layout::new(&state, heading.clone(), sidebar),
+        layout: Layout::new(&state, &current, heading.clone(), sidebar),
         heading,
         total: count(total, "book", "books"),
         rows: books
@@ -487,6 +496,7 @@ struct DuplicatesPage {
 /// duplicates. Reported only: nothing is merged or hidden.
 pub(crate) async fn duplicates(
     State(state): State<AppState>,
+    current: CurrentProfile,
     headers: HeaderMap,
     query: Result<Query<Params>, QueryRejection>,
 ) -> Result<Html<String>, AppError> {
@@ -539,7 +549,7 @@ pub(crate) async fn duplicates(
         ),
     };
     render(&DuplicatesPage {
-        layout: Layout::new(&state, "Duplicates", sidebar),
+        layout: Layout::new(&state, &current, "Duplicates", sidebar),
         probable,
         identical_href: urls.duplicates(false, 1),
         probable_href: urls.duplicates(true, 1),

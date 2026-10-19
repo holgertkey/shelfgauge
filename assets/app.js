@@ -4,8 +4,6 @@
 // respected. Fetched fragments are our own server-rendered HTML.
 "use strict";
 
-const THEMES = ["", "light", "dark", "sepia", "navy", "black"];
-const THEME_KEY = "shelfgauge-theme";
 const SIDEBAR_KEY = "shelfgauge-sidebar-hidden";
 const SCROLL_KEY = "shelfgauge-sidebar-scroll";
 const MODE_COOKIE = "shelfgauge-sidebar";
@@ -33,8 +31,17 @@ function storageSet(storage, key, value) {
   }
 }
 
+// Without a profile (the session ended, or another profile was chosen elsewhere) the
+// server answers 401: reloading the page leads to the profile choice.
+function reloadIfSignedOut(response) {
+  if (response.status === 401) {
+    window.location.reload();
+  }
+}
+
 async function fetchFragment(url) {
   const response = await fetch(url, { headers: { Accept: "text/html" } });
+  reloadIfSignedOut(response);
   if (!response.ok) {
     throw new Error(`${url}: ${response.status}`);
   }
@@ -43,20 +50,15 @@ async function fetchFragment(url) {
 
 // ---------- Theme ----------
 
+// The theme is part of the profile's settings (theme.js saves it).
 function applyTheme(theme) {
-  const root = document.documentElement;
-  if (theme) {
-    root.dataset.theme = theme;
-  } else {
-    delete root.dataset.theme;
-  }
-  storageSet(localStorage, THEME_KEY, theme || null);
+  const value = shelfgaugeReader.setTheme(theme);
   const select = document.querySelector(".theme-select");
   if (select) {
-    select.value = theme;
+    select.value = value;
   }
   // The reader's settings panel shows the theme too.
-  document.dispatchEvent(new CustomEvent("shelfgauge:theme", { detail: theme || "" }));
+  document.dispatchEvent(new CustomEvent("shelfgauge:theme", { detail: value }));
 }
 
 function setupTheme() {
@@ -64,13 +66,70 @@ function setupTheme() {
   if (!select) {
     return;
   }
-  select.value = storageGet(localStorage, THEME_KEY) || "";
+  select.value = document.documentElement.dataset.theme || "";
   select.addEventListener("change", () => applyTheme(select.value));
 }
 
 function nextTheme() {
+  const themes = shelfgaugeReader.THEMES;
   const current = document.documentElement.dataset.theme || "";
-  applyTheme(THEMES[(THEMES.indexOf(current) + 1) % THEMES.length]);
+  applyTheme(themes[(themes.indexOf(current) + 1) % themes.length]);
+}
+
+// A setting that could not be saved: a short notice at the bottom of the page.
+let noticeTimer = null;
+function showNotice(message) {
+  let el = document.querySelector(".save-notice");
+  if (!el) {
+    el = document.createElement("div");
+    el.className = "save-notice";
+    el.setAttribute("role", "status");
+    document.body.append(el);
+  }
+  el.textContent = message;
+  el.hidden = false;
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => {
+    el.hidden = true;
+  }, 4000);
+}
+
+function setupSaveNotice() {
+  document.addEventListener("shelfgauge:save-failed", () => {
+    showNotice("The setting could not be saved to your profile.");
+  });
+}
+
+// ---------- Profile menu ----------
+
+// The avatar menu is a <details>: it works without JS; here Escape and a click
+// elsewhere close it.
+function setupProfileMenu() {
+  const menu = document.querySelector(".profile-menu");
+  if (!menu) {
+    return;
+  }
+  const summary = menu.querySelector("summary");
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && menu.open) {
+      menu.open = false;
+      summary.focus();
+      event.stopPropagation();
+    }
+  }, true);
+  document.addEventListener("click", (event) => {
+    if (menu.open && !menu.contains(event.target)) {
+      menu.open = false;
+    }
+  });
+  menu.addEventListener("toggle", () => {
+    if (menu.open) {
+      const first = menu.querySelector(".menu a, .menu button");
+      if (first) {
+        first.focus();
+      }
+    }
+  });
 }
 
 // ---------- Sidebar visibility ----------
@@ -377,6 +436,7 @@ function setupScan() {
         const response = await fetch(banner.dataset.src, {
           headers: { Accept: "application/json" },
         });
+        reloadIfSignedOut(response);
         if (!response.ok) {
           break;
         }
@@ -404,6 +464,7 @@ function setupScan() {
           method: "POST",
           headers: { Accept: "application/json" },
         });
+        reloadIfSignedOut(response);
         if (!response.ok) {
           throw new Error(`rescan: ${response.status}`);
         }
@@ -423,34 +484,6 @@ function setupScan() {
 // ---------- Settings page: this browser ----------
 
 const FOCUS_KEY = "shelfgauge-focus";
-const READER_KEY = "shelfgauge-reader";
-
-// What the reader settings differ in from the defaults, e.g. "serif font, size 5".
-function readerSummary() {
-  let saved = {};
-  try {
-    saved = JSON.parse(storageGet(localStorage, READER_KEY)) || {};
-  } catch (e) {
-    saved = {};
-  }
-  const labels = {
-    font: (v) => `${v} font`,
-    size: (v) => `text size ${v}`,
-    leading: (v) => `${v} line spacing`,
-    width: (v) => `${v} text width`,
-    align: (v) => (v === "justify" ? "justified" : "left-aligned"),
-    status: (v) => `status line ${v}`,
-  };
-  const parts = [];
-  for (const name of Object.keys(labels)) {
-    const options = shelfgaugeReader.OPTIONS[name];
-    const value = String(saved[name]);
-    if (options.includes(value) && value !== options[0]) {
-      parts.push(labels[name](value));
-    }
-  }
-  return parts.length ? parts.join(", ") : "default";
-}
 
 function setupBrowserSettings() {
   const section = document.querySelector(".browser-settings");
@@ -461,26 +494,6 @@ function setupBrowserSettings() {
   const say = (text) => {
     done.textContent = text;
   };
-
-  const theme = section.querySelector(".theme-choice");
-  theme.value = storageGet(localStorage, THEME_KEY) || "";
-  theme.addEventListener("change", () => applyTheme(theme.value));
-  document.addEventListener("shelfgauge:theme", (event) => {
-    theme.value = event.detail;
-  });
-
-  const summary = section.querySelector(".reader-summary");
-  const resetReader = section.querySelector(".reset-reader");
-  const showReader = () => {
-    summary.textContent = readerSummary();
-    resetReader.disabled = summary.textContent === "default";
-  };
-  showReader();
-  resetReader.addEventListener("click", () => {
-    shelfgaugeReader.save({});
-    showReader();
-    say("The reading settings are back to their defaults.");
-  });
 
   section.querySelector(".reset-sidebar").addEventListener("click", () => {
     storageSet(localStorage, SIDEBAR_KEY, null);
@@ -585,6 +598,8 @@ function setupKeys() {
 
 document.addEventListener("DOMContentLoaded", () => {
   setupTheme();
+  setupSaveNotice();
+  setupProfileMenu();
   setupSidebarToggle();
   setupResizer();
   const sidebar = document.getElementById("sidebar");

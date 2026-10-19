@@ -46,6 +46,28 @@
   </ul>
 </section>
 {%- endif %}
+{%- if !family.is_empty() %}
+<section class="home-section">
+  <h2>Family is reading</h2>
+  <ul class="reading-cards">
+    {%- for item in family %}
+    <li class="reading-card">
+      <a class="thumb" href="{{ item.card_href }}" tabindex="-1" aria-hidden="true">
+        {%- if let Some(cover) = item.cover %}<img src="{{ cover }}" alt="" loading="lazy">{% else %}<span class="thumb-placeholder">{{ item.title }}</span>{% endif -%}
+      </a>
+      <div class="reading-book">
+        <a class="title" href="{{ item.card_href }}">{{ item.title }}</a>
+        {%- if !item.authors.is_empty() %}
+        <div class="authors">{{ item.authors }}</div>
+        {%- endif %}
+        <div class="progress-bar" aria-hidden="true"><span class="{{ item.bar }}"></span></div>
+        <div class="reading-meta muted"><span class="family-reader"><span class="avatar pc-{{ item.reader.color }}" aria-hidden="true">{{ item.reader.initials }}</span>{{ item.reader.name }}</span> · {{ item.reader.progress }}</div>
+      </div>
+    </li>
+    {%- endfor %}
+  </ul>
+</section>
+{%- endif %}
 {%- if !recent.is_empty() %}
 <section class="home-section">
   <h2>Recently added</h2>

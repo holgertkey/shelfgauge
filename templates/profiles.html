@@ -1,0 +1,20 @@
+{% extends "minimal.html" %}
+{% block main %}
+<h1>Who is reading?</h1>
+<ul class="profile-tiles">
+  {%- for profile in profiles %}
+  <li>
+    <form action="{{ layout.urls.profile_action(profile.id, "select") }}" method="post">
+      <input type="hidden" name="next" value="{{ next }}">
+      <button type="submit" class="profile-tile">
+        <span class="avatar avatar-large pc-{{ profile.color }}" aria-hidden="true">{{ profile.initials }}
+          {%- if profile.has_pin %}<svg class="lock-badge" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2" fill="currentColor"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2.5"/></svg>{% endif -%}
+        </span>
+        <span class="tile-name">{{ profile.name }}{% if profile.has_pin %}<span class="visually-hidden"> (PIN)</span>{% endif %}</span>
+      </button>
+    </form>
+  </li>
+  {%- endfor %}
+</ul>
+<p class="muted picker-note">Profiles keep each person’s bookmarks, quotes, places and settings apart. They are not a password protection.</p>
+{%- endblock %}

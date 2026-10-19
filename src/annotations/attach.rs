@@ -15,6 +15,10 @@
 //!   title + authors) is soft-deleted and its export file removed; it is restored if
 //!   the book comes back, and purged after the retention period. The export files of
 //!   the other groups are brought up to date (renamed books, new orphans).
+//!
+//! Groups span all profiles: one content key is one group, whoever made the rows.
+//! Every profile's export files are kept in its own folder (see
+//! [`Exporter::for_profile`]).
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -27,6 +31,7 @@ use super::store::{self, Group};
 use super::text::BookText;
 use super::{BookSnapshot, now};
 use crate::format::model::BlockId;
+use crate::profiles::{ProfileId, store as profile_store};
 use crate::storage::books::{
     BookDetails, BookStatus, book_by_id, live_books_by_key, live_books_by_title,
 };
@@ -98,15 +103,42 @@ fn export_book(
     })
 }
 
-/// Rewrites the export file of content key `key` from the database (or removes it if
-/// the book has no live annotations); returns the written path.
+/// The profiles whose export files are kept: `(id, name)`.
+fn export_profiles(user: &Connection) -> Result<Vec<(ProfileId, String)>, AttachError> {
+    Ok(profile_store::list(user)?
+        .into_iter()
+        .map(|p| (p.id, p.name))
+        .collect())
+}
+
+/// Rewrites the export files of content key `key` from the database, one per profile
+/// (or removes a profile's file if it has no live annotations in the book); returns
+/// the written paths.
 pub fn export_key(
     index: &Connection,
     user: &Connection,
     exporter: &Exporter,
     key: &[u8],
+) -> Result<Vec<PathBuf>, AttachError> {
+    let mut written = Vec::new();
+    for (id, name) in export_profiles(user)? {
+        let exporter = exporter.for_profile(id, &name);
+        if let Some(path) = export_profile_key(index, user, &exporter, id, key)? {
+            written.push(path);
+        }
+    }
+    Ok(written)
+}
+
+/// Rewrites the export file of `profile` for content key `key` (or removes it).
+fn export_profile_key(
+    index: &Connection,
+    user: &Connection,
+    exporter: &Exporter,
+    profile: ProfileId,
+    key: &[u8],
 ) -> Result<Option<PathBuf>, AttachError> {
-    let annotations = store::for_book(user, key)?;
+    let annotations = store::for_book(user, profile, key)?;
     let Some(latest) = annotations.iter().max_by_key(|a| a.updated_at) else {
         exporter.remove(key)?;
         return Ok(None);
@@ -122,6 +154,14 @@ pub fn export_key(
     Ok(exporter.write(&book, &annotations)?)
 }
 
+/// Removes the export files of content key `key` of every profile.
+fn remove_exports(user: &Connection, exporter: &Exporter, key: &[u8]) -> Result<(), AttachError> {
+    for (id, name) in export_profiles(user)? {
+        exporter.for_profile(id, &name).remove(key)?;
+    }
+    Ok(())
+}
+
 /// What [`export_all`] did.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ExportSummary {
@@ -133,27 +173,35 @@ pub struct ExportSummary {
     pub removed: usize,
 }
 
-/// Rewrites every export file and removes stale generated files
-/// (`shelfgauge annotations export`).
+/// Rewrites every export file of every profile, or only of `only`, and removes stale
+/// generated files from their folders (`shelfgauge annotations export`).
 pub fn export_all(
     index: &Connection,
     user: &Connection,
     exporter: &Exporter,
+    only: Option<ProfileId>,
 ) -> Result<ExportSummary, AttachError> {
     let mut summary = ExportSummary::default();
-    let mut keep = HashSet::new();
-    for group in store::groups(user)? {
-        if group.removed_at.is_some() {
+    let groups = store::groups(user)?;
+    for (id, name) in export_profiles(user)? {
+        if only.is_some_and(|only| only != id) {
             continue;
         }
-        let count = store::for_book(user, &group.key)?.len();
-        if let Some(path) = export_key(index, user, exporter, &group.key)? {
-            summary.files += 1;
-            summary.annotations += count;
-            keep.insert(path);
+        let exporter = exporter.for_profile(id, &name);
+        let mut keep = HashSet::new();
+        for group in &groups {
+            if group.removed_at.is_some() {
+                continue;
+            }
+            let count = store::for_book(user, id, &group.key)?.len();
+            if let Some(path) = export_profile_key(index, user, &exporter, id, &group.key)? {
+                summary.files += 1;
+                summary.annotations += count;
+                keep.insert(path);
+            }
         }
+        summary.removed += exporter.remove_stale(&keep)?;
     }
-    summary.removed = exporter.remove_stale(&keep)?;
     Ok(summary)
 }
 
@@ -198,18 +246,23 @@ pub fn reattach(
 ) -> Result<usize, AttachError> {
     let mut moved = 0;
     for group in candidates {
-        let annotations = store::for_book(user, &group.key)?;
+        // The quotes of all profiles count towards the threshold: the file moved for
+        // everyone.
+        let annotations = store::for_key(user, &group.key)?;
         let found: Vec<Option<Anchor>> = annotations
             .iter()
             .map(|a| find(text, &a.quote, a.anchor.start_block))
             .collect();
         let hits = found.iter().filter(|f| f.is_some()).count();
-        let position = store::position(user, &group.key)?;
-        let position_found = position
-            .as_ref()
-            .and_then(|p| find(text, &bookmark_quote(&p.suffix), p.block));
+        let positions: Vec<_> = store::positions_for_key(user, &group.key)?
+            .into_iter()
+            .map(|(profile, p)| {
+                let found = find(text, &bookmark_quote(&p.suffix), p.block);
+                (profile, p, found)
+            })
+            .collect();
         let enough = if annotations.is_empty() {
-            position_found.is_some()
+            positions.iter().any(|(_, _, found)| found.is_some())
         } else {
             hits * 100 >= annotations.len() * REATTACH_THRESHOLD_PERCENT
         };
@@ -252,8 +305,8 @@ pub fn reattach(
                 at,
             )?;
         }
-        if let Some(old) = &position {
-            let block = position_found.map(|a| a.start_block).unwrap_or_else(|| {
+        for (profile, old, found) in &positions {
+            let block = found.map(|a| a.start_block).unwrap_or_else(|| {
                 if text.is_leaf(old.block) {
                     old.block
                 } else {
@@ -261,7 +314,7 @@ pub fn reattach(
                 }
             });
             let progress = text.progress(block).unwrap_or(0);
-            store::move_position(&tx, &group.key, book, block, progress)?;
+            store::move_position(&tx, *profile, &group.key, book, block, progress)?;
         }
         tx.commit()?;
         tracing::info!(
@@ -270,7 +323,7 @@ pub fn reattach(
             not_found = annotations.len() - hits,
             "re-attached annotations"
         );
-        exporter.remove(&group.key)?;
+        remove_exports(user, exporter, &group.key)?;
         moved += 1;
     }
     if moved > 0 {
@@ -335,7 +388,7 @@ pub fn cleanup_after_scan(
             }
             (false, false) => {
                 store::remove_group(user, &group.key, now)?;
-                exporter.remove(&group.key)?;
+                remove_exports(user, exporter, &group.key)?;
                 summary.removed += 1;
             }
             // Present: the book's metadata may have changed, or it became an orphan

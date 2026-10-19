@@ -16,10 +16,11 @@ use shelfgauge::config::{Config, ConfigOverrides, LiveConfig};
 use shelfgauge::container::ReadLimits;
 use shelfgauge::format::PARSER_STACK_SIZE;
 use shelfgauge::library::Library;
+use shelfgauge::profiles::{Profile, Role, store as profile_store};
 use shelfgauge::scanner::{BackgroundScan, ScanPhase, ScanProgress, Scanner};
 use shelfgauge::web;
 
-use cli::{Cli, Mode};
+use cli::{Cli, Mode, ProfilesAction};
 
 /// Read connections for the web handlers.
 const READ_POOL_SIZE: u32 = 4;
@@ -61,7 +62,10 @@ fn main() -> anyhow::Result<()> {
     match invocation.mode {
         Mode::Scan => scan(&library, &config),
         Mode::Serve { scan } => serve(library, &config, &invocation.overrides, scan),
-        Mode::ExportAnnotations => export_annotations(&library, &config),
+        Mode::ExportAnnotations { profile } => {
+            export_annotations(&library, &config, profile.as_deref())
+        }
+        Mode::Profiles(action) => profiles(&library, action),
         Mode::Errors => errors(&library),
     }
 }
@@ -75,20 +79,119 @@ fn exporter(library: &Library, config: &Config) -> Exporter {
     )
 }
 
-/// `shelfgauge annotations export`: rewrites every export file and removes stale ones.
-fn export_annotations(library: &Library, config: &Config) -> anyhow::Result<()> {
+/// `shelfgauge annotations export`: rewrites every export file (of every profile, or
+/// of `profile`) and removes stale ones.
+fn export_annotations(
+    library: &Library,
+    config: &Config,
+    profile: Option<&str>,
+) -> anyhow::Result<()> {
     let index = shelfgauge::storage::open_writer(&library.db_path())
         .with_context(|| format!("cannot open the index {}", library.db_path().display()))?;
     let user = open_userdata(library)?;
-    let summary = attach::export_all(&index, &user.lock(), &exporter(library, config))?;
+    let user = user.lock();
+    let exporter = exporter(library, config);
+    let (only, dir) = match profile {
+        Some(name) => {
+            let profile = find_profile(&user, name)?;
+            (
+                Some(profile.id),
+                exporter.profile_dir(profile.id, &profile.name),
+            )
+        }
+        None => (None, library.annotations_dir()),
+    };
+    let summary = attach::export_all(&index, &user, &exporter, only)?;
     println!(
         "Exported {} annotations of {} books to {}; removed {} stale files.",
         summary.annotations,
         summary.files,
-        library.annotations_dir().display(),
+        dir.display(),
         summary.removed
     );
     Ok(())
+}
+
+/// The profile named `name`; an unknown name is an error that lists the profiles.
+fn find_profile(user: &rusqlite::Connection, name: &str) -> anyhow::Result<Profile> {
+    if let Some(profile) = profile_store::by_name(user, name)? {
+        return Ok(profile);
+    }
+    let names: Vec<String> = profile_store::list(user)?
+        .into_iter()
+        .map(|p| p.name)
+        .collect();
+    anyhow::bail!(
+        "there is no profile named {name:?}; the profiles are: {}",
+        names.join(", ")
+    )
+}
+
+/// `shelfgauge profiles …`.
+fn profiles(library: &Library, action: ProfilesAction) -> anyhow::Result<()> {
+    let user = open_userdata(library)?;
+    let conn = user.lock();
+    match action {
+        ProfilesAction::List => {
+            for profile in profile_store::list(&conn)? {
+                println!(
+                    "{:>3}  {}  {}{}  {}",
+                    profile.id,
+                    profile.name,
+                    profile.role.as_str(),
+                    if profile.id.is_owner() { ", owner" } else { "" },
+                    if profile.has_pin { "PIN" } else { "no PIN" }
+                );
+            }
+        }
+        ProfilesAction::Add { name, admin } => {
+            let role = if admin { Role::Admin } else { Role::Reader };
+            let profile =
+                profile_store::create(&conn, &name, 0, role, shelfgauge::annotations::now())?;
+            println!(
+                "Added the profile {} ({}).",
+                profile.name,
+                profile.role.as_str()
+            );
+        }
+        ProfilesAction::Remove { name, yes } => {
+            let profile = find_profile(&conn, &name)?;
+            if profile.id.is_owner() {
+                anyhow::bail!("the owner profile {} cannot be removed", profile.name);
+            }
+            if !yes
+                && !confirm(&format!(
+                    "Delete the profile {} with its bookmarks, quotes and reading places? \
+                 Its Markdown export is kept. [y/N] ",
+                    profile.name
+                ))?
+            {
+                println!("Nothing was deleted.");
+                return Ok(());
+            }
+            profile_store::delete(&conn, profile.id)?;
+            println!("Deleted the profile {}.", profile.name);
+        }
+        ProfilesAction::ResetPin { name } => {
+            let profile = find_profile(&conn, &name)?;
+            profile_store::set_pin_hash(&conn, profile.id, None)?;
+            let ended = shelfgauge::profiles::session::end_others(&conn, profile.id, None)?;
+            println!(
+                "Removed the PIN of {}; signed out {ended} sessions.",
+                profile.name
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Asks a yes/no question on the terminal; anything but `y`/`yes` is no.
+fn confirm(question: &str) -> anyhow::Result<bool> {
+    print!("{question}");
+    std::io::stdout().flush()?;
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
 }
 
 /// `shelfgauge errors`: lists the books that could not be parsed, one per line.

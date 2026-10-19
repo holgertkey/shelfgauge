@@ -24,8 +24,10 @@ use crate::annotations::text::{BookText, char_len};
 use crate::annotations::{Annotation, BookSnapshot, now};
 use crate::cache::covers;
 use crate::format::model::{BlockId, BookContent};
+use crate::profiles::ProfileId;
 use crate::render::split::{part_of, split};
 use crate::storage::books::{BookDetails, BookStatus, book_by_id};
+use crate::web::profile::CurrentProfile;
 use crate::web::{AppError, AppState, Urls};
 
 /// An annotation in a list.
@@ -114,6 +116,7 @@ pub(crate) struct BookAnnotations {
 /// candidate orphans. `None` if the book has no content key.
 pub(crate) fn book_annotations(
     state: &AppState,
+    profile: ProfileId,
     index: &Connection,
     user: &UserData,
     book: &BookDetails,
@@ -156,9 +159,9 @@ pub(crate) fn book_annotations(
     }
     let user = user.lock();
     Ok(Some(BookAnnotations {
-        annotations: store::for_book(&user, &snapshot.key)?,
+        annotations: store::for_book(&user, profile, &snapshot.key)?,
         position: if state.config().reader.remember_position {
-            store::position(&user, &snapshot.key)?
+            store::position(&user, profile, &snapshot.key)?
         } else {
             None
         },
@@ -200,6 +203,10 @@ impl From<AppError> for ApiError {
             AppError::Protected(scheme) => Self(
                 StatusCode::FORBIDDEN,
                 format!("the book is protected by DRM ({scheme})"),
+            ),
+            AppError::Forbidden => Self(
+                StatusCode::FORBIDDEN,
+                "this needs the admin role".to_owned(),
             ),
             AppError::Unreadable(reason) => {
                 tracing::warn!(reason = ?reason, "cannot read a book");
@@ -272,11 +279,13 @@ struct Created {
 /// id and label.
 pub(crate) async fn create(
     State(state): State<AppState>,
+    current: CurrentProfile,
     Path(id): Path<String>,
     body: Result<Json<CreateRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let id = parse_id(&id)?;
     let Json(request) = body?;
+    let profile = current.id();
     let created = state
         .user_db(move |state, index| {
             let (book, snapshot) = readable_book(index, id)?;
@@ -333,6 +342,7 @@ pub(crate) async fn create(
             let user = state.userdata().lock();
             let annotation = store::insert(
                 &user,
+                profile,
                 &NewAnnotation {
                     section_title: text.section_title(anchor.start_block).map(str::to_owned),
                     book: snapshot,
@@ -435,6 +445,7 @@ fn failed(json: bool, e: AppError) -> Response {
 /// `POST /annotation/{id}/note`: replaces the note (a blank note removes it).
 pub(crate) async fn note(
     State(state): State<AppState>,
+    current: CurrentProfile,
     Path(id): Path<String>,
     request: Request,
 ) -> Response {
@@ -449,7 +460,7 @@ pub(crate) async fn note(
             .user_db(move |state, index| {
                 check_note(state, note.as_deref())?;
                 let user = state.userdata().lock();
-                let annotation = store::set_note(&user, &id, note.as_deref(), now())?
+                let annotation = store::set_note(&user, current.id(), &id, note.as_deref(), now())?
                     .ok_or(AppError::NotFound)?;
                 export(state, index, &user, &annotation.book_key);
                 Ok(annotation)
@@ -466,6 +477,7 @@ pub(crate) async fn note(
 /// `POST /annotation/{id}/delete`: deletes an annotation (soft).
 pub(crate) async fn delete(
     State(state): State<AppState>,
+    current: CurrentProfile,
     Path(id): Path<String>,
     request: Request,
 ) -> Response {
@@ -478,7 +490,8 @@ pub(crate) async fn delete(
         state
             .user_db(move |state, index| {
                 let user = state.userdata().lock();
-                let annotation = store::delete(&user, &id, now())?.ok_or(AppError::NotFound)?;
+                let annotation =
+                    store::delete(&user, current.id(), &id, now())?.ok_or(AppError::NotFound)?;
                 export(state, index, &user, &annotation.book_key);
                 Ok(annotation)
             })
@@ -502,6 +515,7 @@ pub(crate) struct PositionRequest {
 /// notes are ignored, and nothing is saved with `reader.remember_position = false`.
 pub(crate) async fn position(
     State(state): State<AppState>,
+    current: CurrentProfile,
     Path(id): Path<String>,
     body: Result<Json<PositionRequest>, JsonRejection>,
 ) -> Result<StatusCode, ApiError> {
@@ -522,6 +536,7 @@ pub(crate) async fn position(
             };
             store::save_position(
                 &state.userdata().lock(),
+                current.id(),
                 &ReadingPosition {
                     book: snapshot,
                     block,
@@ -540,13 +555,14 @@ pub(crate) async fn position(
 /// the "Currently reading" list; back to the library page.
 pub(crate) async fn finished(
     State(state): State<AppState>,
+    current: CurrentProfile,
     Path(id): Path<String>,
 ) -> Result<Redirect, AppError> {
     let id = parse_id(&id)?;
     state
         .user_db(move |state, index| {
             let (_, snapshot) = readable_book(index, id)?;
-            store::mark_finished(&state.userdata().lock(), &snapshot.key, now())?;
+            store::mark_finished(&state.userdata().lock(), current.id(), &snapshot.key, now())?;
             Ok(())
         })
         .await?;
@@ -557,11 +573,12 @@ pub(crate) async fn finished(
 /// are kept); back to the library page (the settings page with `back=settings`).
 pub(crate) async fn clear_reading(
     State(state): State<AppState>,
+    current: CurrentProfile,
     form: Result<axum::Form<super::Back>, axum::extract::rejection::FormRejection>,
 ) -> Result<Redirect, AppError> {
     state
         .user_db(move |state, _| {
-            store::dismiss_all(&state.userdata().lock(), now())?;
+            store::dismiss_all(&state.userdata().lock(), current.id(), now())?;
             Ok(())
         })
         .await?;
@@ -588,6 +605,7 @@ pub(crate) struct ReadingItem {
 /// in a book that is in the library (by its content key), most recently read first.
 pub(crate) fn reading_list(
     state: &AppState,
+    profile: ProfileId,
     index: &Connection,
 ) -> Result<Vec<ReadingItem>, AppError> {
     let config = state.config();
@@ -595,7 +613,7 @@ pub(crate) fn reading_list(
     if limit == 0 || !config.reader.remember_position {
         return Ok(Vec::new());
     }
-    let positions = store::reading_list(&state.userdata().lock())?;
+    let positions = store::reading_list(&state.userdata().lock(), profile)?;
     let urls = state.urls();
     let mut items = Vec::new();
     for position in positions {
@@ -640,13 +658,15 @@ pub(crate) struct ListsFragment {
 /// `GET /book/{id}/annotations`: the reader's lists, for refreshing after a change.
 pub(crate) async fn lists(
     State(state): State<AppState>,
+    current: CurrentProfile,
     Path(id): Path<String>,
 ) -> Result<Response, AppError> {
     let id = parse_id(&id)?;
     let (annotations, text) = state
         .user_db(move |state, index| {
             let (book, snapshot) = readable_book(index, id)?;
-            let annotations = store::for_book(&state.userdata().lock(), &snapshot.key)?;
+            let annotations =
+                store::for_book(&state.userdata().lock(), current.id(), &snapshot.key)?;
             // Without the content (e.g. a missing file) the items carry no progress.
             let text = state.book_text(&book).ok().map(|(_, text)| text);
             Ok((annotations, text))
@@ -661,6 +681,109 @@ pub(crate) async fn lists(
         Html(fragment.render()?),
     )
         .into_response())
+}
+
+/// Who else is reading a book: a profile that shares its activity.
+pub(crate) struct FamilyReader {
+    pub(crate) name: String,
+    pub(crate) initials: String,
+    pub(crate) color: u8,
+    /// "read 37 %".
+    pub(crate) progress: String,
+}
+
+/// A book on the "Family is reading" row.
+pub(crate) struct FamilyItem {
+    pub(crate) reader: FamilyReader,
+    pub(crate) title: String,
+    pub(crate) authors: String,
+    pub(crate) card_href: String,
+    pub(crate) cover: Option<String>,
+    pub(crate) bar: String,
+}
+
+/// The "Currently reading" books of the other profiles that share their activity
+/// (live books only, most recently read first; at most `reading_list_size`). Never
+/// annotations.
+pub(crate) fn family_reading(
+    state: &AppState,
+    profile: ProfileId,
+    index: &Connection,
+) -> Result<Vec<FamilyItem>, AppError> {
+    let config = state.config();
+    let limit = config.library.reading_list_size as usize;
+    if limit == 0 || !config.reader.remember_position {
+        return Ok(Vec::new());
+    }
+    let (shared, profiles) = {
+        let user = state.userdata().lock();
+        (
+            store::shared_reading(&user, profile)?,
+            crate::profiles::store::list(&user)?,
+        )
+    };
+    let urls = state.urls();
+    let mut items = Vec::new();
+    for (reader, position) in shared {
+        let Some(who) = profiles.iter().find(|p| p.id == reader) else {
+            continue;
+        };
+        let Some(book) = crate::storage::books::live_books_by_key(index, &position.book.key)?
+            .into_iter()
+            .next()
+            .and_then(|id| book_by_id(index, id).transpose())
+            .transpose()?
+        else {
+            continue;
+        };
+        items.push(FamilyItem {
+            reader: FamilyReader {
+                name: who.name.clone(),
+                initials: who.initials(),
+                color: who.color,
+                progress: progress_label(position.progress),
+            },
+            title: book.title.clone(),
+            authors: attach::authors(&book),
+            card_href: urls.book(book.id),
+            cover: book
+                .cover_mime
+                .as_deref()
+                .and_then(covers::known_mime)
+                .map(|_| urls.cover(book.id, book.updated_at)),
+            bar: width_class(u64::from(position.progress)),
+        });
+        if items.len() == limit {
+            break;
+        }
+    }
+    Ok(items)
+}
+
+/// The other sharing profiles reading the book with content key `key`.
+pub(crate) fn also_reading(
+    state: &AppState,
+    profile: ProfileId,
+    key: &[u8],
+) -> Result<Vec<FamilyReader>, AppError> {
+    if !state.config().reader.remember_position {
+        return Ok(Vec::new());
+    }
+    let user = state.userdata().lock();
+    let profiles = crate::profiles::store::list(&user)?;
+    Ok(store::shared_reading(&user, profile)?
+        .into_iter()
+        .filter(|(_, position)| position.book.key == key)
+        .filter_map(|(reader, position)| {
+            let who = profiles.iter().find(|p| p.id == reader)?;
+            Some(FamilyReader {
+                name: who.name.clone(),
+                initials: who.initials(),
+                color: who.color,
+                progress: progress_label(position.progress),
+            })
+        })
+        .collect())
 }
 
 /// "read 37 %" or "finished" for a progress in per mille.

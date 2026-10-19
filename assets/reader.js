@@ -190,6 +190,8 @@
       body: JSON.stringify(body),
       keepalive: Boolean(keepalive),
     });
+    // No profile any more: reloading leads to the profile choice (app.js).
+    reloadIfSignedOut(response);
     if (!response.ok) {
       let message = `${response.status}`;
       try {
@@ -258,6 +260,7 @@
       return;
     }
     const response = await fetch(createUrl, { headers: { Accept: "text/html" } });
+    reloadIfSignedOut(response);
     if (!response.ok) {
       throw new Error(`${createUrl}: ${response.status}`);
     }
@@ -1098,6 +1101,7 @@
           headers: { Accept: "text/html" },
           signal: controller.signal,
         });
+        reloadIfSignedOut(response);
         if (!response.ok) {
           throw new Error(`${response.status}`);
         }
@@ -1334,7 +1338,7 @@
       form.addEventListener("change", (event) => {
         const input = event.target;
         if (input.name === "theme") {
-          // app.js: remembers it and updates the top-bar select.
+          // app.js: saves it to the profile and updates the top-bar select.
           applyTheme(input.value);
         } else if (input.name === "focus") {
           setFocus(input.checked);

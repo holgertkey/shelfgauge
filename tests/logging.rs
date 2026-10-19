@@ -143,10 +143,14 @@ async fn requests_log_their_route_template_status_and_latency() {
     let log = capture.text();
     let card = log
         .lines()
-        .find(|l| l.contains("route=/book/{id}}") && l.contains(" status=200 "))
+        .find(|l| l.contains("route=/book/{id} profile=1}") && l.contains(" status=200 "))
         .unwrap_or_else(|| panic!("no end event of the book card in\n{log}"));
     assert!(card.contains(" DEBUG request{id="), "{card}");
-    assert!(card.contains(" method=GET route=/book/{id}}"), "{card}");
+    // The profile id is recorded on the span (never the name).
+    assert!(
+        card.contains(" method=GET route=/book/{id} profile=1}"),
+        "{card}"
+    );
     assert!(card.contains(" latency_ms="), "{card}");
     assert!(
         log.lines()
@@ -255,7 +259,8 @@ async fn blocking_and_parser_threads_keep_the_request_span() {
         .find(|l| l.contains("repaired unbalanced tags"))
         .unwrap_or_else(|| panic!("no parser line in\n{log}"));
     assert!(
-        repaired.contains("request{id=") && repaired.contains("route=/book/{id}/annotations}"),
+        repaired.contains("request{id=")
+            && repaired.contains("route=/book/{id}/annotations profile=1}"),
         "{repaired}"
     );
     assert!(repaired.contains("book{path=\"book.fb2\"}"), "{repaired}");
@@ -263,7 +268,7 @@ async fn blocking_and_parser_threads_keep_the_request_span() {
         .lines()
         .find(|l| l.contains("library_stats: ") && l.contains("close"))
         .unwrap_or_else(|| panic!("no timing of the statistics in\n{log}"));
-    assert!(stats.contains("route=/stats}"), "{stats}");
+    assert!(stats.contains("route=/stats profile=1}"), "{stats}");
     assert!(stats.contains("time.busy="), "{stats}");
 }
 
@@ -329,5 +334,84 @@ async fn untrusted_values_cannot_forge_log_lines() {
             line.starts_with(|c: char| c.is_ascii_digit()),
             "a line that is not a log event: {line:?}\n{log}"
         );
+    }
+}
+
+/// Profiles: events carry the profile id only; names, PINs and session tokens never
+/// reach the log, not even at trace level.
+#[tokio::test]
+async fn profile_names_pins_and_tokens_are_never_logged() {
+    let server = server("book.fb2", None, UNBALANCED);
+    let capture = Capture::default();
+    let _log = tracing::dispatcher::set_default(&capture.dispatch("trace", LogFormat::Text, false));
+    let form = "application/x-www-form-urlencoded";
+    let send = |uri: &str, body: &str, cookie: Option<&str>| {
+        let mut headers = vec![
+            (header::ORIGIN.as_str(), ORIGIN.to_owned()),
+            (header::CONTENT_TYPE.as_str(), form.to_owned()),
+        ];
+        if let Some(cookie) = cookie {
+            headers.push((
+                header::COOKIE.as_str(),
+                format!("shelfgauge-profile={cookie}"),
+            ));
+        }
+        let headers: Vec<(&str, &str)> = headers.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        let request = request(Method::POST, uri, &headers, Body::from(body.to_owned()));
+        let router = server.router.clone();
+        async move {
+            let response = router.oneshot(request).await.unwrap();
+            let token = response
+                .headers()
+                .get(header::SET_COOKIE)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("shelfgauge-profile="))
+                .map(|v| v.split(';').next().unwrap().to_owned());
+            (response.status(), token)
+        }
+    };
+    let (status, owner) = send(
+        "/settings/profiles",
+        "name=Zebulon+Secretname&pin=86420",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let owner = owner.unwrap();
+    let (status, _) = send("/profiles/2/pin", "pin=11111&next=/", None).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (status, token) = send("/profiles/2/pin", "pin=86420&next=/", None).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let token = token.unwrap();
+    let (status, renewed) = send(
+        "/profile",
+        "action=set-pin&current_pin=86420&new_pin=97531&confirm_pin=97531",
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let renewed = renewed.unwrap();
+
+    let log = capture.text();
+    assert!(
+        log.contains("profile added") && log.contains("profile=2"),
+        "{log}"
+    );
+    assert!(
+        log.contains("pin rejected") && log.contains("profile selected"),
+        "{log}"
+    );
+    assert!(log.contains("route=/profile profile=2}"), "{log}");
+    for secret in [
+        "Secretname",
+        "Zebulon",
+        "86420",
+        "11111",
+        "97531",
+        &owner,
+        &token,
+        &renewed,
+    ] {
+        assert!(!log.contains(secret), "{secret} in\n{log}");
     }
 }

@@ -24,7 +24,7 @@ use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::{Next, from_fn, from_fn_with_state};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{MethodRouter, get, post};
 
 use crate::annotations::export::Exporter;
 use crate::annotations::store::UserData;
@@ -35,6 +35,7 @@ use crate::format::Registry;
 use crate::format::model::BookContent;
 use crate::library::Library;
 use crate::logging::in_current_span;
+use crate::profiles::pin::PinLimiter;
 use crate::render::load;
 use crate::scanner::BackgroundScan;
 use crate::storage::ReadPool;
@@ -46,6 +47,7 @@ use crate::storage::stats::{DuplicateSummary, LibraryStats, identical_summary, l
 mod assets;
 mod error;
 mod layout;
+mod profile;
 mod routes;
 pub mod security;
 mod sidebar;
@@ -121,6 +123,8 @@ struct Inner {
     identical: ScanCache<DuplicateSummary>,
     /// Requests that take longer are logged as slow.
     slow_request: Duration,
+    /// Wrong PINs per profile and their lockouts.
+    pins: PinLimiter,
 }
 
 /// A value derived from the index, kept until a scan is recorded (see
@@ -201,6 +205,7 @@ impl AppState {
             stats: ScanCache::new(),
             identical: ScanCache::new(),
             slow_request: trace::SLOW_REQUEST,
+            pins: PinLimiter::new(),
         }))
     }
 
@@ -311,6 +316,11 @@ impl AppState {
     /// The annotation export.
     pub fn exporter(&self) -> &Exporter {
         &self.0.exporter
+    }
+
+    /// The lockout of wrong profile PINs.
+    pub(crate) fn pins(&self) -> &PinLimiter {
+        &self.0.pins
     }
 
     /// The content of `book`, from memory, the content cache or the book file.
@@ -498,12 +508,55 @@ pub fn bind(server: &ServerConfig, auth: Auth) -> Result<std::net::TcpListener, 
     Ok(listener)
 }
 
+/// The admin routes (rescan, settings, maintenance, profiles): `(path, handlers)`.
+/// [`router`] builds the admin group from it, and the role tests try every path.
+fn admin_routes(urls: &Urls) -> Vec<(String, MethodRouter<AppState>)> {
+    vec![
+        (urls.path("/scan"), post(routes::scan::rescan)),
+        (
+            urls.settings(),
+            get(routes::settings::page).post(routes::settings::save),
+        ),
+        (
+            urls.settings_action("reread"),
+            post(routes::settings::reread),
+        ),
+        (
+            urls.settings_action("content-cache"),
+            post(routes::settings::clear_content_cache),
+        ),
+        (
+            urls.settings_action("export"),
+            post(routes::settings::export),
+        ),
+        (urls.manage_profiles(), post(routes::profiles::add)),
+        (
+            urls.path("/settings/profiles/{id}/{action}"),
+            get(routes::profiles::confirm_delete).post(routes::profiles::manage),
+        ),
+    ]
+}
+
 /// Builds the app with all routes and security layers.
 pub fn router(state: AppState) -> Router {
     let urls = state.urls();
+    // The last route layer added runs first: auth, then the profile, then the role.
     let auth = || from_fn_with_state(state.clone(), security::require_auth);
+    let profile = || from_fn_with_state(state.clone(), profile::require_profile);
 
     let public = Router::new().route(&urls.path("/assets/{*path}"), get(assets::serve));
+    // The picker needs no profile (it is where one is chosen).
+    let picker = Router::new()
+        .route(&urls.path("/profiles"), get(routes::profiles::picker))
+        .route(
+            &urls.path("/profiles/{id}/select"),
+            post(routes::profiles::select),
+        )
+        .route(
+            &urls.path("/profiles/{id}/pin"),
+            get(routes::profiles::pin_page).post(routes::profiles::pin),
+        )
+        .route_layer(auth());
     let read = Router::new()
         .route(&urls.home(), get(routes::library::home))
         .route(&urls.path("/authors"), get(routes::library::authors))
@@ -536,28 +589,19 @@ pub fn router(state: AppState) -> Router {
             get(routes::sidebar::author),
         )
         .route(&urls.path("/sidebar/folder"), get(routes::sidebar::folder))
+        .route(&urls.my_profile(), get(routes::profiles::my_profile))
+        .route_layer(profile())
         .route_layer(auth());
-    let admin = Router::new()
-        .route(&urls.path("/scan"), post(routes::scan::rescan))
-        .route(
-            &urls.settings(),
-            get(routes::settings::page).post(routes::settings::save),
-        )
-        .route(
-            &urls.settings_action("reread"),
-            post(routes::settings::reread),
-        )
-        .route(
-            &urls.settings_action("content-cache"),
-            post(routes::settings::clear_content_cache),
-        )
-        .route(
-            &urls.settings_action("export"),
-            post(routes::settings::export),
-        )
+    let admin = admin_routes(urls)
+        .into_iter()
+        .fold(Router::new(), |router, (path, handlers)| {
+            router.route(&path, handlers)
+        })
+        .route_layer(from_fn(profile::require_admin))
+        .route_layer(profile())
         .route_layer(auth());
-    // User writes (annotations, reading position): behind the Origin check like every
-    // POST, and with a body limit derived from the configured lengths.
+    // User writes (annotations, reading position, the own profile): behind the Origin
+    // check like every POST, and with a body limit derived from the configured lengths.
     let writes = Router::new()
         .route(
             &urls.path("/book/{id}/annotations"),
@@ -583,13 +627,20 @@ pub fn router(state: AppState) -> Router {
             &urls.path("/reading/clear"),
             post(routes::annotations::clear_reading),
         )
+        .route(&urls.leave_profile(), post(routes::profiles::leave))
+        .route(&urls.my_profile(), post(routes::profiles::save_my_profile))
+        .route(
+            &urls.profile_settings(),
+            post(routes::profiles::save_settings),
+        )
+        .route_layer(profile())
         .route_layer(auth())
         // Not `DefaultBodyLimit::max`: that is fixed when the router is built, and the
         // settings page can raise `max_note_length` at run time.
         .layer(from_fn_with_state(state.clone(), limit_write_body))
         .layer(DefaultBodyLimit::disable());
 
-    let mut app = public.merge(read).merge(admin).merge(writes);
+    let mut app = public.merge(picker).merge(read).merge(admin).merge(writes);
     if let Some(prefix) = urls.prefix() {
         app = app.route(prefix, get(routes::library::to_home));
     }
@@ -860,6 +911,54 @@ mod tests {
         assert!(body("/broken").await.contains("Error id <code>"));
         assert!(!body("/unreadable").await.contains("Error id"));
         assert!(!body("/nowhere").await.contains("Error id"));
+    }
+
+    /// A reader gets 403 on every admin route (both methods), so a new admin route is
+    /// covered without changing this test.
+    #[tokio::test]
+    async fn readers_are_refused_on_every_admin_route() {
+        let (_dir, state) = test_state(SLOW_REQUEST_FOR_TESTS);
+        let token = {
+            let conn = state.userdata().lock();
+            let reader = crate::profiles::store::create(
+                &conn,
+                "Reader",
+                0,
+                crate::profiles::Role::Reader,
+                0,
+            )
+            .unwrap();
+            crate::profiles::session::create(&conn, reader.id, 0).unwrap()
+        };
+        let paths: Vec<String> = admin_routes(state.urls())
+            .into_iter()
+            .map(|(path, _)| path.replace("{id}", "1").replace("{action}", "delete"))
+            .collect();
+        assert!(paths.len() >= 7, "{paths:?}");
+        let app = router(state);
+        for path in paths {
+            let mut refused = 0;
+            for method in ["GET", "POST"] {
+                let request = Request::builder()
+                    .method(method)
+                    .uri(&path)
+                    .header(header::HOST, "localhost:8742")
+                    .header(header::ORIGIN, "http://localhost:8742")
+                    .header(
+                        header::COOKIE,
+                        format!("shelfgauge-profile={}", token.as_str()),
+                    )
+                    .body(Body::empty())
+                    .unwrap();
+                let status = app.clone().oneshot(request).await.unwrap().status();
+                assert!(
+                    status == StatusCode::FORBIDDEN || status == StatusCode::METHOD_NOT_ALLOWED,
+                    "{method} {path}: {status}"
+                );
+                refused += usize::from(status == StatusCode::FORBIDDEN);
+            }
+            assert!(refused > 0, "{path}");
+        }
     }
 
     /// Error pages that no route produces yet render with the layout and the right status.

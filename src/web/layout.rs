@@ -4,6 +4,7 @@
 use axum::http::{HeaderMap, header};
 use serde::Serialize;
 
+use super::profile::CurrentProfile;
 use super::{AppState, Urls};
 use crate::scanner::ScanPhase;
 
@@ -109,6 +110,73 @@ impl ScanStatus {
     }
 }
 
+/// The `data-r*` attribute of each reader setting on `<html>` (see `theme.js`).
+const READER_ATTRS: &[(&str, &str)] = &[
+    ("font", "rfont"),
+    ("size", "rsize"),
+    ("leading", "rleading"),
+    ("width", "rwidth"),
+    ("align", "ralign"),
+    ("status", "rstatus"),
+];
+
+/// The profile as the layout shows it: the attributes of `<html>` and the avatar menu.
+pub(crate) struct LayoutProfile {
+    /// Whether there are several profiles: the avatar menu is shown.
+    pub(crate) several: bool,
+    /// The name.
+    pub(crate) name: String,
+    /// The avatar's initials.
+    pub(crate) initials: String,
+    /// The palette index (`data-pcolor`, omitted for 0).
+    pub(crate) color: u8,
+    /// Whether the gear, Rescan and the admin menu entries are shown.
+    pub(crate) admin: bool,
+    /// The theme (`data-theme`); empty for the system theme.
+    pub(crate) theme: String,
+    /// The reader settings as `data-*` attributes: `(attribute, value)`.
+    pub(crate) reader: Vec<(&'static str, &'static str)>,
+    /// Whether the page asks `theme.js` to adopt the settings saved in this browser
+    /// before 0.15.0 (`data-adopt`): the owner, settings never saved.
+    pub(crate) adopt: bool,
+}
+
+impl LayoutProfile {
+    /// The view of the request's profile.
+    pub(crate) fn of(current: &CurrentProfile) -> Self {
+        let profile = &current.profile;
+        let settings = profile.settings.clone().unwrap_or_default();
+        Self {
+            several: current.several(),
+            name: profile.name.clone(),
+            initials: profile.initials(),
+            color: profile.color,
+            admin: profile.is_admin(),
+            theme: settings.get("theme").unwrap_or("").to_owned(),
+            reader: READER_ATTRS
+                .iter()
+                .filter_map(|(name, attr)| settings.get(name).map(|v| (*attr, v)))
+                .collect(),
+            adopt: profile.id.is_owner() && profile.settings.is_none(),
+        }
+    }
+
+    /// For a page without a profile (the picker, an error page without a session): no
+    /// menu, no admin controls, the system theme.
+    pub(crate) fn none() -> Self {
+        Self {
+            several: false,
+            name: String::new(),
+            initials: String::new(),
+            color: 0,
+            admin: false,
+            theme: String::new(),
+            reader: Vec::new(),
+            adopt: false,
+        }
+    }
+}
+
 /// The context of the base layout; every page template has it as `layout`.
 pub(crate) struct Layout {
     /// The URL helper.
@@ -123,11 +191,27 @@ pub(crate) struct Layout {
     pub(crate) sidebar: SidebarView,
     /// The language of the page's main content (`<html lang>`).
     pub(crate) lang: String,
+    /// The request's profile.
+    pub(crate) profile: LayoutProfile,
 }
 
 impl Layout {
-    /// The layout for a page.
-    pub(crate) fn new(state: &AppState, title: impl Into<String>, sidebar: SidebarView) -> Self {
+    /// The layout for a page of `profile`.
+    pub(crate) fn new(
+        state: &AppState,
+        profile: &CurrentProfile,
+        title: impl Into<String>,
+        sidebar: SidebarView,
+    ) -> Self {
+        Self::with_profile(state, LayoutProfile::of(profile), title, sidebar)
+    }
+
+    fn with_profile(
+        state: &AppState,
+        profile: LayoutProfile,
+        title: impl Into<String>,
+        sidebar: SidebarView,
+    ) -> Self {
         Self {
             urls: state.urls().clone(),
             title: title.into(),
@@ -135,12 +219,24 @@ impl Layout {
             scan: ScanStatus::of(state),
             sidebar,
             lang: "en".to_owned(),
+            profile,
         }
     }
 
-    /// The layout for an error page: an empty sidebar, so nothing is read from the index.
-    pub(crate) fn without_sidebar(state: &AppState, title: impl Into<String>) -> Self {
-        Self::new(state, title, SidebarView::default())
+    /// The layout for an error page: an empty sidebar, so nothing is read from the
+    /// index; the profile's theme if it is known.
+    pub(crate) fn without_sidebar(
+        state: &AppState,
+        profile: Option<&CurrentProfile>,
+        title: impl Into<String>,
+    ) -> Self {
+        let profile = profile.map_or_else(LayoutProfile::none, LayoutProfile::of);
+        Self::with_profile(state, profile, title, SidebarView::default())
+    }
+
+    /// The layout for a page that needs no profile (the picker and the PIN page).
+    pub(crate) fn without_profile(state: &AppState, title: impl Into<String>) -> Self {
+        Self::with_profile(state, LayoutProfile::none(), title, SidebarView::default())
     }
 
     /// Sets the text of the search field.

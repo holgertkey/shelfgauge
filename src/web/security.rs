@@ -72,6 +72,8 @@ pub struct HostAllowlist {
     exact: Vec<String>,
     /// Host names from `allowed_hosts` without a port: accepted with any port or none.
     any_port: Vec<String>,
+    /// The `allowed_hosts` entries with a port (also in `exact`).
+    configured: Vec<String>,
 }
 
 impl HostAllowlist {
@@ -98,14 +100,48 @@ impl HostAllowlist {
             }
         }
         let mut any_port = Vec::new();
+        let mut configured = Vec::new();
         for host in &server.allowed_hosts {
             let host = host.to_ascii_lowercase();
             match split_port(&host) {
-                (_, Some(_)) => exact.push(host),
+                (_, Some(_)) => {
+                    exact.push(host.clone());
+                    configured.push(host);
+                }
                 (name, None) => any_port.push(name.to_owned()),
             }
         }
-        Self { exact, any_port }
+        Self {
+            exact,
+            any_port,
+            configured,
+        }
+    }
+
+    /// Whether `host` is accepted because of a `server.allowed_hosts` entry (a name
+    /// behind a reverse proxy), not as a loopback or bind address.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use shelfgauge::config::ServerConfig;
+    /// use shelfgauge::web::security::HostAllowlist;
+    ///
+    /// let server = ServerConfig {
+    ///     allowed_hosts: vec!["books.example.org".into()],
+    ///     ..ServerConfig::default()
+    /// };
+    /// let hosts = HostAllowlist::new(&server);
+    /// assert!(hosts.is_configured_host("books.example.org"));
+    /// assert!(!hosts.is_configured_host("localhost:8742"));
+    /// ```
+    pub fn is_configured_host(&self, host: &str) -> bool {
+        let host = host.to_ascii_lowercase();
+        if self.configured.contains(&host) {
+            return true;
+        }
+        let (name, _) = split_port(&host);
+        self.any_port.iter().any(|allowed| *allowed == name)
     }
 
     /// Whether a `Host` header value (or the authority of an `Origin`) is accepted.

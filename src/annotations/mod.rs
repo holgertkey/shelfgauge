@@ -102,6 +102,8 @@ pub struct Annotation {
     pub deleted_at: Option<i64>,
     /// Why it was deleted.
     pub deleted_reason: Option<DeletedReason>,
+    /// The profile it belongs to.
+    pub profile: crate::profiles::ProfileId,
 }
 
 /// Code points of a mark's text shown as its label when it has no note.
@@ -194,6 +196,7 @@ mod tests {
             updated_at: 0,
             deleted_at: None,
             deleted_reason: None,
+            profile: crate::profiles::ProfileId::OWNER,
         }
     }
 

@@ -33,6 +33,10 @@
       {%- endif %}
     </p>
     {%- endif %}
+    {%- if !family.is_empty() %}
+    <p class="family-line muted">Also reading:
+      {%- for reader in family %} <span class="family-reader"><span class="avatar pc-{{ reader.color }}" aria-hidden="true">{{ reader.initials }}</span>{{ reader.name }} {{ reader.progress }}</span>{% endfor %}</p>
+    {%- endif %}
     {%- if !file_present %}
     <form method="post" action="{{ layout.urls.scan() }}" class="actions">
       <button type="submit">Rescan the library</button>

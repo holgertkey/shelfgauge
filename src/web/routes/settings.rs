@@ -20,12 +20,14 @@ use serde::Deserialize;
 
 use super::date_time;
 use super::figures::{count, duration, file_size, group_digits};
+use super::profiles::ProfilesSection;
 use crate::annotations::attach;
 use crate::config::edit::{self, FIELDS, FieldKind, FieldValue, field, file_hash};
 use crate::config::{Config, ServerConfig};
 use crate::storage::scans::last_scan;
 use crate::storage::stats::{LeavingBooks, leaving_books};
 use crate::web::layout::{Layout, SidebarMode};
+use crate::web::profile::CurrentProfile;
 use crate::web::sidebar::{self, Focus};
 use crate::web::{AppError, AppState};
 
@@ -142,6 +144,7 @@ struct SettingsPage {
     clear_reading_action: String,
     about: Vec<Row>,
     unknown_keys: Vec<String>,
+    profiles: ProfilesSection,
 }
 
 /// `config.toml` as read for the page.
@@ -252,6 +255,8 @@ pub(crate) struct Done {
     books: Option<u64>,
     /// Measure the cache sizes (a directory walk: slow on big libraries).
     sizes: Option<String>,
+    /// What the profiles section just did (see [`ProfilesSection::load`]).
+    profile: Option<String>,
 }
 
 fn sections(values: &Values, errors: &HashMap<&'static str, String>) -> Vec<SectionView> {
@@ -367,6 +372,7 @@ fn choice_label(choice: &str) -> &'static str {
 /// `GET /settings` (admin): the settings page.
 pub(crate) async fn page(
     State(state): State<AppState>,
+    current: CurrentProfile,
     headers: HeaderMap,
     query: Result<Query<Done>, QueryRejection>,
 ) -> Result<Html<String>, AppError> {
@@ -377,10 +383,20 @@ pub(crate) async fn page(
         .db(move |conn| {
             let loaded = Loaded::read(&s);
             let mut notices = done_notices(&done);
-            let mut page = build(&s, conn, mode, &loaded, None, HashMap::new(), &mut notices)?;
+            let mut page = build(
+                &s,
+                &current,
+                conn,
+                mode,
+                &loaded,
+                None,
+                HashMap::new(),
+                &mut notices,
+            )?;
             if done.sizes.is_some() {
                 page.about = about(&s, conn, true)?;
             }
+            page.profiles = ProfilesSection::load(&s, done.profile.as_deref())?;
             Ok((page, notices))
         })
         .await?;
@@ -434,8 +450,10 @@ fn done_notices(done: &Done) -> Vec<Notice> {
 
 /// Builds the page; the form shows `submitted` values if given, otherwise the file's.
 /// Adds the notices about the file and the index to `notices`.
+#[allow(clippy::too_many_arguments)]
 fn build(
     state: &AppState,
+    current: &CurrentProfile,
     conn: &Connection,
     mode: SidebarMode,
     loaded: &Loaded,
@@ -508,6 +526,7 @@ fn build(
     Ok(SettingsPage {
         layout: Layout::new(
             state,
+            current,
             "Settings",
             sidebar::build(conn, state, mode, &Focus::None)?,
         ),
@@ -524,6 +543,7 @@ fn build(
         clear_reading_action: urls.clear_reading(),
         about: about(state, conn, false)?,
         unknown_keys: loaded.unknown_keys.clone(),
+        profiles: ProfilesSection::load(state, None)?,
     })
 }
 
@@ -695,6 +715,7 @@ enum Saved {
 /// a file changed since the form was rendered: 409.
 pub(crate) async fn save(
     State(state): State<AppState>,
+    current: CurrentProfile,
     headers: HeaderMap,
     form: Result<Form<Vec<(String, String)>>, FormRejection>,
 ) -> Result<Response, AppError> {
@@ -702,7 +723,7 @@ pub(crate) async fn save(
     let mode = SidebarMode::from_headers(&headers);
     let s = state.clone();
     let saved = state
-        .db(move |conn| save_form(&s, conn, mode, &pairs))
+        .db(move |conn| save_form(&s, &current, conn, mode, &pairs))
         .await?;
     match saved {
         Saved::Done { more } => {
@@ -718,6 +739,7 @@ pub(crate) async fn save(
 
 fn save_form(
     state: &AppState,
+    current: &CurrentProfile,
     conn: &Connection,
     mode: SidebarMode,
     pairs: &[(String, String)],
@@ -730,7 +752,16 @@ fn save_form(
                   errors: HashMap<&'static str, String>|
      -> Result<Saved, AppError> {
         let mut notices: Vec<Notice> = notice.into_iter().collect();
-        let mut page = build(state, conn, mode, &loaded, submitted, errors, &mut notices)?;
+        let mut page = build(
+            state,
+            current,
+            conn,
+            mode,
+            &loaded,
+            submitted,
+            errors,
+            &mut notices,
+        )?;
         page.notices = notices;
         Ok(Saved::Refused(status, Box::new(page)))
     };
@@ -895,6 +926,7 @@ pub(crate) async fn export(State(state): State<AppState>) -> Result<Redirect, Ap
                 index,
                 &state.userdata().lock(),
                 state.exporter(),
+                None,
             )?)
         })
         .await?;

@@ -18,6 +18,7 @@ use crate::render::html::{ReaderLinks, render_part, render_toc};
 use crate::render::split::{Part, part_of, split};
 use crate::storage::books::{BookDetails, BookStatus, book_by_id};
 use crate::web::layout::{Layout, SidebarView, page_number};
+use crate::web::profile::CurrentProfile;
 use crate::web::{AppError, AppState, Urls};
 
 /// Links of a rendered part.
@@ -187,6 +188,7 @@ enum Outcome {
 /// out of range is clamped.
 pub(crate) async fn read(
     State(state): State<AppState>,
+    current: CurrentProfile,
     Path(id): Path<String>,
     query: Result<Query<Params>, QueryRejection>,
 ) -> Result<Response, AppError> {
@@ -195,7 +197,8 @@ pub(crate) async fn read(
     let book = book(&state, id).await?;
     let s = state.clone();
     let outcome =
-        crate::web::blocking(move || run_with_parser_stack(|| page(&s, &book, &params))).await??;
+        crate::web::blocking(move || run_with_parser_stack(|| page(&s, &current, &book, &params)))
+            .await??;
     match outcome {
         Outcome::Redirect(url) => Ok(Redirect::to(&url).into_response()),
         Outcome::Page(page) => Ok(render(&*page)?.into_response()),
@@ -212,7 +215,12 @@ pub(super) async fn book(state: &AppState, id: i64) -> Result<BookDetails, AppEr
     Ok(book)
 }
 
-fn page(state: &AppState, book: &BookDetails, params: &Params) -> Result<Outcome, AppError> {
+fn page(
+    state: &AppState,
+    profile: &CurrentProfile,
+    book: &BookDetails,
+    params: &Params,
+) -> Result<Outcome, AppError> {
     let config = state.config();
     let (content, text) = state.book_text(book)?;
     let parts = split(&content, &config.reader);
@@ -267,8 +275,15 @@ fn page(state: &AppState, book: &BookDetails, params: &Params) -> Result<Outcome
         .map_or_else(String::new, |part| part.title.clone());
     let annotations = {
         let index = state.pool().get()?;
-        book_annotations(state, &index, state.userdata(), book, Some(&content))?
-            .map_or_else(Vec::new, |a| a.annotations)
+        book_annotations(
+            state,
+            profile.id(),
+            &index,
+            state.userdata(),
+            book,
+            Some(&content),
+        )?
+        .map_or_else(Vec::new, |a| a.annotations)
     };
     let current = urls.read(book.id, index + 1);
     let title = if count > 1 {
@@ -278,7 +293,7 @@ fn page(state: &AppState, book: &BookDetails, params: &Params) -> Result<Outcome
     };
     let progress = PartProgress::of(&text, &parts, index);
     Ok(Outcome::Page(Box::new(ReadPage {
-        layout: Layout::new(state, title, SidebarView::default())
+        layout: Layout::new(state, profile, title, SidebarView::default())
             .with_lang(html_lang(book.language.as_deref())),
         book_title: book.title.clone(),
         book_authors: attach::authors(book),

@@ -17,6 +17,7 @@ use crate::storage::books::{
 };
 use crate::storage::folders::{FolderKind, FolderPath, folder_children};
 use crate::web::layout::{Layout, PageLink, Pager, Paging, SidebarMode};
+use crate::web::profile::CurrentProfile;
 use crate::web::sidebar::{self, Focus};
 use crate::web::{AppError, AppState};
 
@@ -33,6 +34,8 @@ struct HomePage {
     summary: String,
     /// "Currently reading".
     reading: Vec<super::annotations::ReadingItem>,
+    /// "Family is reading" (other profiles that share their activity).
+    family: Vec<super::annotations::FamilyItem>,
     /// "Recently added".
     recent: Vec<RecentCard>,
     /// The parts of the notice about books that need attention: text and link.
@@ -50,6 +53,7 @@ struct RecentCard {
 /// `GET /`: the library overview.
 pub(crate) async fn home(
     State(state): State<AppState>,
+    current: CurrentProfile,
     headers: HeaderMap,
 ) -> Result<Html<String>, AppError> {
     let mode = SidebarMode::from_headers(&headers);
@@ -67,7 +71,19 @@ pub(crate) async fn home(
             ))
         })
         .await?;
-    let reading = state.user_db(super::annotations::reading_list).await?;
+    let profile = current.id();
+    let several = current.several();
+    let (reading, family) = state
+        .user_db(move |state, index| {
+            let reading = super::annotations::reading_list(state, profile, index)?;
+            let family = if several {
+                super::annotations::family_reading(state, profile, index)?
+            } else {
+                Vec::new()
+            };
+            Ok((reading, family))
+        })
+        .await?;
     let urls = state.urls();
     let mut attention = Vec::new();
     if errors > 0 {
@@ -97,7 +113,7 @@ pub(crate) async fn home(
         ));
     }
     render(&HomePage {
-        layout: Layout::new(&state, "Library", sidebar),
+        layout: Layout::new(&state, &current, "Library", sidebar),
         root: state.library().root().display().to_string(),
         books,
         summary: format!(
@@ -107,6 +123,7 @@ pub(crate) async fn home(
             file_size(size)
         ),
         reading,
+        family,
         recent: recent
             .into_iter()
             .map(|book| RecentCard {
@@ -145,6 +162,7 @@ struct UnreadableBook {
 /// web version of `shelfgauge errors`).
 pub(crate) async fn errors(
     State(state): State<AppState>,
+    current: CurrentProfile,
     headers: HeaderMap,
 ) -> Result<Html<String>, AppError> {
     let mode = SidebarMode::from_headers(&headers);
@@ -160,7 +178,7 @@ pub(crate) async fn errors(
         .await?;
     let urls = state.urls();
     render(&ErrorsPage {
-        layout: Layout::new(&state, "Books that could not be read", sidebar),
+        layout: Layout::new(&state, &current, "Books that could not be read", sidebar),
         failed: failed
             .into_iter()
             .map(|book| UnreadableBook {
@@ -204,6 +222,7 @@ struct AuthorLink {
 /// `GET /authors?q=&page=`: the author index, filtered by a name prefix.
 pub(crate) async fn authors(
     State(state): State<AppState>,
+    current: CurrentProfile,
     headers: HeaderMap,
     query: Result<Query<Params>, QueryRejection>,
 ) -> Result<Html<String>, AppError> {
@@ -232,7 +251,7 @@ pub(crate) async fn authors(
             href: urls.authors(&prefix, n),
             src: String::new(),
         }),
-        layout: Layout::new(&state, "Authors", sidebar),
+        layout: Layout::new(&state, &current, "Authors", sidebar),
         prefix,
         authors: authors
             .into_iter()
@@ -258,6 +277,7 @@ struct AuthorPage {
 /// `GET /author/{id}`: an author's books, grouped by series.
 pub(crate) async fn author(
     State(state): State<AppState>,
+    current: CurrentProfile,
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Html<String>, AppError> {
@@ -288,7 +308,7 @@ pub(crate) async fn author(
         rows.push(Row::Book(BookRow::new(urls, book)));
     }
     render(&AuthorPage {
-        layout: Layout::new(&state, author.display_name.clone(), sidebar),
+        layout: Layout::new(&state, &current, author.display_name.clone(), sidebar),
         name: author.display_name,
         count: author.book_count,
         rows,
@@ -319,6 +339,7 @@ struct FolderPage {
 /// `GET /folder?path=` or `?zip=&in=`: a folder's sub-folders and books.
 pub(crate) async fn folder(
     State(state): State<AppState>,
+    current: CurrentProfile,
     headers: HeaderMap,
     query: Result<Query<Params>, QueryRejection>,
 ) -> Result<Html<String>, AppError> {
@@ -354,7 +375,7 @@ pub(crate) async fn folder(
         .collect();
     let name = folder_name(&folder);
     render(&FolderPage {
-        layout: Layout::new(&state, name.clone(), sidebar),
+        layout: Layout::new(&state, &current, name.clone(), sidebar),
         name,
         crumbs,
         folders: listing

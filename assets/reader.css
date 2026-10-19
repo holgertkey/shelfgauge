@@ -330,7 +330,7 @@ mark.sg-find.current {
 
 .mark-popup button[type="submit"],
 .mark-popup button.mark-button {
-  color: #ffffff;
+  color: var(--on-accent);
   background: var(--accent);
   border-color: var(--accent);
 }

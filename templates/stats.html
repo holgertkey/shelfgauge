@@ -45,7 +45,7 @@
 {%- endif %}
 {%- if !reading.is_empty() || !quotes.is_empty() %}
 <section class="stats-section">
-  <h2>Reading and quotes</h2>
+  <h2>{% if layout.profile.several %}Your reading{% else %}Reading and quotes{% endif %}</h2>
   {%- if !reading.is_empty() %}
   <ul class="facts-list">
     {%- for fact in reading %}
