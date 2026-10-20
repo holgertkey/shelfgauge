@@ -2521,6 +2521,7 @@ button.danger,
   .find-hits a,
   .latest-quotes a,
   .annotation-list a,
+  .reading-book a.title,
   .bars .bar-label a,
   .facts dd a {
     display: inline-flex;

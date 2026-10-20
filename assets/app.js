@@ -5,6 +5,8 @@
 "use strict";
 
 const SIDEBAR_KEY = "shelfgauge-sidebar-hidden";
+// Set for one reload: the narrow sidebar was open when its mode was switched.
+const REOPEN_KEY = "shelfgauge-sidebar-reopen";
 const SCROLL_KEY = "shelfgauge-sidebar-scroll";
 const MODE_COOKIE = "shelfgauge-sidebar";
 const WIDTH_KEY = "shelfgauge-sidebar-width";
@@ -157,6 +159,12 @@ function setupSidebarToggle() {
   }
   if (storageGet(localStorage, SIDEBAR_KEY) === "1") {
     document.body.classList.add("sidebar-hidden");
+  }
+  if (storageGet(sessionStorage, REOPEN_KEY) === "1") {
+    storageSet(sessionStorage, REOPEN_KEY, null);
+    if (narrow.matches) {
+      document.body.classList.add("sidebar-shown");
+    }
   }
   toggle.addEventListener("click", () => {
     if (narrow.matches) {
@@ -350,6 +358,10 @@ function setMode(mode) {
   document.cookie =
     `${MODE_COOKIE}=${mode}; path=${path}; max-age=31536000; samesite=lax`;
   storageSet(sessionStorage, SCROLL_KEY, null);
+  // The page is rendered again in the new mode: an open narrow sidebar stays open.
+  if (narrow.matches && document.body.classList.contains("sidebar-shown")) {
+    storageSet(sessionStorage, REOPEN_KEY, "1");
+  }
   window.location.reload();
 }
 
