@@ -2476,6 +2476,13 @@ button.danger,
     min-height: 2.75rem;
   }
 
+  /* A link styled as a button keeps its label in the middle of the taller box. */
+  .button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
   input[type="checkbox"],
   input[type="radio"] {
     width: 1.25rem;
