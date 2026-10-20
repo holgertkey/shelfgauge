@@ -516,8 +516,6 @@ function setupScan() {
 
 // ---------- Settings page: this browser ----------
 
-const FOCUS_KEY = "shelfgauge-focus";
-
 function setupBrowserSettings() {
   const section = document.querySelector(".browser-settings");
   if (!section) {
@@ -540,7 +538,8 @@ function setupBrowserSettings() {
   });
 
   const leaveFocus = section.querySelector(".leave-focus");
-  leaveFocus.disabled = storageGet(localStorage, FOCUS_KEY) !== "1";
+  // theme.js has set the class: the stored choice, or the default of this screen.
+  leaveFocus.disabled = !document.documentElement.classList.contains("reading-focus");
   leaveFocus.addEventListener("click", () => {
     shelfgaugeReader.setFocus(false);
     leaveFocus.disabled = true;

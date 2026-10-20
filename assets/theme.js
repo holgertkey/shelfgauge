@@ -164,14 +164,13 @@ const shelfgaugeReader = (() => {
     });
   }
 
+  // Focus mode is kept per browser: "1" on, "0" off. Without a choice yet it is on
+  // on a phone-sized screen (the reader's status line, with the position and the
+  // marks, shows in focus mode) and off elsewhere.
   function setFocus(on) {
     root.classList.toggle("reading-focus", on);
     try {
-      if (on) {
-        localStorage.setItem(FOCUS_KEY, "1");
-      } else {
-        localStorage.removeItem(FOCUS_KEY);
-      }
+      localStorage.setItem(FOCUS_KEY, on ? "1" : "0");
     } catch (e) {
       // Not remembered.
     }
@@ -181,7 +180,8 @@ const shelfgaugeReader = (() => {
     adopt();
   }
   try {
-    if (localStorage.getItem(FOCUS_KEY) === "1") {
+    const stored = localStorage.getItem(FOCUS_KEY);
+    if (stored === "1" || (stored === null && matchMedia("(max-width: 48rem)").matches)) {
       root.classList.add("reading-focus");
     }
   } catch (e) {

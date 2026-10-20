@@ -409,7 +409,9 @@ The same pages serve phones; there is no separate mobile UI and no Node toolchai
 Below `48rem` the sidebar becomes an overlay over a dimmed page (a tap on the dimmed
 page closes it and does nothing else, `app.js`), and controls that exist elsewhere leave
 the top bar (the theme menu; Settings and Rescan move into the avatar menu; in the
-reader focus mode, which is in the Aa panel). On touch screens (`pointer: coarse`) every
+reader focus mode, which is in the Aa panel). Focus mode, kept per browser (`"1"`/`"0"`
+in `localStorage`), is on by default below `48rem` until it is turned off, so a phone
+shows the status line with the position and the marks (`theme.js`). On touch screens (`pointer: coarse`) every
 control, menu entry and list of links is at least 44 by 44 CSS px; links in running text
 keep their size. Pages use `viewport-fit=cover` with `env(safe-area-inset-*)` padding.
 Quoting works with the touch selection (`selectionchange`); the Quote button keeps
