@@ -374,6 +374,20 @@ never "local". Requests from other devices with `auth = "none"` are refused with
   Then open `http://100.101.102.103:8742/` (or the MagicDNS name with the port) on the
   phone. `tailscale serve --bg 8742` works too (HTTPS on the `ts.net` name; add that
   name to `allowed_hosts` and keep `bind = "127.0.0.1"`).
+- **Home Wi-Fi** (for trying it out; the traffic is not encrypted): listen on all
+  addresses and add the computer's address in the network, so the computer itself
+  keeps using `http://127.0.0.1:8742/` without a password:
+
+  ```toml
+  [server]
+  bind = "0.0.0.0"
+  auth = "password"
+  allowed_hosts = ["192.168.1.105"]   # this computer's address (hostname -I)
+  ```
+
+  Then open `http://192.168.1.105:8742/` on the phone. With `bind` set to that address
+  instead, `127.0.0.1` is not served at all. Everyone in the network reaches the login
+  page; open the port in the firewall if needed (`sudo ufw allow 8742/tcp`).
 - **Reverse proxy with HTTPS** on the same computer, forwarding to `127.0.0.1:8742`:
   add the public name to `allowed_hosts` (and set `base_path` on a sub-path). With
   [Caddy](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy) (automatic
