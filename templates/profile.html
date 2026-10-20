@@ -62,10 +62,54 @@
   </form>
 </section>
 
-{%- if several %}
+<section class="settings-section" id="password">
+  <h2>Password</h2>
+  <p class="muted">The password is for other devices: with it you log into this profile from a phone or another computer{% if !auth %}, once remote access is turned on (<code>auth = "password"</code> in config.toml){% endif %}. On the computer with the library it is not asked; the PIN is.{% if !profile.has_password %} Without a password this profile can be used only on this computer.{% endif %}</p>
+  <form class="settings-form" action="{{ action }}" method="post">
+    {#- A username field for password managers: the profile name. #}
+    <input type="text" name="username" value="{{ profile.name }}" autocomplete="username" hidden>
+    {%- if profile.has_password %}
+    <div class="field{% if self.error("current_password").is_some() %} invalid{% endif %}">
+      <label for="current-password">Current password</label>
+      <input type="password" id="current-password" name="current_password" autocomplete="current-password" maxlength="1024"{% if self.error("current_password").is_some() %} aria-invalid="true" aria-describedby="current-password-error"{% endif %}>
+      {%- if let Some(error) = self.error("current_password") %}
+      <p class="field-error" id="current-password-error">{{ error }}</p>
+      {%- endif %}
+      {%- if profile.owner %}
+      <p class="hint">Forgot it? Run <code>shelfgauge profiles remove-password &lt;name&gt;</code> on the computer with the library.</p>
+      {%- else %}
+      <p class="hint">Forgot it? An admin can remove it in Settings → Profiles.</p>
+      {%- endif %}
+    </div>
+    {%- endif %}
+    <div class="field{% if self.error("new_password").is_some() %} invalid{% endif %}">
+      <label for="new-password">{% if profile.has_password %}New password{% else %}Password{% endif %}</label>
+      <input type="password" id="new-password" name="new_password" autocomplete="new-password" minlength="10" maxlength="1024" aria-describedby="new-password-hint">
+      {%- if let Some(error) = self.error("new_password") %}
+      <p class="field-error">{{ error }}</p>
+      {%- endif %}
+      <p class="hint" id="new-password-hint">At least 10 characters; a few words are easier to type than a jumble. Your other devices log in again.</p>
+    </div>
+    <div class="field{% if self.error("confirm_password").is_some() %} invalid{% endif %}">
+      <label for="confirm-password">Repeat the password</label>
+      <input type="password" id="confirm-password" name="confirm_password" autocomplete="new-password" minlength="10" maxlength="1024">
+      {%- if let Some(error) = self.error("confirm_password") %}
+      <p class="field-error">{{ error }}</p>
+      {%- endif %}
+    </div>
+    <div class="form-actions">
+      <button type="submit" class="primary" name="action" value="set-password">{% if profile.has_password %}Change password{% else %}Set password{% endif %}</button>
+      {%- if profile.has_password && !remote %}
+      <button type="submit" name="action" value="remove-password">Remove password</button>
+      {%- endif %}
+    </div>
+  </form>
+</section>
+
+{%- if several && !remote %}
 <section class="settings-section" id="pin">
   <h2>PIN</h2>
-  <p class="muted">A PIN keeps the other people at this computer out of your profile. It is not a password protection: anyone with access to the computer can read the library’s files.</p>
+  <p class="muted">A PIN keeps the other people at this computer out of your profile. It is asked only here, never on other devices (they use the password). It is not a password protection: anyone with access to the computer can read the library’s files.</p>
   <form class="settings-form" action="{{ action }}" method="post">
     {%- if profile.has_pin %}
     <div class="field{% if self.error("current_pin").is_some() %} invalid{% endif %}">
@@ -104,7 +148,9 @@
     </div>
   </form>
 </section>
+{%- endif %}
 
+{%- if several || remote %}
 <section class="settings-section" id="devices">
   <h2>Devices</h2>
   <div class="actions">
@@ -113,13 +159,20 @@
         <input type="hidden" name="action" value="sign-out-others">
         <button type="submit">Sign out on other devices</button>
       </form>
-      <p class="hint">Other browsers that use this profile go back to the profile choice.</p>
+      <p class="hint">Other browsers that use this profile go back to the profile choice or the login.</p>
     </div>
     <div class="action">
+      {%- if remote %}
+      <form action="{{ logout_action }}" method="post">
+        <button type="submit">Sign out</button>
+      </form>
+      <p class="hint">Signs out in this browser; the next visit asks for the password.</p>
+      {%- else %}
       <form action="{{ leave_action }}" method="post">
         <button type="submit">Switch profile</button>
       </form>
       <p class="hint">Signs out in this browser and shows the profile choice.</p>
+      {%- endif %}
     </div>
   </div>
 </section>

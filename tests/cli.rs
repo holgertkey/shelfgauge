@@ -394,7 +394,7 @@ fn profiles_list_add_remove_reset_pin_and_export() {
     assert!(run(dir.path(), &["scan", "."]).status.success());
 
     let out = stdout(&run(dir.path(), &["profiles", "list"]));
-    assert_eq!(out.trim(), "1  Me  admin, owner  no PIN");
+    assert_eq!(out.trim(), "1  Me  admin, owner  no PIN  no password");
     let output = run(dir.path(), &["profiles", "add", "Anna", "--admin"]);
     assert!(output.status.success(), "{}", stderr(&output));
     assert!(stdout(&output).contains("Added the profile Anna (admin)"));
@@ -412,8 +412,16 @@ fn profiles_list_add_remove_reset_pin_and_export() {
     );
     let out = stdout(&run(dir.path(), &["profiles", "list", "."]));
     let lines: Vec<&str> = out.lines().collect();
-    assert_eq!(lines[1].trim(), "2  Anna  admin  no PIN", "{out}");
-    assert_eq!(lines[2].trim(), "3  Ben  reader  no PIN", "{out}");
+    assert_eq!(
+        lines[1].trim(),
+        "2  Anna  admin  no PIN  no password",
+        "{out}"
+    );
+    assert_eq!(
+        lines[2].trim(),
+        "3  Ben  reader  no PIN  no password",
+        "{out}"
+    );
 
     // An unknown name lists the profiles.
     let output = run(dir.path(), &["profiles", "remove", "Carl", "--yes"]);
@@ -465,4 +473,94 @@ fn profiles_list_add_remove_reset_pin_and_export() {
         &["annotations", "export", "--profile", "nobody"],
     );
     assert!(!output.status.success());
+}
+
+/// `auth = "password"` needs an admin with a password; `set-password` reads it from
+/// standard input in scripts; the running server tells this computer from a request
+/// through an `allowed_hosts` name by the real TCP peer.
+#[test]
+fn password_login_setup() {
+    let dir = tempfile::tempdir().unwrap();
+    let port = free_port();
+    std::fs::create_dir_all(dir.path().join(".shelfgauge")).unwrap();
+    std::fs::write(
+        dir.path().join(".shelfgauge/config.toml"),
+        format!(
+            "[server]\nport = {port}\nauth = \"password\"\n\
+             allowed_hosts = [\"books.example.org\"]\n"
+        ),
+    )
+    .unwrap();
+    let output = run(dir.path(), &[".", "--no-scan"]);
+    assert!(!output.status.success());
+    let err = stderr(&output);
+    assert!(
+        err.contains("needs an admin profile with a password") && err.contains("set-password"),
+        "{err}"
+    );
+
+    // Too short: refused, nothing stored. Spaces are part of the password.
+    let output = run_with_input(dir.path(), &["profiles", "set-password", "me"], "short\n");
+    assert!(!output.status.success());
+    assert!(
+        stderr(&output).contains("at least 10 characters"),
+        "{}",
+        stderr(&output)
+    );
+    let output = run_with_input(
+        dir.path(),
+        &["profiles", "set-password", "me"],
+        " correct horse \r\n",
+    );
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(
+        stdout(&output).contains("Set the password of Me"),
+        "{}",
+        stdout(&output)
+    );
+    assert_eq!(
+        stdout(&run(dir.path(), &["profiles", "list"])).trim(),
+        "1  Me  admin, owner  no PIN  password"
+    );
+    {
+        let data = shelfgauge::annotations::store::UserData::open(
+            &dir.path().join(".shelfgauge/userdata.sqlite"),
+        )
+        .unwrap();
+        let hash = shelfgauge::profiles::store::password_hash(
+            &data.lock(),
+            shelfgauge::profiles::ProfileId::OWNER,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(shelfgauge::profiles::password::verify(
+            " correct horse ",
+            &hash
+        ));
+        assert!(!shelfgauge::profiles::password::verify(
+            "correct horse",
+            &hash
+        ));
+    }
+
+    let server = Server::start(dir.path(), &[".", "--no-scan"]);
+    let local = server.get("/");
+    assert!(local.starts_with("HTTP/1.1 200"), "{local}");
+    // The same loopback peer, but through the proxy's name: another device.
+    let authority = &server.url["http://".len()..].trim_end_matches('/');
+    let mut stream = std::net::TcpStream::connect(authority).unwrap();
+    write!(
+        stream,
+        "GET / HTTP/1.1\r\nHost: books.example.org\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut remote = String::new();
+    stream.read_to_string(&mut remote).unwrap();
+    assert!(remote.starts_with("HTTP/1.1 303"), "{remote}");
+    assert!(remote.contains("location: /login?next=/\r\n"), "{remote}");
+    server.stop();
+
+    let output = run(dir.path(), &["profiles", "remove-password", "Me"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(stdout(&run(dir.path(), &["profiles", "list"])).contains("no password"));
 }

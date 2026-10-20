@@ -31,6 +31,8 @@ pub(crate) enum AppError {
     Protected(String),
     /// The profile may not do this: an admin page for a reader (403).
     Forbidden,
+    /// An admin page requested from another device without `remote_admin` (403).
+    LocalOnly,
     /// An unexpected failure (500); the message is logged, not shown.
     Internal(String),
 }
@@ -44,6 +46,7 @@ pub(crate) enum ErrorPage {
     BadRequest(String),
     Protected(String),
     Forbidden,
+    LocalOnly,
     Internal,
 }
 
@@ -62,6 +65,7 @@ impl IntoResponse for AppError {
             Self::BadRequest(reason) => (StatusCode::BAD_REQUEST, ErrorPage::BadRequest(reason)),
             Self::Protected(scheme) => (StatusCode::FORBIDDEN, ErrorPage::Protected(scheme)),
             Self::Forbidden => (StatusCode::FORBIDDEN, ErrorPage::Forbidden),
+            Self::LocalOnly => (StatusCode::FORBIDDEN, ErrorPage::LocalOnly),
             Self::Internal(message) => {
                 tracing::error!(error = ?message, "internal error");
                 (StatusCode::INTERNAL_SERVER_ERROR, ErrorPage::Internal)
@@ -143,6 +147,7 @@ pub(crate) async fn render_errors(
 ) -> Response {
     let id = req.extensions().get::<RequestId>().copied();
     let tokens = super::profile::cookie_tokens(req.headers());
+    let remote = super::security::peer_of(&req).is_remote();
     let response = next.run(req).await;
     let Some(page) = response.extensions().get::<ErrorPage>().cloned() else {
         return response;
@@ -153,7 +158,7 @@ pub(crate) async fn render_errors(
         Some(profile) => Some(profile),
         None => {
             let s = state.clone();
-            super::blocking(move || super::profile::resolve(&s, &tokens))
+            super::blocking(move || super::profile::resolve(&s, &tokens, remote))
                 .await
                 .ok()
                 .and_then(Result::ok)
@@ -191,6 +196,13 @@ pub(crate) async fn render_errors(
         ErrorPage::Forbidden => (
             "Not allowed",
             "This page is for profiles with the admin role.",
+            false,
+        ),
+        ErrorPage::LocalOnly => (
+            "On this computer only",
+            "This page is available only on the computer with the library. To allow it \
+             for admins on other devices, set remote_admin = true in the [server] section \
+             of config.toml and restart shelfgauge.",
             false,
         ),
         ErrorPage::Internal => (

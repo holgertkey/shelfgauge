@@ -73,7 +73,7 @@
 
 <section class="settings-section" id="profiles">
   <h2>Profiles</h2>
-  <p class="muted">Each person who reads here can have a profile with their own bookmarks, quotes, reading places and settings; the library is shared. With one profile nothing changes. A profile’s PIN is not a password protection.</p>
+  <p class="muted">Each person who reads here can have a profile with their own bookmarks, quotes, reading places and settings; the library is shared. With one profile nothing changes. A profile’s PIN is asked only on this computer and is not a password protection; its password is the login from other devices.</p>
   {%- if let Some((kind, text)) = profiles.notice %}
   <div class="notice settings-notice {{ kind }}" role="status"><span>{{ text }}</span></div>
   {%- endif %}
@@ -83,7 +83,7 @@
       <span class="avatar pc-{{ profile.color }}" aria-hidden="true">{{ profile.initials }}</span>
       <div class="profile-facts">
         <strong>{{ profile.name }}</strong>
-        <span class="muted">{% if profile.admin %}admin{% else %}reader{% endif %}{% if profile.owner %}, owner{% endif %} · {% if profile.has_pin %}PIN{% else %}no PIN{% endif %} · last seen {{ profile.last_seen }}</span>
+        <span class="muted">{% if profile.admin %}admin{% else %}reader{% endif %}{% if profile.owner %}, owner{% endif %} · {% if profile.has_pin %}PIN{% else %}no PIN{% endif %}{% if profile.has_password %} · password{% else if profiles.auth %} · on this computer only{% endif %} · last seen {{ profile.last_seen }}</span>
       </div>
       <details class="profile-edit">
         <summary>Edit</summary>
@@ -115,6 +115,11 @@
           {%- if profile.has_pin %}
           <form action="{{ layout.urls.manage_profile(profile.id, "remove-pin") }}" method="post" class="inline-form">
             <button type="submit">Remove PIN</button>
+          </form>
+          {%- endif %}
+          {%- if profile.has_password %}
+          <form action="{{ layout.urls.manage_profile(profile.id, "remove-password") }}" method="post" class="inline-form">
+            <button type="submit">Remove password</button>
           </form>
           {%- endif %}
           {%- if !profile.owner %}

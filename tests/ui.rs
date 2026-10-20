@@ -165,7 +165,7 @@ impl TestLibrary {
         let scan = Arc::new(BackgroundScan::new(self.library.clone(), Vec::new()));
         let state = AppState::new(self.library.clone(), &config, pool, Arc::clone(&scan));
         Server {
-            router: web::router(state),
+            router: common::local(web::router(state)),
             scan,
         }
     }

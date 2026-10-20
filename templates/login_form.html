@@ -1,0 +1,24 @@
+{% extends "minimal.html" %}
+{% block main %}
+<div class="pin-box">
+  <span class="avatar avatar-large pc-{{ profile.color }}" aria-hidden="true">{{ profile.initials }}</span>
+  <h1>{{ profile.name }}</h1>
+  {%- if !profile.has_password %}
+  <p class="muted">This profile has no password, so it can be used only on the computer with the library. Set a password on My profile there.</p>
+  {%- else %}
+  <form action="{{ action }}" method="post" class="pin-form login-form">
+    <input type="hidden" name="next" value="{{ next }}">
+    <label for="password">Password</label>
+    <input type="password" id="password" name="password" autocomplete="current-password" maxlength="1024" required autofocus{% if disabled %} disabled{% endif %}{% if error.is_some() %} aria-invalid="true" aria-describedby="password-error"{% endif %}>
+    {%- if let Some(error) = error %}
+    <p class="field-error" id="password-error" role="alert">{{ error }}</p>
+    {%- endif %}
+    <label class="check"><input type="checkbox" name="remember" value="1"{% if remember %} checked{% endif %}{% if disabled %} disabled{% endif %}> Remember this device</label>
+    <button type="submit" class="primary"{% if disabled %} disabled{% endif %}>Log in</button>
+  </form>
+  {%- endif %}
+  {%- if several %}
+  <p><a href="{{ layout.urls.login(Some(next.as_str())) }}">Choose another profile</a></p>
+  {%- endif %}
+</div>
+{%- endblock %}

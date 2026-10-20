@@ -1,4 +1,4 @@
-//! Profiles in the user-data database (table `profiles`, schema v3).
+//! Profiles in the user-data database (table `profiles`, schema v4).
 //!
 //! Functions take a [`Connection`] to `userdata.sqlite` (see
 //! [`UserData`](crate::annotations::store::UserData)). Names are trimmed, 1–32
@@ -85,7 +85,8 @@ fn same_name(a: &str, b: &str) -> bool {
 
 const COLUMNS: &str = "p.id, p.name, p.color, p.role, p.pin_hash IS NOT NULL, p.share_activity, \
     p.settings, p.created_at, \
-    (SELECT max(last_seen_at) FROM profile_sessions s WHERE s.profile_id = p.id)";
+    (SELECT max(last_seen_at) FROM profile_sessions s WHERE s.profile_id = p.id), \
+    p.password_hash IS NOT NULL";
 
 fn profile_row(row: &Row<'_>) -> rusqlite::Result<Profile> {
     let role: String = row.get(3)?;
@@ -100,6 +101,7 @@ fn profile_row(row: &Row<'_>) -> rusqlite::Result<Profile> {
         settings: settings.as_deref().map(ProfileSettings::parse),
         created_at: row.get(7)?,
         last_seen_at: row.get(8)?,
+        has_password: row.get(9)?,
     })
 }
 
@@ -260,6 +262,44 @@ pub fn set_pin_hash(
     )?)
 }
 
+/// The PHC string of a profile's password, if it has one.
+pub fn password_hash(conn: &Connection, id: ProfileId) -> Result<Option<String>, StorageError> {
+    Ok(conn
+        .query_row(
+            "SELECT password_hash FROM profiles WHERE id = ?1",
+            [id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten())
+}
+
+/// Sets (a PHC string from [`password::hash`](super::password::hash)) or removes
+/// (`None`) a profile's password at `now`. The caller ends the profile's other password
+/// sessions (see [`session::end_password_sessions`](super::session::end_password_sessions)).
+pub fn set_password_hash(
+    conn: &Connection,
+    id: ProfileId,
+    hash: Option<&str>,
+    now: i64,
+) -> Result<(), ProfileError> {
+    changed(conn.execute(
+        "UPDATE profiles SET password_hash = ?2, password_changed_at = ?3 WHERE id = ?1",
+        params![id, hash, now],
+    )?)
+}
+
+/// Whether an admin profile has a password (so `[server] auth = "password"` leaves
+/// someone able to manage the instance from another device).
+pub fn admin_has_password(conn: &Connection) -> Result<bool, StorageError> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM profiles
+                        WHERE role = 'admin' AND password_hash IS NOT NULL)",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
 /// Sets whether the other profiles see what this one is reading.
 pub fn set_sharing(conn: &Connection, id: ProfileId, share: bool) -> Result<(), ProfileError> {
     changed(conn.execute(
@@ -304,7 +344,7 @@ mod tests {
         assert_eq!(owner.id, ProfileId::OWNER);
         assert_eq!(owner.name, "Me");
         assert_eq!((owner.role, owner.color), (Role::Admin, 0));
-        assert!(!owner.has_pin && !owner.share_activity);
+        assert!(!owner.has_pin && !owner.has_password && !owner.share_activity);
         assert_eq!(owner.settings, None);
     }
 
@@ -375,6 +415,39 @@ mod tests {
         assert!(get(&conn, p.id).unwrap().is_none());
         assert!(matches!(delete(&conn, p.id), Err(ProfileError::NotFound)));
         create(&conn, "One more", 0, Role::Reader, 0).unwrap();
+    }
+
+    #[test]
+    fn passwords_are_stored_apart_from_pins() {
+        let data = UserData::open_in_memory().unwrap();
+        let conn = data.lock();
+        let anna = create(&conn, "Anna", 1, Role::Reader, 0).unwrap();
+        assert!(!admin_has_password(&conn).unwrap());
+        set_password_hash(&conn, anna.id, Some("$argon2id$a"), 5).unwrap();
+        assert!(!admin_has_password(&conn).unwrap(), "a reader");
+        let anna = get(&conn, anna.id).unwrap().unwrap();
+        assert!(anna.has_password && !anna.has_pin);
+        assert_eq!(
+            password_hash(&conn, anna.id).unwrap().as_deref(),
+            Some("$argon2id$a")
+        );
+        assert_eq!(pin_hash(&conn, anna.id).unwrap(), None);
+        set_password_hash(&conn, ProfileId::OWNER, Some("$argon2id$o"), 6).unwrap();
+        assert!(admin_has_password(&conn).unwrap());
+        let changed_at: Option<i64> = conn
+            .query_row(
+                "SELECT password_changed_at FROM profiles WHERE id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(changed_at, Some(6));
+        set_password_hash(&conn, ProfileId::OWNER, None, 7).unwrap();
+        assert!(!admin_has_password(&conn).unwrap());
+        assert!(matches!(
+            set_password_hash(&conn, ProfileId(99), None, 7),
+            Err(ProfileError::NotFound)
+        ));
     }
 
     #[test]

@@ -474,3 +474,21 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
         self.clone()
     }
 }
+
+/// The peer address of the requests [`local`] routers see: this computer.
+pub const LOCAL_PEER: ([u8; 4], u16) = ([127, 0, 0, 1], 50000);
+
+/// `router` as the server runs it for requests from this computer: with a loopback
+/// TCP peer (the server takes it from the connection; oneshot tests need the mock).
+pub fn local(router: axum::Router) -> axum::Router {
+    router.layer(axum::extract::connect_info::MockConnectInfo(
+        std::net::SocketAddr::from(LOCAL_PEER),
+    ))
+}
+
+/// `router` with requests from another device at `peer` (e.g. `"100.64.0.2:40000"`).
+pub fn from_peer(router: axum::Router, peer: &str) -> axum::Router {
+    router.layer(axum::extract::connect_info::MockConnectInfo(
+        peer.parse::<std::net::SocketAddr>().unwrap(),
+    ))
+}

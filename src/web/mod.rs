@@ -8,9 +8,12 @@
 //! settings and maintenance)
 //! and *user writes* (annotations, reading position); all but public pass through the
 //! authentication slot
-//! ([`security::Auth`]). Every request goes through the `Host` check and, for
-//! state-changing methods, the `Origin` check (see [`security`]). All paths are
-//! registered and generated through [`Urls`], which applies `server.base_path`.
+//! ([`security::Auth`]). The picker and the login pages sit outside it: they are where
+//! a profile is chosen or logged into, and handle requests from other devices
+//! themselves. Every request goes through the `Host` check, the reach classification
+//! (this computer or another device) and, for state-changing methods, the `Origin`
+//! check (see [`security`]). All paths are registered and generated through [`Urls`],
+//! which applies `server.base_path`.
 
 use std::collections::VecDeque;
 use std::future::Future;
@@ -35,6 +38,7 @@ use crate::format::Registry;
 use crate::format::model::BookContent;
 use crate::library::Library;
 use crate::logging::in_current_span;
+use crate::profiles::password::AddressLimiter;
 use crate::profiles::pin::PinLimiter;
 use crate::render::load;
 use crate::scanner::BackgroundScan;
@@ -56,7 +60,7 @@ mod urls;
 
 use error::AppError;
 
-pub use security::{Auth, HostAllowlist};
+pub use security::{Auth, HostAllowlist, Reach};
 pub use urls::Urls;
 
 /// Errors that keep the server from starting.
@@ -64,12 +68,20 @@ pub use urls::Urls;
 pub enum WebError {
     /// `bind` is not a loopback address and no authentication is configured.
     #[error(
-        "refusing to listen on {0}: it is not a loopback address and shelfgauge has no \
-         authentication. Use 127.0.0.1 or ::1; for remote access, put a reverse proxy \
-         with HTTPS and authentication in front of it, or use an SSH tunnel or a private \
-         network"
+        "refusing to listen on {0}: it is not a loopback address and `auth` is \"none\". \
+         Use 127.0.0.1 or ::1, or for access from other devices set `auth = \"password\"` \
+         in the [server] section of .shelfgauge/config.toml and give an admin profile a \
+         password (`shelfgauge profiles set-password <name>`)"
     )]
     UnsafeBind(IpAddr),
+
+    /// `auth = "password"`, but no admin profile has a password.
+    #[error(
+        "`auth = \"password\"` needs an admin profile with a password, or nobody could \
+         manage this library from another device. Set one with `shelfgauge profiles \
+         set-password <name>`"
+    )]
+    NoAdminPassword,
 
     /// The fixed port is taken by another program.
     #[error(
@@ -125,6 +137,10 @@ struct Inner {
     slow_request: Duration,
     /// Wrong PINs per profile and their lockouts.
     pins: PinLimiter,
+    /// Wrong passwords per profile and their lockouts.
+    passwords: PinLimiter,
+    /// Failed logins per directly connected client address.
+    addresses: AddressLimiter,
 }
 
 /// A value derived from the index, kept until a scan is recorded (see
@@ -197,7 +213,7 @@ impl AppState {
             ),
             exporter,
             hosts: HostAllowlist::new(&config.server),
-            auth: Auth::None,
+            auth: Auth::from_config(&config.server),
             pool,
             scan,
             registry: Registry::with_builtin_formats(),
@@ -206,6 +222,8 @@ impl AppState {
             identical: ScanCache::new(),
             slow_request: trace::SLOW_REQUEST,
             pins: PinLimiter::new(),
+            passwords: PinLimiter::new(),
+            addresses: AddressLimiter::new(),
         }))
     }
 
@@ -318,9 +336,20 @@ impl AppState {
         &self.0.exporter
     }
 
-    /// The lockout of wrong profile PINs.
+    /// The lockout of wrong profile PINs; its [`hashing`](PinLimiter::hashing) lock
+    /// serializes every argon2 run, of PINs and passwords.
     pub(crate) fn pins(&self) -> &PinLimiter {
         &self.0.pins
+    }
+
+    /// The lockout of wrong profile passwords.
+    pub(crate) fn passwords(&self) -> &PinLimiter {
+        &self.0.passwords
+    }
+
+    /// The budget of failed logins per client address.
+    pub(crate) fn addresses(&self) -> &AddressLimiter {
+        &self.0.addresses
     }
 
     /// The content of `book`, from memory, the content cache or the book file.
@@ -545,7 +574,9 @@ pub fn router(state: AppState) -> Router {
     let profile = || from_fn_with_state(state.clone(), profile::require_profile);
 
     let public = Router::new().route(&urls.path("/assets/{*path}"), get(assets::serve));
-    // The picker needs no profile (it is where one is chosen).
+    // The picker and the login need no profile (they are where one is chosen) and sit
+    // outside the auth slot (a remote request without a session must reach the login);
+    // they send remote requests to the login themselves.
     let picker = Router::new()
         .route(&urls.path("/profiles"), get(routes::profiles::picker))
         .route(
@@ -556,7 +587,11 @@ pub fn router(state: AppState) -> Router {
             &urls.path("/profiles/{id}/pin"),
             get(routes::profiles::pin_page).post(routes::profiles::pin),
         )
-        .route_layer(auth());
+        .route(&urls.path("/login"), get(routes::login::picker))
+        .route(
+            &urls.path("/login/{id}"),
+            get(routes::login::form).post(routes::login::login),
+        );
     let read = Router::new()
         .route(&urls.home(), get(routes::library::home))
         .route(&urls.path("/authors"), get(routes::library::authors))
@@ -597,7 +632,7 @@ pub fn router(state: AppState) -> Router {
         .fold(Router::new(), |router, (path, handlers)| {
             router.route(&path, handlers)
         })
-        .route_layer(from_fn(profile::require_admin))
+        .route_layer(from_fn_with_state(state.clone(), profile::require_admin))
         .route_layer(profile())
         .route_layer(auth());
     // User writes (annotations, reading position, the own profile): behind the Origin
@@ -628,6 +663,7 @@ pub fn router(state: AppState) -> Router {
             post(routes::annotations::clear_reading),
         )
         .route(&urls.leave_profile(), post(routes::profiles::leave))
+        .route(&urls.logout(), post(routes::profiles::leave))
         .route(&urls.my_profile(), post(routes::profiles::save_my_profile))
         .route(
             &urls.profile_settings(),
@@ -653,12 +689,13 @@ fn with_layers(app: Router<AppState>, state: AppState) -> Router {
         assets: state.urls().path("/assets/{*path}").into(),
         slow: state.0.slow_request,
     };
-    // The last layer added runs first: the request span, headers, Host, Origin, error
-    // pages; a panic is caught inside, so it gets the error page and the request id.
+    // The last layer added runs first: the request span, headers, Host, reach, Origin,
+    // error pages; a panic is caught inside, so it gets the error page and the request id.
     app.fallback(error::not_found)
         .layer(from_fn(trace::catch_panics))
         .layer(from_fn_with_state(state.clone(), error::render_errors))
         .layer(from_fn_with_state(state.clone(), security::check_origin))
+        .layer(from_fn_with_state(state.clone(), security::classify_reach))
         .layer(from_fn_with_state(state.clone(), security::check_host))
         .layer(from_fn(security::security_headers))
         .layer(from_fn_with_state(trace, trace::trace_requests))
@@ -666,16 +703,20 @@ fn with_layers(app: Router<AppState>, state: AppState) -> Router {
 }
 
 /// Serves `router` on `listener` until `shutdown` completes, then lets open requests
-/// finish.
+/// finish. Each request carries its TCP peer address, which tells requests from this
+/// computer from those of other devices.
 pub async fn serve(
     listener: std::net::TcpListener,
     router: Router,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<()> {
     let listener = tokio::net::TcpListener::from_std(listener)?;
-    axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown)
-        .await
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown)
+    .await
 }
 
 /// The address to show to the user for a listening address: loopback stays as is, and
@@ -745,7 +786,14 @@ mod tests {
                 }),
             )
             .route("/assets/{*path}", get(|| async { "body {}" }));
-        with_layers(routes, state)
+        local(with_layers(routes, state))
+    }
+
+    /// `app` with requests from this computer (a loopback peer).
+    fn local(app: Router) -> Router {
+        app.layer(axum::extract::connect_info::MockConnectInfo(
+            SocketAddr::from(([127, 0, 0, 1], 50000)),
+        ))
     }
 
     fn get_request(uri: &str) -> Request<Body> {
@@ -888,7 +936,7 @@ mod tests {
     #[tokio::test]
     async fn only_the_internal_error_page_shows_the_request_id() {
         let (_dir, state) = test_state(SLOW_REQUEST_FOR_TESTS);
-        let app = with_layers(
+        let app = local(with_layers(
             Router::new()
                 .route(
                     "/broken",
@@ -899,7 +947,7 @@ mod tests {
                     get(|| async { Err::<(), _>(AppError::Unreadable("bad".into())) }),
                 ),
             state,
-        );
+        ));
         let body = |uri: &'static str| {
             let app = app.clone();
             async move {
@@ -928,14 +976,21 @@ mod tests {
                 0,
             )
             .unwrap();
-            crate::profiles::session::create(&conn, reader.id, 0).unwrap()
+            crate::profiles::session::create(
+                &conn,
+                reader.id,
+                crate::profiles::session::Level::Local,
+                false,
+                0,
+            )
+            .unwrap()
         };
         let paths: Vec<String> = admin_routes(state.urls())
             .into_iter()
             .map(|(path, _)| path.replace("{id}", "1").replace("{action}", "delete"))
             .collect();
         assert!(paths.len() >= 7, "{paths:?}");
-        let app = router(state);
+        let app = local(router(state));
         for path in paths {
             let mut refused = 0;
             for method in ["GET", "POST"] {

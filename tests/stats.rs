@@ -131,7 +131,7 @@ impl TestLibrary {
         let state = AppState::new(self.library.clone(), &config, pool, Arc::clone(&scan))
             .with_annotations(Arc::clone(&self.userdata), exporter);
         Server {
-            router: web::router(state),
+            router: common::local(web::router(state)),
             scan,
         }
     }

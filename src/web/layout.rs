@@ -130,8 +130,12 @@ pub(crate) struct LayoutProfile {
     pub(crate) initials: String,
     /// The palette index (`data-pcolor`, omitted for 0).
     pub(crate) color: u8,
-    /// Whether the gear, Rescan and the admin menu entries are shown.
+    /// Whether the gear, Rescan and the admin menu entries are shown (an admin, and on
+    /// another device only with `remote_admin`).
     pub(crate) admin: bool,
+    /// Whether the page is shown on another device: the avatar menu is shown with
+    /// *Sign out* instead of *Switch profile*.
+    pub(crate) remote: bool,
     /// The theme (`data-theme`); empty for the system theme.
     pub(crate) theme: String,
     /// The reader settings as `data-*` attributes: `(attribute, value)`.
@@ -143,7 +147,7 @@ pub(crate) struct LayoutProfile {
 
 impl LayoutProfile {
     /// The view of the request's profile.
-    pub(crate) fn of(current: &CurrentProfile) -> Self {
+    pub(crate) fn of(state: &AppState, current: &CurrentProfile) -> Self {
         let profile = &current.profile;
         let settings = profile.settings.clone().unwrap_or_default();
         Self {
@@ -151,7 +155,8 @@ impl LayoutProfile {
             name: profile.name.clone(),
             initials: profile.initials(),
             color: profile.color,
-            admin: profile.is_admin(),
+            admin: current.admin_here(state),
+            remote: current.remote,
             theme: settings.get("theme").unwrap_or("").to_owned(),
             reader: READER_ATTRS
                 .iter()
@@ -170,6 +175,7 @@ impl LayoutProfile {
             initials: String::new(),
             color: 0,
             admin: false,
+            remote: false,
             theme: String::new(),
             reader: Vec::new(),
             adopt: false,
@@ -203,7 +209,7 @@ impl Layout {
         title: impl Into<String>,
         sidebar: SidebarView,
     ) -> Self {
-        Self::with_profile(state, LayoutProfile::of(profile), title, sidebar)
+        Self::with_profile(state, LayoutProfile::of(state, profile), title, sidebar)
     }
 
     fn with_profile(
@@ -230,7 +236,7 @@ impl Layout {
         profile: Option<&CurrentProfile>,
         title: impl Into<String>,
     ) -> Self {
-        let profile = profile.map_or_else(LayoutProfile::none, LayoutProfile::of);
+        let profile = profile.map_or_else(LayoutProfile::none, |p| LayoutProfile::of(state, p));
         Self::with_profile(state, profile, title, SidebarView::default())
     }
 

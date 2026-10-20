@@ -627,7 +627,29 @@ fn server_rows(state: &AppState, file: Option<&ServerConfig>) -> Vec<Row> {
             note: restart(file.map(|f| f.base_path.clone()), &running.base_path),
             value: running.base_path.clone(),
         },
+        Row {
+            link: None,
+            label: "Login from other devices",
+            note: restart(
+                file.map(|f| f.auth.as_str().to_owned()),
+                running.auth.as_str(),
+            ),
+            value: running.auth.as_str().to_owned(),
+        },
+        Row {
+            link: None,
+            label: "Admin pages from other devices",
+            note: restart(
+                file.map(|f| yes_no(f.remote_admin)),
+                &yes_no(running.remote_admin),
+            ),
+            value: yes_no(running.remote_admin),
+        },
     ]
+}
+
+fn yes_no(value: bool) -> String {
+    if value { "yes" } else { "no" }.to_owned()
 }
 
 /// Facts about the library: version, paths, sizes and the last scan. The cache sizes

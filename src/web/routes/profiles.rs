@@ -2,10 +2,13 @@
 //! reader settings, and the admin's profile management (on the settings page).
 //!
 //! The picker routes need no profile (they are where one is chosen); they sit behind
-//! the Host and Origin checks and the auth slot like every other route. Every choice
-//! starts a new session with a new token (no session fixation); a PIN set, change or
-//! removal ends the profile's other sessions and renews the current token. PINs, names
-//! and tokens are never logged, only profile ids.
+//! the Host and Origin checks, but outside the auth slot: requests from other devices
+//! are sent to the login ([`super::login`]) instead, before any PIN is tried, since a
+//! PIN is never accepted from another device. Every choice starts a new session with
+//! a new token (no session fixation); a PIN set, change or removal ends the profile's
+//! other sessions and renews the current token, a password set, change or removal
+//! ends its other password sessions. PINs, passwords, names and tokens are never
+//! logged, only profile ids.
 
 use std::time::Instant;
 
@@ -22,12 +25,16 @@ use super::annotations::ApiError;
 use super::{parse_id, render};
 use crate::annotations::attach;
 use crate::annotations::now;
+use crate::profiles::password;
 use crate::profiles::pin::{self, Failure};
-use crate::profiles::session::{self, Token};
+use crate::profiles::session::{self, Level, Token};
 use crate::profiles::store::{self, ProfileError};
 use crate::profiles::{COLOR_NAMES, COLORS, Profile, ProfileId, ProfileSettings, Role};
 use crate::web::layout::{Layout, SidebarMode};
-use crate::web::profile::{CurrentProfile, clear_cookie, cookie_tokens, local_path, set_cookie};
+use crate::web::profile::{
+    CurrentProfile, Keep, clear_cookie, cookie_tokens, local_path, set_cookie,
+};
+use crate::web::security::Peer;
 use crate::web::sidebar::{self, Focus};
 use crate::web::{AppError, AppState, Urls};
 
@@ -38,12 +45,12 @@ pub(crate) struct Next {
 }
 
 impl Next {
-    fn from(query: Result<Query<Next>, QueryRejection>) -> Self {
+    pub(crate) fn from(query: Result<Query<Next>, QueryRejection>) -> Self {
         query.map(|Query(next)| next).unwrap_or_default()
     }
 
     /// The local page to go to (the home page if missing or not local).
-    fn path(&self, urls: &Urls) -> String {
+    pub(crate) fn path(&self, urls: &Urls) -> String {
         local_path(urls, self.next.as_deref())
     }
 }
@@ -57,6 +64,7 @@ pub(crate) struct ProfileView {
     pub(crate) admin: bool,
     pub(crate) owner: bool,
     pub(crate) has_pin: bool,
+    pub(crate) has_password: bool,
     /// "2026-10-19" or "never".
     pub(crate) last_seen: String,
 }
@@ -71,6 +79,7 @@ impl ProfileView {
             admin: profile.is_admin(),
             owner: profile.id.is_owner(),
             has_pin: profile.has_pin,
+            has_password: profile.has_password,
             last_seen: profile
                 .last_seen_at
                 .map_or_else(|| "never".to_owned(), super::date),
@@ -105,12 +114,16 @@ struct PickerPage {
 }
 
 /// `GET /profiles`: the picker. With a single profile there is nothing to choose: back
-/// to `next`.
+/// to `next`. From another device: the login.
 pub(crate) async fn picker(
     State(state): State<AppState>,
+    peer: Peer,
     query: Result<Query<Next>, QueryRejection>,
 ) -> Result<Response, AppError> {
     let next = Next::from(query).path(state.urls());
+    if peer.is_remote() {
+        return Ok(Redirect::to(&state.urls().login(Some(&next))).into_response());
+    }
     let profiles = user(&state, |_, conn| Ok(store::list(conn)?)).await?;
     if profiles.len() <= 1 {
         return Ok(Redirect::to(&next).into_response());
@@ -124,7 +137,7 @@ pub(crate) async fn picker(
 }
 
 /// Runs `f` with the locked user-data connection on a blocking thread.
-async fn user<T: Send + 'static>(
+pub(crate) async fn user<T: Send + 'static>(
     state: &AppState,
     f: impl FnOnce(&AppState, &Connection) -> Result<T, AppError> + Send + 'static,
 ) -> Result<T, AppError> {
@@ -140,15 +153,20 @@ pub(crate) struct SelectForm {
 }
 
 /// `POST /profiles/{id}/select`: a profile without a PIN starts a session (cookie,
-/// `303` to `next`); one with a PIN goes to its PIN page.
+/// `303` to `next`); one with a PIN goes to its PIN page. From another device: the
+/// profile's password form.
 pub(crate) async fn select(
     State(state): State<AppState>,
+    peer: Peer,
     headers: HeaderMap,
     Path(id): Path<String>,
     form: Result<Form<SelectForm>, FormRejection>,
 ) -> Result<Response, AppError> {
     let id = ProfileId(parse_id(&id)?);
     let next = local_path(state.urls(), form.ok().map(|Form(f)| f.next).as_deref());
+    if peer.is_remote() {
+        return Ok(Redirect::to(&state.urls().login_profile(id.0, Some(&next))).into_response());
+    }
     let profile = user(&state, move |_, conn| Ok(store::get(conn, id)?))
         .await?
         .ok_or(AppError::NotFound)?;
@@ -163,28 +181,42 @@ pub(crate) async fn select(
     start_session(&state, &headers, id, &next).await
 }
 
-/// Starts a session of `profile` (ending the sessions in the request's cookies) and
-/// redirects to `next` with the cookie.
+/// Starts a local session of `profile` (ending the sessions in the request's cookies)
+/// and redirects to `next` with the cookie.
 async fn start_session(
     state: &AppState,
     headers: &HeaderMap,
     profile: ProfileId,
     next: &str,
 ) -> Result<Response, AppError> {
-    let old = cookie_tokens(headers);
-    let token = user(state, move |_, conn| {
-        for token in &old {
-            session::end(conn, token)?;
-        }
-        Ok(session::create(conn, profile, now())?)
-    })
-    .await?;
+    let token = new_session(state, headers, profile, Level::Local, false).await?;
     tracing::info!(profile = profile.0, "profile selected");
     Ok((
-        [(header::SET_COOKIE, set_cookie(state, headers, &token))],
+        [(
+            header::SET_COOKIE,
+            set_cookie(state, headers, &token, Keep::Remember),
+        )],
         Redirect::to(next),
     )
         .into_response())
+}
+
+/// Ends the sessions in the request's cookies and starts a new one of `profile`.
+pub(crate) async fn new_session(
+    state: &AppState,
+    headers: &HeaderMap,
+    profile: ProfileId,
+    level: Level,
+    remote: bool,
+) -> Result<Token, AppError> {
+    let old = cookie_tokens(headers);
+    user(state, move |_, conn| {
+        for token in &old {
+            session::end(conn, token)?;
+        }
+        Ok(session::create(conn, profile, level, remote, now())?)
+    })
+    .await
 }
 
 #[derive(Template)]
@@ -201,7 +233,7 @@ struct PinPage {
 }
 
 /// "30 seconds", "2 minutes".
-fn wait_text(wait: std::time::Duration) -> String {
+pub(crate) fn wait_text(wait: std::time::Duration) -> String {
     let seconds = wait.as_secs().max(1);
     if seconds < 90 {
         super::figures::count(seconds, "second", "seconds")
@@ -214,14 +246,19 @@ fn locked_text(wait: std::time::Duration) -> String {
     format!("Too many wrong PINs. Try again in {}.", wait_text(wait))
 }
 
-/// `GET /profiles/{id}/pin`: the PIN form of a profile.
+/// `GET /profiles/{id}/pin`: the PIN form of a profile. From another device: the
+/// profile's password form.
 pub(crate) async fn pin_page(
     State(state): State<AppState>,
+    peer: Peer,
     Path(id): Path<String>,
     query: Result<Query<Next>, QueryRejection>,
 ) -> Result<Response, AppError> {
     let id = ProfileId(parse_id(&id)?);
     let next = Next::from(query).path(state.urls());
+    if peer.is_remote() {
+        return Ok(Redirect::to(&state.urls().login_profile(id.0, Some(&next))).into_response());
+    }
     let profile = user(&state, move |_, conn| Ok(store::get(conn, id)?))
         .await?
         .ok_or(AppError::NotFound)?;
@@ -334,9 +371,12 @@ fn wrong_pin(failure: Failure) -> (StatusCode, String, bool) {
 }
 
 /// `POST /profiles/{id}/pin`: checks the PIN; right: a session (cookie, `303` to
-/// `next`); wrong: `422` with the tries left; locked: `429` with the wait.
+/// `next`); wrong: `422` with the tries left; locked: `429` with the wait. From another
+/// device the PIN is not even tried (it would count against the person at the
+/// computer): the profile's password form.
 pub(crate) async fn pin(
     State(state): State<AppState>,
+    peer: Peer,
     headers: HeaderMap,
     Path(id): Path<String>,
     form: Result<Form<PinForm>, FormRejection>,
@@ -344,6 +384,9 @@ pub(crate) async fn pin(
     let id = ProfileId(parse_id(&id)?);
     let form = form.map(|Form(f)| f).unwrap_or_default();
     let next = local_path(state.urls(), Some(&form.next));
+    if peer.is_remote() {
+        return Ok(Redirect::to(&state.urls().login_profile(id.0, Some(&next))).into_response());
+    }
     let profile = user(&state, move |_, conn| Ok(store::get(conn, id)?))
         .await?
         .ok_or(AppError::NotFound)?;
@@ -356,9 +399,11 @@ pub(crate) async fn pin(
     Ok((status, render(&page)?).into_response())
 }
 
-/// `POST /profiles/leave`: ends the session (row and cookie) and goes to the picker.
+/// `POST /profiles/leave` and `POST /logout`: ends the session (row and cookie) and
+/// goes to the picker, or from another device to the login.
 pub(crate) async fn leave(
     State(state): State<AppState>,
+    peer: Peer,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
     let tokens = cookie_tokens(&headers);
@@ -369,9 +414,14 @@ pub(crate) async fn leave(
         Ok(())
     })
     .await?;
+    let to = if peer.is_remote() {
+        state.urls().login(None)
+    } else {
+        state.urls().profiles(None)
+    };
     Ok((
         [(header::SET_COOKIE, clear_cookie(&state))],
-        Redirect::to(&state.urls().profiles(None)),
+        Redirect::to(&to),
     )
         .into_response())
 }
@@ -458,6 +508,11 @@ struct MyProfilePage {
     themes: Vec<ThemeChoice>,
     reader_summary: String,
     reader_default: bool,
+    /// Whether the request comes from another device (the password cannot be removed
+    /// from there).
+    remote: bool,
+    /// Whether `[server] auth = "password"` (the password is used).
+    auth: bool,
     /// The notice at the top (what was just done).
     notice: Option<String>,
     /// Field errors: `(field, message)`.
@@ -466,6 +521,7 @@ struct MyProfilePage {
     name: String,
     action: String,
     leave_action: String,
+    logout_action: String,
 }
 
 impl MyProfilePage {
@@ -491,6 +547,14 @@ fn done_text(done: Option<&str>) -> Option<String> {
             "pin-removed" => "Your PIN was removed. Your other devices were signed out.",
             "reading" => "The reading settings are back to their defaults.",
             "signed-out" => "Your other devices were signed out.",
+            "password-set" => {
+                "Your password was saved. Your other devices that logged in with it were \
+                 signed out."
+            }
+            "password-removed" => {
+                "Your password was removed: this profile can be used only on the computer \
+                 with the library."
+            }
             _ => return None,
         }
         .to_owned(),
@@ -532,11 +596,14 @@ fn my_profile_page(
             .collect(),
         reader_default: summary == "default",
         reader_summary: summary,
+        remote: current.remote,
+        auth: state.auth().is_configured(),
         notice,
         errors,
         name: name.unwrap_or_else(|| profile.name.clone()),
         action: urls.my_profile(),
         leave_action: urls.leave_profile(),
+        logout_action: urls.logout(),
     })
 }
 
@@ -575,6 +642,12 @@ pub(crate) struct MyProfileForm {
     new_pin: String,
     #[serde(default)]
     confirm_pin: String,
+    #[serde(default)]
+    current_password: String,
+    #[serde(default)]
+    new_password: String,
+    #[serde(default)]
+    confirm_password: String,
 }
 
 /// What a My profile post did.
@@ -587,8 +660,10 @@ enum Saved {
 
 /// `POST /profile` (form): saves the name, color, sharing and theme
 /// (`action=details`), sets, changes or removes the PIN (`set-pin`, `remove-pin`; the
-/// current PIN is needed when there is one), resets the reading settings
-/// (`reset-reading`) or ends the other sessions (`sign-out-others`).
+/// current PIN is needed when there is one) or the password (`set-password`,
+/// `remove-password`; the current password is needed when there is one, and it cannot
+/// be removed from another device), resets the reading settings (`reset-reading`) or
+/// ends the other sessions (`sign-out-others`).
 /// Post/redirect/get; `422` with field errors.
 pub(crate) async fn save_my_profile(
     State(state): State<AppState>,
@@ -600,7 +675,17 @@ pub(crate) async fn save_my_profile(
     let id = current.id();
     let saved = match form.action.as_str() {
         "details" => save_details(&state, &current, &form).await?,
+        // A PIN is never checked from another device: its tries would count against
+        // the person at the computer.
+        "set-pin" | "remove-pin" if current.remote => Saved::Refused(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            vec![(
+                "new_pin",
+                "The PIN can be changed only on the computer with the library.".to_owned(),
+            )],
+        ),
         "set-pin" | "remove-pin" => save_pin(&state, &current, &form).await?,
+        "set-password" | "remove-password" => save_password(&state, &current, &form).await?,
         "reset-reading" => {
             let mut settings = ProfileSettings::default();
             if let Some(theme) = current
@@ -632,7 +717,10 @@ pub(crate) async fn save_my_profile(
             let url = format!("{}?done={done}", state.urls().my_profile());
             match token {
                 Some(token) => Ok((
-                    [(header::SET_COOKIE, set_cookie(&state, &headers, &token))],
+                    [(
+                        header::SET_COOKIE,
+                        set_cookie(&state, &headers, &token, Keep::Remember),
+                    )],
                     Redirect::to(&url),
                 )
                     .into_response()),
@@ -773,6 +861,162 @@ async fn save_pin(
     ))
 }
 
+/// What checking a password gave (the message of a wrong one, for the form).
+pub(crate) enum CheckedPassword {
+    Ok,
+    Wrong(StatusCode, String),
+}
+
+/// The message and status of a wrong password.
+pub(crate) fn wrong_password(failure: Failure) -> (StatusCode, String) {
+    match failure {
+        Failure::TriesLeft(left) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!(
+                "Wrong password. {} left.",
+                super::figures::count(left.into(), "try", "tries")
+            ),
+        ),
+        Failure::Locked(wait) => (StatusCode::TOO_MANY_REQUESTS, password_locked_text(wait)),
+    }
+}
+
+pub(crate) fn password_locked_text(wait: std::time::Duration) -> String {
+    format!(
+        "Too many wrong passwords. Try again in {}.",
+        wait_text(wait)
+    )
+}
+
+/// Checks `entered` against the password of `profile` with the profile's lockout, as
+/// [`check_pin`] does: the try is counted first, the hash read under the user-data
+/// lock and verified after it is released, one argon2 run at a time. A profile
+/// without a password never matches.
+pub(crate) async fn check_password(
+    state: &AppState,
+    profile: ProfileId,
+    entered: String,
+) -> Result<CheckedPassword, AppError> {
+    let wrong = match state.passwords().begin(profile, Instant::now()) {
+        Ok(wrong) => wrong,
+        Err(wait) => {
+            return Ok(CheckedPassword::Wrong(
+                StatusCode::TOO_MANY_REQUESTS,
+                password_locked_text(wait),
+            ));
+        }
+    };
+    let hash = user(state, move |_, conn| {
+        Ok(store::password_hash(conn, profile)?)
+    })
+    .await?;
+    let s = state.clone();
+    let ok = crate::web::blocking(move || match hash {
+        Some(hash) => {
+            let _one = s.pins().hashing();
+            password::verify(&entered, &hash)
+        }
+        None => false,
+    })
+    .await?;
+    if ok {
+        state.passwords().success(profile);
+        return Ok(CheckedPassword::Ok);
+    }
+    match wrong {
+        Failure::TriesLeft(left) => {
+            tracing::info!(profile = profile.0, tries_left = left, "password rejected");
+        }
+        Failure::Locked(wait) => {
+            tracing::warn!(
+                profile = profile.0,
+                seconds = wait.as_secs(),
+                "password locked"
+            );
+        }
+    }
+    let (status, message) = wrong_password(wrong);
+    Ok(CheckedPassword::Wrong(status, message))
+}
+
+async fn save_password(
+    state: &AppState,
+    current: &CurrentProfile,
+    form: &MyProfileForm,
+) -> Result<Saved, AppError> {
+    let id = current.id();
+    let remove = form.action == "remove-password";
+    if remove && current.remote {
+        return Ok(Saved::Refused(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            vec![(
+                "current_password",
+                "The password can be removed only on the computer with the library.".to_owned(),
+            )],
+        ));
+    }
+    if current.profile.has_password {
+        if let CheckedPassword::Wrong(status, message) =
+            check_password(state, id, form.current_password.clone()).await?
+        {
+            return Ok(Saved::Refused(status, vec![("current_password", message)]));
+        }
+    } else if remove {
+        return Ok(Saved::Done("password-removed", None));
+    }
+    let hash = if remove {
+        None
+    } else {
+        if let Err(e) = password::check_format(&form.new_password) {
+            let message = match e {
+                password::PasswordError::TooLong => "A password has at most 128 characters.",
+                _ => "A password has at least 10 characters.",
+            };
+            return Ok(Saved::Refused(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                vec![("new_password", message.to_owned())],
+            ));
+        }
+        if form.new_password != form.confirm_password {
+            return Ok(Saved::Refused(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                vec![("confirm_password", "The two passwords differ.".to_owned())],
+            ));
+        }
+        Some(hash_password(state, form.new_password.clone()).await?)
+    };
+    // The session of this request stays (a password session from another device, or
+    // a local one); the other devices log in again.
+    let keep = current.token.clone();
+    user(state, move |_, conn| {
+        store::set_password_hash(conn, id, hash.as_deref(), now()).map_err(profile_error)?;
+        session::end_password_sessions(conn, id, keep.as_ref())?;
+        Ok(())
+    })
+    .await?;
+    state.passwords().success(id);
+    tracing::info!(profile = id.0, removed = remove, "password changed");
+    Ok(Saved::Done(
+        if remove {
+            "password-removed"
+        } else {
+            "password-set"
+        },
+        None,
+    ))
+}
+
+/// Hashes a new password on a blocking thread, one argon2 run at a time.
+async fn hash_password(state: &AppState, entered: String) -> Result<String, AppError> {
+    let s = state.clone();
+    crate::web::blocking(move || {
+        let _one = s.pins().hashing();
+        password::hash(&entered)
+    })
+    .await?
+    .map_err(|e| AppError::Internal(e.to_string()))
+}
+
 // ---------- Settings → Profiles (admin) ----------
 
 /// The admin's section of the settings page.
@@ -781,6 +1025,8 @@ pub(crate) struct ProfilesSection {
     pub(crate) colors: Vec<ColorChoice>,
     pub(crate) can_add: bool,
     pub(crate) add_action: String,
+    /// Whether `[server] auth = "password"` (passwords are shown).
+    pub(crate) auth: bool,
     /// The notice of the last action, if any.
     pub(crate) notice: Option<(&'static str, String)>,
 }
@@ -798,6 +1044,11 @@ impl ProfilesSection {
                 "pin-removed" => (
                     "ok",
                     "The PIN was removed; the profile's devices were signed out.".to_owned(),
+                ),
+                "password-removed" => (
+                    "ok",
+                    "The password was removed; the profile's other devices were signed out."
+                        .to_owned(),
                 ),
                 "deleted" => ("ok", "The profile was deleted.".to_owned()),
                 "duplicate" => ("error", "Another profile already has this name.".to_owned()),
@@ -817,6 +1068,11 @@ impl ProfilesSection {
                     "error",
                     "The owner profile is always an admin and cannot be deleted.".to_owned(),
                 ),
+                "own-password" => (
+                    "error",
+                    "Your own password can be removed only on the computer with the library."
+                        .to_owned(),
+                ),
                 _ => return None,
             })
         });
@@ -825,6 +1081,7 @@ impl ProfilesSection {
             profiles: profiles.iter().map(ProfileView::new).collect(),
             colors: colors(0),
             add_action: state.urls().manage_profiles(),
+            auth: state.auth().is_configured(),
             notice,
         })
     }
@@ -884,7 +1141,8 @@ pub(crate) async fn add(
         Some("admin") => Role::Admin,
         _ => Role::Reader,
     };
-    let first_other = !current.several();
+    // From another device the admin already has a password session.
+    let first_other = !current.several() && !current.remote;
     let admin = current.id();
     let outcome = user(&state, move |_, conn| {
         let profile = match store::create(conn, &form.name, color, role, now()) {
@@ -897,7 +1155,7 @@ pub(crate) async fn add(
         tracing::info!(profile = profile.id.0, "profile added");
         // The admin keeps working without choosing a profile.
         let token = if first_other {
-            Some(session::create(conn, admin, now())?)
+            Some(session::create(conn, admin, Level::Local, false, now())?)
         } else {
             None
         };
@@ -907,7 +1165,10 @@ pub(crate) async fn add(
     match outcome {
         Err(code) => Ok(back_to_profiles(&urls, code).into_response()),
         Ok(Some(token)) => Ok((
-            [(header::SET_COOKIE, set_cookie(&state, &headers, &token))],
+            [(
+                header::SET_COOKIE,
+                set_cookie(&state, &headers, &token, Keep::Remember),
+            )],
             back_to_profiles(&urls, "added"),
         )
             .into_response()),
@@ -925,10 +1186,11 @@ pub(crate) struct ManageForm {
 }
 
 /// `POST /settings/profiles/{id}/{action}` (admin): `rename`, `color`, `role`,
-/// `remove-pin`, `export` (the profile's Markdown export) or `delete` (needs the
+/// `remove-pin`, `remove-password` (ends the profile's password sessions), `export` (the profile's Markdown export) or `delete` (needs the
 /// profile's name typed in `name`).
 pub(crate) async fn manage(
     State(state): State<AppState>,
+    current: CurrentProfile,
     Path((id, action)): Path<(String, String)>,
     form: Result<Form<ManageForm>, FormRejection>,
 ) -> Result<Response, AppError> {
@@ -986,6 +1248,19 @@ pub(crate) async fn manage(
             state.pins().success(id);
             tracing::info!(profile = id.0, "pin removed by an admin");
             "pin-removed"
+        }
+        // As on My profile: not the password of this very login.
+        "remove-password" if current.remote && id == current.id() => "own-password",
+        "remove-password" => {
+            user(&state, move |_, conn| {
+                store::set_password_hash(conn, id, None, now()).map_err(profile_error)?;
+                session::end_password_sessions(conn, id, None)?;
+                Ok(())
+            })
+            .await?;
+            state.passwords().success(id);
+            tracing::info!(profile = id.0, "password removed by an admin");
+            "password-removed"
         }
         "export" => {
             let summary = state

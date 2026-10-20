@@ -16,7 +16,7 @@ use shelfgauge::config::{Config, ConfigOverrides, LiveConfig};
 use shelfgauge::container::ReadLimits;
 use shelfgauge::format::PARSER_STACK_SIZE;
 use shelfgauge::library::Library;
-use shelfgauge::profiles::{Profile, Role, store as profile_store};
+use shelfgauge::profiles::{Profile, Role, password, session, store as profile_store};
 use shelfgauge::scanner::{BackgroundScan, ScanPhase, ScanProgress, Scanner};
 use shelfgauge::web;
 
@@ -135,12 +135,17 @@ fn profiles(library: &Library, action: ProfilesAction) -> anyhow::Result<()> {
         ProfilesAction::List => {
             for profile in profile_store::list(&conn)? {
                 println!(
-                    "{:>3}  {}  {}{}  {}",
+                    "{:>3}  {}  {}{}  {}  {}",
                     profile.id,
                     profile.name,
                     profile.role.as_str(),
                     if profile.id.is_owner() { ", owner" } else { "" },
-                    if profile.has_pin { "PIN" } else { "no PIN" }
+                    if profile.has_pin { "PIN" } else { "no PIN" },
+                    if profile.has_password {
+                        "password"
+                    } else {
+                        "no password"
+                    }
                 );
             }
         }
@@ -172,6 +177,33 @@ fn profiles(library: &Library, action: ProfilesAction) -> anyhow::Result<()> {
             profile_store::delete(&conn, profile.id)?;
             println!("Deleted the profile {}.", profile.name);
         }
+        ProfilesAction::SetPassword { name } => {
+            let profile = find_profile(&conn, &name)?;
+            // Not while the database is locked: the prompt waits for the user.
+            drop(conn);
+            let entered = read_new_password(&profile.name)?;
+            let hash = password::hash(&entered).map_err(|e| anyhow::anyhow!("{e}"))?;
+            let conn = user.lock();
+            let now = shelfgauge::annotations::now();
+            profile_store::set_password_hash(&conn, profile.id, Some(&hash), now)?;
+            let ended = session::end_password_sessions(&conn, profile.id, None)?;
+            println!(
+                "Set the password of {}; signed out {ended} devices that logged in with \
+                 the old one.",
+                profile.name
+            );
+        }
+        ProfilesAction::RemovePassword { name } => {
+            let profile = find_profile(&conn, &name)?;
+            let now = shelfgauge::annotations::now();
+            profile_store::set_password_hash(&conn, profile.id, None, now)?;
+            let ended = session::end_password_sessions(&conn, profile.id, None)?;
+            println!(
+                "Removed the password of {}; signed out {ended} devices. The profile can be \
+                 used only on this computer now.",
+                profile.name
+            );
+        }
         ProfilesAction::ResetPin { name } => {
             let profile = find_profile(&conn, &name)?;
             profile_store::set_pin_hash(&conn, profile.id, None)?;
@@ -183,6 +215,31 @@ fn profiles(library: &Library, action: ProfilesAction) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// A new password: asked twice on the terminal without echo, or one line of standard
+/// input when it is not a terminal (for scripts; only the line break is removed, so
+/// spaces stay part of the password). Checked like on My profile.
+fn read_new_password(name: &str) -> anyhow::Result<String> {
+    let entered = if std::io::stdin().is_terminal() {
+        let first = rpassword::prompt_password(format!(
+            "New password of {name} (at least {} characters): ",
+            password::MIN_CHARS
+        ))?;
+        password::check_format(&first).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let second = rpassword::prompt_password("Repeat the password: ")?;
+        if first != second {
+            anyhow::bail!("the two passwords differ; nothing was changed");
+        }
+        first
+    } else {
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line)?;
+        let line = line.strip_suffix('\n').unwrap_or(&line);
+        line.strip_suffix('\r').unwrap_or(line).to_owned()
+    };
+    password::check_format(&entered).map_err(|e| anyhow::anyhow!("{e}; nothing was changed"))?;
+    Ok(entered)
 }
 
 /// Asks a yes/no question on the terminal; anything but `y`/`yes` is no.
@@ -222,8 +279,16 @@ fn serve(
     overrides: &ConfigOverrides,
     scan: bool,
 ) -> anyhow::Result<()> {
-    // Fail fast, before touching the index: unsafe bind address or busy port.
-    let listener = web::bind(&config.server, web::Auth::None)?;
+    // Fail fast, before touching the index: no admin can log in from other devices,
+    // unsafe bind address or busy port.
+    let auth = web::Auth::from_config(&config.server);
+    if auth == web::Auth::Password {
+        let userdata = open_userdata(&library)?;
+        if !profile_store::admin_has_password(&userdata.lock())? {
+            return Err(web::WebError::NoAdminPassword.into());
+        }
+    }
+    let listener = web::bind(&config.server, auth)?;
     let db_path = library.db_path();
     // The writer creates and migrates the database; readers need it to exist.
     let writer = shelfgauge::storage::open_writer(&db_path)

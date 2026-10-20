@@ -208,6 +208,10 @@ impl From<AppError> for ApiError {
                 StatusCode::FORBIDDEN,
                 "this needs the admin role".to_owned(),
             ),
+            AppError::LocalOnly => Self(
+                StatusCode::FORBIDDEN,
+                "this is available only on the computer with the library".to_owned(),
+            ),
             AppError::Unreadable(reason) => {
                 tracing::warn!(reason = ?reason, "cannot read a book");
                 Self(StatusCode::INTERNAL_SERVER_ERROR, reason)

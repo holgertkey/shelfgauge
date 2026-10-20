@@ -374,6 +374,32 @@ impl Urls {
         self.path("/profiles/leave")
     }
 
+    /// The login of other devices, with an optional local page to return to.
+    pub fn login(&self, next: Option<&str>) -> String {
+        match next {
+            Some(next) => format!(
+                "{}?next={}",
+                self.path("/login"),
+                utf8_percent_encode(next, QUERY_VALUE)
+            ),
+            None => self.path("/login"),
+        }
+    }
+
+    /// The password form of a profile, with an optional local page to return to.
+    pub fn login_profile(&self, id: impl std::borrow::Borrow<i64>, next: Option<&str>) -> String {
+        let path = self.path(&format!("/login/{}", id.borrow()));
+        match next {
+            Some(next) => format!("{path}?next={}", utf8_percent_encode(next, QUERY_VALUE)),
+            None => path,
+        }
+    }
+
+    /// Logs out (`POST`): ends the session.
+    pub fn logout(&self) -> String {
+        self.path("/logout")
+    }
+
     /// My profile (`GET`; `POST` saves it).
     pub fn my_profile(&self) -> String {
         self.path("/profile")

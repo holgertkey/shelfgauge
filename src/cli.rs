@@ -115,7 +115,7 @@ pub enum Command {
     #[command(subcommand)]
     Annotations(AnnotationsCommand),
     /// Manage the profiles of the people who read here (`profiles list`, `add`,
-    /// `remove`, `reset-pin`).
+    /// `remove`, `reset-pin`, `set-password`, `remove-password`).
     #[command(subcommand)]
     Profiles(ProfilesCommand),
 }
@@ -152,6 +152,22 @@ pub enum ProfilesCommand {
     /// Remove a profile's PIN (a forgotten PIN of the owner profile) and sign out its
     /// devices.
     ResetPin {
+        /// The profile's name.
+        name: String,
+        /// Library directory (default: the current directory).
+        path: Option<PathBuf>,
+    },
+    /// Set a profile's password, the login from other devices (asked on the terminal
+    /// without echo, or read as one line from standard input).
+    SetPassword {
+        /// The profile's name.
+        name: String,
+        /// Library directory (default: the current directory).
+        path: Option<PathBuf>,
+    },
+    /// Remove a profile's password (a forgotten one) and sign out the devices that
+    /// logged in with it.
+    RemovePassword {
         /// The profile's name.
         name: String,
         /// Library directory (default: the current directory).
@@ -217,6 +233,16 @@ pub enum ProfilesAction {
         /// The name.
         name: String,
     },
+    /// Set a profile's password.
+    SetPassword {
+        /// The name.
+        name: String,
+    },
+    /// Remove a profile's password.
+    RemovePassword {
+        /// The name.
+        name: String,
+    },
 }
 
 /// The resolved invocation: mode, library root and config overrides.
@@ -268,6 +294,12 @@ impl Cli {
                     }
                     ProfilesCommand::ResetPin { name, path } => {
                         (ProfilesAction::ResetPin { name }, path)
+                    }
+                    ProfilesCommand::SetPassword { name, path } => {
+                        (ProfilesAction::SetPassword { name }, path)
+                    }
+                    ProfilesCommand::RemovePassword { name, path } => {
+                        (ProfilesAction::RemovePassword { name }, path)
                     }
                 };
                 Invocation {
@@ -463,6 +495,14 @@ mod tests {
         assert_eq!(
             parse(&["profiles", "reset-pin", "Me"]).unwrap().mode,
             Mode::Profiles(ProfilesAction::ResetPin { name: "Me".into() })
+        );
+        assert_eq!(
+            parse(&["profiles", "set-password", "Me"]).unwrap().mode,
+            Mode::Profiles(ProfilesAction::SetPassword { name: "Me".into() })
+        );
+        assert_eq!(
+            parse(&["profiles", "remove-password", "Me"]).unwrap().mode,
+            Mode::Profiles(ProfilesAction::RemovePassword { name: "Me".into() })
         );
         assert!(parse(&["profiles", "add"]).is_err());
     }

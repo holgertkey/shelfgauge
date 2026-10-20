@@ -2,20 +2,24 @@
 //!
 //! A profile has its own annotations, reading positions, "Currently reading", theme
 //! and reader settings; the index, scans, caches and `config.toml` belong to the
-//! instance. Profiles live in the user-data database (`userdata.sqlite`, schema v3).
+//! instance. Profiles live in the user-data database (`userdata.sqlite`, schema v4).
 //! The *owner* profile (id 1) is created by the migration, is always an admin and
 //! cannot be deleted. While it is the only profile, there is no profile UI at all.
 //!
-//! A profile is not authentication: its optional PIN only keeps family members apart
-//! on a shared computer, and it never makes a non-loopback bind allowed.
+//! A PIN is not authentication: it only keeps family members apart on a shared
+//! computer, is asked only on this computer and never makes a non-loopback bind
+//! allowed. The optional *password* is the login from other devices (`[server] auth =
+//! "password"`); the two are independent.
 //!
-//! Integer ids are what the log shows (`profile = 2`); names, PINs and session tokens
-//! are never logged.
+//! Integer ids are what the log shows (`profile = 2`); names, PINs, passwords and
+//! session tokens are never logged.
 //!
 //! - [`store`]: profiles in the database;
 //! - [`session`]: the session tokens behind the `shelfgauge-profile` cookie;
-//! - [`pin`]: PIN hashing and the lockout after wrong tries.
+//! - [`pin`]: PIN hashing and the lockout after wrong tries;
+//! - [`password`]: password hashing and the per-address budget of logins.
 
+pub mod password;
 pub mod pin;
 pub mod session;
 pub mod store;
@@ -113,6 +117,8 @@ pub struct Profile {
     pub role: Role,
     /// Whether it has a PIN.
     pub has_pin: bool,
+    /// Whether it has a password (it can be used from other devices).
+    pub has_password: bool,
     /// Whether the other profiles see what it is reading.
     pub share_activity: bool,
     /// The theme and reader settings; `None` until they were first saved.
@@ -362,6 +368,7 @@ mod tests {
             color: 0,
             role: Role::Reader,
             has_pin: false,
+            has_password: false,
             share_activity: false,
             settings: None,
             created_at: 0,

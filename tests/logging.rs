@@ -33,6 +33,7 @@ const ORIGIN: &str = "http://localhost:8742";
 /// A scanned library with one book, and its app.
 struct TestServer {
     _dir: tempfile::TempDir,
+    state: AppState,
     router: Router,
     scan: Arc<BackgroundScan>,
     book: i64,
@@ -46,6 +47,11 @@ impl Drop for TestServer {
 
 /// A library with the book `data` at `path` (or in `zip` under the entry `path`).
 fn server(path: &str, zip: Option<&str>, data: &[u8]) -> TestServer {
+    server_with(path, zip, data, Config::default())
+}
+
+/// [`server`] with `config`.
+fn server_with(path: &str, zip: Option<&str>, data: &[u8], config: Config) -> TestServer {
     // Before anything logs: see `common::Quiet`.
     drop(Capture::default().dispatch("off", LogFormat::Text, false));
     let dir = tempfile::tempdir().unwrap();
@@ -77,7 +83,6 @@ fn server(path: &str, zip: Option<&str>, data: &[u8]) -> TestServer {
     .unwrap();
     let books = all_books(&conn).unwrap();
     assert_eq!(books.len(), 1);
-    let config = Config::default();
     let pool = open_read_pool(&library.db_path(), 2).unwrap();
     let scan = Arc::new(BackgroundScan::new(library.clone(), Vec::new()));
     // No request of these tests is logged as slow, even on a slow machine.
@@ -85,7 +90,8 @@ fn server(path: &str, zip: Option<&str>, data: &[u8]) -> TestServer {
         .with_slow_request(std::time::Duration::from_secs(60));
     TestServer {
         _dir: dir,
-        router: web::router(state),
+        router: common::local(web::router(state.clone())),
+        state,
         scan,
         book: books[0].id,
     }
@@ -411,6 +417,80 @@ async fn profile_names_pins_and_tokens_are_never_logged() {
         &owner,
         &token,
         &renewed,
+    ] {
+        assert!(!log.contains(secret), "{secret} in\n{log}");
+    }
+}
+
+/// Passwords, login form bodies and the tokens of password sessions never reach the
+/// log; requests from other devices are marked `remote=true`.
+#[tokio::test]
+async fn passwords_and_login_forms_are_never_logged() {
+    let mut config = Config::default();
+    config.server.auth = shelfgauge::config::AuthMode::Password;
+    config.server.bind = "100.64.0.1".parse().unwrap();
+    let server = server_with("book.fb2", None, UNBALANCED, config);
+    let hash = shelfgauge::profiles::password::hash("Quokka-Passphrase-1").unwrap();
+    shelfgauge::profiles::store::set_password_hash(
+        &server.state.userdata().lock(),
+        shelfgauge::profiles::ProfileId::OWNER,
+        Some(&hash),
+        0,
+    )
+    .unwrap();
+    let phone = common::from_peer(web::router(server.state.clone()), "100.64.0.2:40000");
+    let capture = Capture::default();
+    let _log = tracing::dispatcher::set_default(&capture.dispatch("trace", LogFormat::Text, false));
+    let send = |uri: &str, body: &str, cookie: Option<&str>| {
+        let mut builder = Request::post(uri)
+            .header(header::HOST, "100.64.0.1:8742")
+            .header(header::ORIGIN, "http://100.64.0.1:8742")
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded");
+        if let Some(cookie) = cookie {
+            builder = builder.header(header::COOKIE, format!("shelfgauge-profile={cookie}"));
+        }
+        let request = builder.body(Body::from(body.to_owned())).unwrap();
+        let router = phone.clone();
+        async move {
+            let response = router.oneshot(request).await.unwrap();
+            let token = response
+                .headers()
+                .get(header::SET_COOKIE)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("shelfgauge-profile="))
+                .map(|v| v.split(';').next().unwrap().to_owned());
+            (response.status(), token)
+        }
+    };
+    let (status, _) = send("/login/1", "password=Wombat-Guess-22&next=/", None).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (status, token) = send("/login/1", "password=Quokka-Passphrase-1&remember=1", None).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let token = token.unwrap();
+    let (status, _) = send(
+        "/profile",
+        "action=set-password&current_password=Quokka-Passphrase-1\
+         &new_password=Numbat-Newphrase-3&confirm_password=Numbat-Newphrase-3",
+        Some(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+
+    let log = capture.text();
+    assert!(
+        log.contains("password rejected") && log.contains("logged in"),
+        "{log}"
+    );
+    assert!(log.contains("password changed"), "{log}");
+    assert!(log.contains("route=/login/{id} remote=true}"), "{log}");
+    for secret in [
+        "Quokka",
+        "Wombat",
+        "Numbat",
+        "Passphrase",
+        "password=",
+        &token,
+        &hash,
     ] {
         assert!(!log.contains(secret), "{secret} in\n{log}");
     }

@@ -55,7 +55,7 @@
     <svg class="icon" aria-hidden="true"><use href="#i-settings"></use></svg>
   </a>
   {%- endif %}
-  {%- if layout.profile.several %}
+  {%- if layout.profile.several || layout.profile.remote %}
   <details class="profile-menu">
     <summary class="avatar-button" title="{{ layout.profile.name }}" aria-label="Profile: {{ layout.profile.name }}">
       <span class="avatar pc-{{ layout.profile.color }}" aria-hidden="true">{{ layout.profile.initials }}</span>
@@ -63,9 +63,15 @@
     <div class="menu">
       <p class="menu-name">{{ layout.profile.name }}</p>
       <a href="{{ layout.urls.my_profile() }}">My profile</a>
+      {%- if layout.profile.remote %}
+      <form action="{{ layout.urls.logout() }}" method="post">
+        <button type="submit">Sign out</button>
+      </form>
+      {%- else %}
       <form action="{{ layout.urls.leave_profile() }}" method="post">
         <button type="submit">Switch profile</button>
       </form>
+      {%- endif %}
       {%- if layout.profile.admin %}
       <a href="{{ layout.urls.settings() }}#profiles">Profiles</a>
       <a class="narrow-only" href="{{ layout.urls.settings() }}">Settings</a>

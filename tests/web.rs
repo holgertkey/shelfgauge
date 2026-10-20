@@ -1,5 +1,7 @@
 //! Web server tests: security checks, base_path, assets, error pages and startup.
 
+mod common;
+
 use std::io::{Read, Write};
 use std::sync::Arc;
 
@@ -44,7 +46,7 @@ fn server_with(config: Config) -> TestServer {
     TestServer {
         _dir: dir,
         scan,
-        router: web::router(state),
+        router: common::local(web::router(state)),
     }
 }
 
@@ -125,19 +127,55 @@ async fn library_page_renders_the_layout() {
 }
 
 #[tokio::test]
-async fn allowed_hosts_are_served() {
+async fn loopback_hosts_are_served() {
     let server = server("/");
-    for host in [
-        "127.0.0.1:8742",
-        "localhost:8742",
-        "[::1]:8742",
-        "books.example.org",
-    ] {
+    for host in ["127.0.0.1:8742", "localhost:8742", "[::1]:8742"] {
         let reply = server
             .send(request(Method::GET, "/", &[("host", host)]))
             .await;
         assert_eq!(reply.status, StatusCode::OK, "{host}");
     }
+}
+
+/// Behaviour change of 0.16.0: a request through an `allowed_hosts` name comes from
+/// another device (a reverse proxy on this computer connects from loopback). Without
+/// `auth = "password"` it is refused with a hint, on every path; with it, it needs a
+/// login. Before, it was served without one.
+#[tokio::test]
+async fn allowed_hosts_need_password_auth() {
+    let server = server("/");
+    for uri in [
+        "/",
+        "/profiles",
+        "/login",
+        "/assets/style.css",
+        "/no/such/page",
+    ] {
+        let reply = server
+            .send(request(Method::GET, uri, &[("host", "books.example.org")]))
+            .await;
+        assert_eq!(reply.status, StatusCode::FORBIDDEN, "{uri}");
+        assert!(
+            reply.body.contains("auth = \"password\"") && reply.body.contains("set-password"),
+            "{}",
+            reply.body
+        );
+    }
+
+    let mut config = Config::default();
+    config.server.allowed_hosts = vec!["books.example.org".to_owned()];
+    config.server.auth = shelfgauge::config::AuthMode::Password;
+    let server = server_with(config);
+    let reply = server
+        .send(request(Method::GET, "/", &[("host", "books.example.org")]))
+        .await;
+    assert_eq!(reply.status, StatusCode::SEE_OTHER);
+    assert_eq!(header(&reply, header::LOCATION), "/login?next=/");
+    // This computer is unchanged.
+    let reply = server
+        .send(request(Method::GET, "/", &[("host", "127.0.0.1:8742")]))
+        .await;
+    assert_eq!(reply.status, StatusCode::OK);
 }
 
 #[tokio::test]

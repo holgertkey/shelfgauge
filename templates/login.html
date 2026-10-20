@@ -1,0 +1,21 @@
+{% extends "minimal.html" %}
+{% block main %}
+<h1>Log in</h1>
+<ul class="profile-tiles">
+  {%- for profile in profiles %}
+  <li>
+    <form action="{{ layout.urls.login_profile(profile.id, None) }}" method="get">
+      <input type="hidden" name="next" value="{{ next }}">
+      <button type="submit" class="profile-tile"{% if !profile.has_password %} disabled aria-describedby="local-only-{{ profile.id }}"{% endif %}>
+        <span class="avatar avatar-large pc-{{ profile.color }}" aria-hidden="true">{{ profile.initials }}</span>
+        <span class="tile-name">{{ profile.name }}</span>
+        {%- if !profile.has_password %}
+        <span class="tile-note muted" id="local-only-{{ profile.id }}">On this computer only</span>
+        {%- endif %}
+      </button>
+    </form>
+  </li>
+  {%- endfor %}
+</ul>
+<p class="muted picker-note">On other devices each profile logs in with its own password. A profile without a password can be used only on the computer with the library.</p>
+{%- endblock %}

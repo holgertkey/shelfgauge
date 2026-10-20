@@ -308,6 +308,8 @@ as it is now. When changes take effect:
 | `server.port` | `8742` | Fixed port. If it is busy, shelfgauge exits with an error instead of picking another one: the port is part of the browser origin. |
 | `server.allowed_hosts` | `[]` | Extra host names accepted in the `Host` and `Origin` headers, e.g. `["books.example.org"]` behind a reverse proxy. An entry without a port matches any port. |
 | `server.base_path` | `"/"` | URL prefix when served on a sub-path of a reverse proxy, e.g. `"/books"` (letters, digits, `-`, `.`, `_`, `~`, `/`). |
+| `server.auth` | `"none"` | Login from other devices: `"none"` serves only this computer; `"password"` lets each profile log in with its own password from a phone or another computer (see [Remote access](#remote-access)). Needed for a `bind` address other than loopback. |
+| `server.remote_admin` | `false` | Whether admin profiles may use the settings page, rescans and profile management from other devices (with `auth = "password"`). |
 | `scan.exclude` | `[]` | Gitignore-style patterns of paths not to index, in addition to `.shelfgauge/`. |
 | `scan.formats` | `["fb2", "epub", "txt"]` | The book formats to index: `"fb2"` (with `.fbz`), `"epub"`, `"txt"`, `"html"` (not listed by default, see [Formats](#formats)). Books of a format taken off the list are removed from the library at the next scan (their quotes and notes are kept as for any removed book). |
 | `library.page_size` | `100` | Entries per page of the author list, folders and search results. |

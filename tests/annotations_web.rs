@@ -2,6 +2,8 @@
 //! card, the reading position, the Markdown export, re-attaching after a book changes
 //! and the cleanup after a scan, on a scanned temporary library.
 
+mod common;
+
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -168,7 +170,7 @@ impl TestLibrary {
         let state = AppState::new(self.library.clone(), &c, pool, Arc::clone(&scan))
             .with_annotations(Arc::clone(&self.userdata), self.exporter.clone());
         Server {
-            router: web::router(state),
+            router: common::local(web::router(state)),
             scan,
         }
     }
@@ -1202,6 +1204,7 @@ async fn bookmarks_carry_their_place_for_the_status_line() {
 #[tokio::test]
 async fn reattach_and_cleanup_cover_every_profile() {
     use shelfgauge::annotations::store::{NewAnnotation, ReadingPosition};
+    use shelfgauge::profiles::session::Level;
     use shelfgauge::profiles::{Role, session, store as profiles};
 
     let lib = TestLibrary::new();
@@ -1251,7 +1254,10 @@ async fn reattach_and_cleanup_cover_every_profile() {
             )
             .unwrap();
         }
-        (anna, session::create(&user, ProfileId::OWNER, 0).unwrap())
+        (
+            anna,
+            session::create(&user, ProfileId::OWNER, Level::Local, false, 0).unwrap(),
+        )
     };
     let anna_dir = lib.exporter.profile_dir(anna, "Anna");
 

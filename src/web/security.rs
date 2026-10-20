@@ -9,17 +9,28 @@
 //!   The allowlist rather than the request's `Host` is used because a reverse proxy may
 //!   rewrite `Host` while the browser sends its public origin.
 //! - **Bind safety**: a non-loopback `bind` without authentication is refused.
-//! - **Auth slot**: the read and admin route groups pass through [`Auth`]; v1 has no
-//!   authentication, so it lets every request through.
+//! - **Reach**: a layer tells requests from this computer ([`Reach::Local`])
+//!   from those of other devices ([`Reach::Remote`]): a request is remote when its TCP
+//!   peer is not a loopback address, when its `Host` is an `allowed_hosts` name (a
+//!   reverse proxy on the same machine connects from loopback), or when it carries a
+//!   header that proxies add ([`PROXY_HEADERS`], for a proxy that rewrites `Host` to
+//!   `127.0.0.1`). The values of forwarded headers are never read: they can only make
+//!   a request remote, never local. Without [`Auth::Password`], remote requests are
+//!   refused.
+//! - **Auth slot**: the read, write and admin route groups pass through
+//!   the auth slot: a remote request needs a password session of its profile, else
+//!   it is sent to the login page (`303`) or gets `401` (scripts). Local requests are
+//!   left to the profile middleware.
 
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 
+use axum::extract::connect_info::{ConnectInfo, MockConnectInfo};
 use axum::extract::{Request, State};
 use axum::http::{HeaderValue, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
-use crate::config::ServerConfig;
+use crate::config::{AuthMode, ServerConfig};
 
 use super::{AppState, WebError};
 
@@ -28,21 +39,94 @@ use super::{AppState, WebError};
 const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; img-src 'self' data:; \
      object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
-/// Authentication for the read and admin route groups.
+/// Authentication of requests from other devices.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Auth {
-    /// No authentication (v1): only safe on a loopback address.
+    /// No authentication: only requests from this computer are served, and only a
+    /// loopback address may be bound.
     #[default]
     None,
+    /// Requests from other devices need a password session of their profile.
+    Password,
 }
 
 impl Auth {
+    /// The authentication `[server] auth` asks for.
+    pub fn from_config(server: &ServerConfig) -> Self {
+        match server.auth {
+            AuthMode::None => Self::None,
+            AuthMode::Password => Self::Password,
+        }
+    }
+
     /// Whether any authentication is configured.
     pub fn is_configured(self) -> bool {
         match self {
             Self::None => false,
+            Self::Password => true,
         }
+    }
+}
+
+/// Where a request comes from (see the module docs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reach {
+    /// This computer: a loopback peer with a loopback or bind-address `Host`.
+    Local,
+    /// Another device: a non-loopback peer, or a name from `allowed_hosts`.
+    Remote,
+}
+
+/// Headers that reverse proxies add: their presence alone makes a request remote (a
+/// proxy that rewrites `Host` to its upstream, `127.0.0.1:8742`, would otherwise look
+/// like this computer). Their values are never read.
+pub const PROXY_HEADERS: &[&str] = &[
+    "forwarded",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-real-ip",
+    "tailscale-user-login",
+];
+
+/// The request extension set by [`classify_reach`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Peer {
+    /// Where the request comes from.
+    pub(crate) reach: Reach,
+    /// The client's address when it is not a loopback address, the key of the
+    /// per-address login budget; `None` behind a reverse proxy on this computer, where
+    /// all clients share the proxy's address. (A proxy on another machine shares one
+    /// budget among its clients.)
+    pub(crate) direct: Option<IpAddr>,
+}
+
+impl Peer {
+    /// Whether the request comes from another device.
+    pub(crate) fn is_remote(self) -> bool {
+        self.reach == Reach::Remote
+    }
+}
+
+/// Classifies a request: its TCP peer (`None` if unknown) and whether it came through
+/// a proxy (its `Host` is an `allowed_hosts` name, or it has one of the
+/// [`PROXY_HEADERS`]).
+///
+/// # Examples
+///
+/// ```
+/// use shelfgauge::web::security::{Reach, reach};
+///
+/// let local = "127.0.0.1:50000".parse().ok();
+/// assert_eq!(reach(local, false), Reach::Local);
+/// assert_eq!(reach(local, true), Reach::Remote);
+/// assert_eq!(reach("100.64.0.2:50000".parse().ok(), false), Reach::Remote);
+/// assert_eq!(reach(None, false), Reach::Remote);
+/// ```
+pub fn reach(peer: Option<SocketAddr>, proxied: bool) -> Reach {
+    match peer {
+        Some(peer) if peer.ip().to_canonical().is_loopback() && !proxied => Reach::Local,
+        _ => Reach::Remote,
     }
 }
 
@@ -252,14 +336,105 @@ pub(crate) async fn check_origin(
     }
 }
 
-/// Middleware: the authentication slot of the read and admin route groups.
+/// The TCP peer of a request: the server's connection info, or the mock of the
+/// tests.
+fn peer_addr(req: &Request) -> Option<SocketAddr> {
+    let extensions = req.extensions();
+    extensions
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ConnectInfo(addr)| *addr)
+        .or_else(|| {
+            extensions
+                .get::<MockConnectInfo<SocketAddr>>()
+                .map(|MockConnectInfo(addr)| *addr)
+        })
+}
+
+/// Middleware (after the `Host` check): sets the [`Peer`] extension, records
+/// `remote = true` on the request span, and refuses remote requests without
+/// [`Auth::Password`]. A request without a known peer counts as remote.
+pub(crate) async fn classify_reach(
+    State(state): State<AppState>,
+    mut req: Request,
+    next: Next,
+) -> Response {
+    let host = match req.headers().get(header::HOST) {
+        Some(value) => value.to_str().ok(),
+        None => req.uri().authority().map(|a| a.as_str()),
+    };
+    let proxied = host.is_some_and(|h| state.hosts().is_configured_host(h))
+        || PROXY_HEADERS
+            .iter()
+            .any(|name| req.headers().contains_key(*name));
+    let addr = peer_addr(&req);
+    let reach = reach(addr, proxied);
+    let direct = addr
+        .map(|a| a.ip().to_canonical())
+        .filter(|ip| !ip.is_loopback());
+    if reach == Reach::Remote {
+        tracing::Span::current().record("remote", true);
+        if !state.auth().is_configured() {
+            tracing::warn!("refused a request from another device: auth is not configured");
+            return forbidden(
+                "403 Forbidden: this shelfgauge serves only the computer it runs on.\n\n\
+                 Requests through a name from `server.allowed_hosts` or a reverse proxy \
+                 come from other devices. To use the library from them, set `auth = \"password\"` in the \
+                 [server] section of .shelfgauge/config.toml, give an admin profile a \
+                 password (`shelfgauge profiles set-password <name>`) and restart \
+                 shelfgauge.\n",
+            );
+        }
+    }
+    req.extensions_mut().insert(Peer { reach, direct });
+    next.run(req).await
+}
+
+/// The [`Peer`] of a request; remote if the layer did not run.
+pub(crate) fn peer_of(req: &Request) -> Peer {
+    peer_in(req.extensions())
+}
+
+fn peer_in(extensions: &axum::http::Extensions) -> Peer {
+    extensions.get::<Peer>().copied().unwrap_or(Peer {
+        reach: Reach::Remote,
+        direct: None,
+    })
+}
+
+impl<S: Send + Sync> axum::extract::FromRequestParts<S> for Peer {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(peer_in(&parts.extensions))
+    }
+}
+
+/// Middleware: the authentication slot of the read, write and admin route groups.
+///
+/// A local request passes (the profile middleware decides). A remote one needs a
+/// password session in its cookies; otherwise a page request is sent to the login
+/// page and a fragment, JSON or `POST` request gets `401`.
 pub(crate) async fn require_auth(
     State(state): State<AppState>,
     req: Request,
     next: Next,
 ) -> Response {
-    match state.auth() {
-        Auth::None => next.run(req).await,
+    if !peer_of(&req).is_remote() {
+        return next.run(req).await;
+    }
+    if !state.auth().is_configured() {
+        return forbidden("403 Forbidden: only this computer is served.\n");
+    }
+    let tokens = super::profile::cookie_tokens(req.headers());
+    let s = state.clone();
+    let found = super::blocking(move || super::profile::password_session(&s, &tokens)).await;
+    match found {
+        Ok(Ok(Some(_))) => next.run(req).await,
+        Ok(Ok(None)) => super::profile::login_first(&state, &req),
+        Ok(Err(e)) | Err(e) => e.into_response(),
     }
 }
 
@@ -390,6 +565,33 @@ mod tests {
     }
 
     #[test]
+    fn reach_rule() {
+        let peer = |s: &str| Some(s.parse::<SocketAddr>().unwrap());
+        for local in [
+            "127.0.0.1:1",
+            "127.0.0.2:1",
+            "[::1]:1",
+            "[::ffff:127.0.0.1]:1",
+        ] {
+            assert_eq!(reach(peer(local), false), Reach::Local, "{local}");
+            assert_eq!(
+                reach(peer(local), true),
+                Reach::Remote,
+                "{local} via a name"
+            );
+        }
+        for remote in [
+            "192.168.1.5:1",
+            "100.64.0.1:1",
+            "[fd7a::1]:1",
+            "[::ffff:10.0.0.1]:1",
+        ] {
+            assert_eq!(reach(peer(remote), false), Reach::Remote, "{remote}");
+        }
+        assert_eq!(reach(None, false), Reach::Remote, "unknown peer");
+    }
+
+    #[test]
     fn bind_safety_rule() {
         for bind in ["127.0.0.1", "127.0.0.2", "::1", "::ffff:127.0.0.1"] {
             assert!(
@@ -400,6 +602,16 @@ mod tests {
         for bind in ["0.0.0.0", "::", "192.168.1.5", "fe80::1", "::ffff:10.0.0.1"] {
             let err = check_bind(bind.parse().unwrap(), Auth::None).unwrap_err();
             assert!(matches!(err, WebError::UnsafeBind(_)), "{bind}: {err:?}");
+            assert!(
+                check_bind(bind.parse().unwrap(), Auth::Password).is_ok(),
+                "{bind}"
+            );
         }
+        let server = ServerConfig {
+            auth: AuthMode::Password,
+            ..ServerConfig::default()
+        };
+        assert_eq!(Auth::from_config(&server), Auth::Password);
+        assert_eq!(Auth::from_config(&ServerConfig::default()), Auth::None);
     }
 }

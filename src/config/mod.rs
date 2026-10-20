@@ -41,6 +41,14 @@ port = 8742
 allowed_hosts = []
 # URL prefix when served behind a reverse proxy on a subpath, e.g. "/books".
 base_path = "/"
+# Login for other devices: "none" (only this computer) or "password" (each person
+# logs into their profile with a password from other devices; requests through an
+# allowed_hosts name count as other devices). Needed for a bind address other than
+# 127.0.0.1 or ::1. Set a password first: shelfgauge profiles set-password <name>.
+auth = "none"
+# Whether admin profiles may use the settings page, rescans and profile management
+# from other devices (with auth = "password").
+remote_admin = false
 
 [scan]
 # Gitignore-style patterns of paths to skip, in addition to .shelfgauge/ itself.
@@ -112,6 +120,10 @@ pub struct ServerConfig {
     pub allowed_hosts: Vec<String>,
     /// URL prefix for all routes; normalized to `/` or `/a/b` (no trailing slash).
     pub base_path: String,
+    /// How requests from other devices log in.
+    pub auth: AuthMode,
+    /// Whether admins may use the admin pages from other devices.
+    pub remote_admin: bool,
 }
 
 impl Default for ServerConfig {
@@ -121,6 +133,29 @@ impl Default for ServerConfig {
             port: DEFAULT_PORT,
             allowed_hosts: Vec::new(),
             base_path: "/".to_owned(),
+            auth: AuthMode::None,
+            remote_admin: false,
+        }
+    }
+}
+
+/// How requests from other devices (not this computer) log in: `[server] auth`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AuthMode {
+    /// No login: only requests from this computer are served.
+    #[default]
+    None,
+    /// Each person logs into their profile with its password.
+    Password,
+}
+
+impl AuthMode {
+    /// The value as written in `config.toml`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Password => "password",
         }
     }
 }
@@ -550,11 +585,31 @@ mod tests {
         config.server.port = 9000;
         config.server.allowed_hosts = vec!["books.example.org".to_owned()];
         config.server.base_path = "/books".to_owned();
+        config.server.auth = AuthMode::Password;
+        config.server.remote_admin = true;
         config.scan.exclude = vec!["*.tmp".to_owned()];
         config.reader.split = SplitMode::Size;
         let (parsed, unknown) = parse(&config.to_toml()).unwrap();
         assert_eq!(parsed, config);
         assert!(unknown.is_empty());
+    }
+
+    #[test]
+    fn auth_settings() {
+        let (config, unknown) =
+            parse("[server]\nauth = \"password\"\nremote_admin = true\n").unwrap();
+        assert_eq!(config.server.auth, AuthMode::Password);
+        assert!(config.server.remote_admin);
+        assert!(unknown.is_empty());
+        let defaults = Config::default().server;
+        assert_eq!(defaults.auth, AuthMode::None);
+        assert!(!defaults.remote_admin);
+        let (_, unknown) = parse("[server]\nauht = \"password\"\n").unwrap();
+        assert_eq!(unknown, ["server.auht"]);
+        let err = parse("[server]\nauth = \"Password\"\n")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("none") && err.contains("password"), "{err}");
     }
 
     #[test]
@@ -599,6 +654,8 @@ mod tests {
             ("[server]\nport = \"x\"\n", "port"),
             ("[server]\nbind = \"localhost\"\n", "bind"),
             ("[reader]\nsplit = \"pages\"\n", "pages"),
+            ("[server]\nauth = \"basic\"\n", "basic"),
+            ("[server]\nremote_admin = \"yes\"\n", "remote_admin"),
             ("[library]\npage_size = -1\n", "page_size"),
         ] {
             let err = parse(text).unwrap_err();

@@ -28,7 +28,7 @@ use crate::storage::{StorageError, migrations, open_wal};
 
 /// Schema migrations of the user-data database; index `i` upgrades version `i` to
 /// `i + 1`. Append only: user data cannot be rebuilt.
-const MIGRATIONS: &[&str] = &[V1, V2, V3];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4];
 
 /// Version 1: annotations and reading positions.
 ///
@@ -173,6 +173,19 @@ ALTER TABLE reading_positions_new RENAME TO reading_positions;
 
 CREATE INDEX reading_positions_recent ON reading_positions (profile_id, updated_at);
 CREATE INDEX reading_positions_key ON reading_positions (book_key);
+"#;
+
+/// Version 4: profile passwords (login from other devices) and session levels.
+///
+/// - `password_hash` is an argon2id PHC string; `password_changed_at` Unix seconds.
+/// - `level`: `0` = a local session (no secret or a PIN), `1` = logged in with the
+///   password; `remote`: created by a request from another device. Existing sessions
+///   become local ones, so they never serve a remote request.
+const V4: &str = r#"
+ALTER TABLE profiles ADD COLUMN password_hash TEXT;
+ALTER TABLE profiles ADD COLUMN password_changed_at INTEGER;
+ALTER TABLE profile_sessions ADD COLUMN level INTEGER NOT NULL DEFAULT 0 CHECK (level IN (0, 1));
+ALTER TABLE profile_sessions ADD COLUMN remote INTEGER NOT NULL DEFAULT 0 CHECK (remote IN (0, 1));
 "#;
 
 /// The schema version this build creates and understands.
@@ -1191,6 +1204,45 @@ mod tests {
         assert_eq!(for_anna[0].0, P);
         mark_finished(&conn, P, b"c", 40).unwrap();
         assert!(shared_reading(&conn, anna).unwrap().is_empty());
+    }
+
+    #[test]
+    fn version_3_sessions_become_local_ones() {
+        use crate::profiles::session::{self, Level, Token};
+        use sha2::Digest as _;
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::storage::configure(&conn).unwrap();
+        migrations::apply(&mut conn, &MIGRATIONS[..3]).unwrap();
+        conn.execute_batch(
+            "UPDATE profiles SET pin_hash = '$argon2id$pin' WHERE id = 1;
+             INSERT INTO profile_sessions (token_hash, profile_id, created_at, last_seen_at)
+             VALUES (x'aa', 1, 5, 6);",
+        )
+        .unwrap();
+        // A session as 0.15.0 stored it: the SHA-256 of a known token.
+        let token = Token::from_cookie("old-session");
+        let hash: [u8; 32] = sha2::Sha256::digest(b"old-session").into();
+        conn.execute(
+            "INSERT INTO profile_sessions (token_hash, profile_id, created_at, last_seen_at)
+             VALUES (?1, 1, 5, 6)",
+            [&hash],
+        )
+        .unwrap();
+        migrations::apply(&mut conn, MIGRATIONS).unwrap();
+
+        let found = session::lookup(&conn, &token, 7).unwrap().unwrap();
+        assert_eq!(
+            (found.profile, found.level, found.remote),
+            (P, Level::Local, false)
+        );
+        let owner = crate::profiles::store::get(&conn, P).unwrap().unwrap();
+        assert!(owner.has_pin && !owner.has_password);
+        let violations: i64 = conn
+            .query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(violations, 0);
     }
 
     #[test]

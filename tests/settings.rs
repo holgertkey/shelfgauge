@@ -130,7 +130,7 @@ fn harness(config_text: &str, overrides: ConfigOverrides) -> Harness {
         host: format!("127.0.0.1:{}", config.server.port),
         live,
         scan,
-        router: web::router(state),
+        router: common::local(web::router(state)),
     }
 }
 

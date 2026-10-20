@@ -2,6 +2,8 @@
 //! their lockout, roles, separate reading per profile, the settings in the profile,
 //! the per-profile export and the family activity, on a scanned temporary library.
 
+mod common;
+
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -15,6 +17,7 @@ use shelfgauge::config::Config;
 use shelfgauge::container::ReadLimits;
 use shelfgauge::format::Registry;
 use shelfgauge::library::Library;
+use shelfgauge::profiles::session::Level;
 use shelfgauge::profiles::{ProfileId, store as profiles};
 use shelfgauge::scanner::{BackgroundScan, ScanProgress, Scanner};
 use shelfgauge::storage::books::all_books;
@@ -121,7 +124,7 @@ impl Lib {
             library,
             userdata,
             exporter,
-            router: web::router(state),
+            router: common::local(web::router(state)),
             scan,
             book,
         }
@@ -580,7 +583,9 @@ async fn pins_lock_out_and_changes_renew_sessions() {
     assert_eq!(reply.status, StatusCode::TOO_MANY_REQUESTS);
 
     // A PIN change keeps this session with a new token and ends the others.
-    let other = shelfgauge::profiles::session::create(&lib.userdata.lock(), anna, 0).unwrap();
+    let other =
+        shelfgauge::profiles::session::create(&lib.userdata.lock(), anna, Level::Local, false, 0)
+            .unwrap();
     let reply = lib
         .form(
             "/profile",
@@ -611,7 +616,7 @@ async fn pins_lock_out_and_changes_renew_sessions() {
     let token = lib.select(anna).await;
     let other2 = {
         let conn = lib.userdata.lock();
-        shelfgauge::profiles::session::create(&conn, anna, 0).unwrap()
+        shelfgauge::profiles::session::create(&conn, anna, Level::Local, false, 0).unwrap()
     };
     let reply = lib
         .form(
