@@ -2,7 +2,9 @@
 {% block title %}Shelfgauge library{% endblock %}
 {% block main %}
 <h1>Library</h1>
+{%- if let Some(root) = root %}
 <p class="muted path">{{ root }}</p>
+{%- endif %}
 {%- if books == 0 %}
 <section class="welcome">
   <p>No books yet. Shelfgauge finds the books below this folder, also inside .zip

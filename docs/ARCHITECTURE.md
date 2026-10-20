@@ -403,9 +403,24 @@ Code: `src/annotations/` (`text`, `anchor`, `store`, `export`, `attach`),
   pages and keep the block at the top of the screen in place. The reader is not a
   separate crate.
 
+## Phones (0.16.0)
+
+The same pages serve phones; there is no separate mobile UI and no Node toolchain.
+Below `48rem` the sidebar becomes an overlay over a dimmed page (a tap on the dimmed
+page closes it and does nothing else, `app.js`), and controls that exist elsewhere leave
+the top bar (the theme menu; Settings and Rescan move into the avatar menu; in the
+reader focus mode, which is in the Aa panel). On touch screens (`pointer: coarse`) every
+control, menu entry and list of links is at least 44 by 44 CSS px; links in running text
+keep their size. Pages use `viewport-fit=cover` with `env(safe-area-inset-*)` padding.
+Quoting works with the touch selection (`selectionchange`); the Quote button keeps
+32 px below the selection handles, goes above the selection when there is no room, and
+the note form stays in view when the keyboard opens (`visualViewport`). Browser check:
+`.debug/TESTS/mobile_smoke.mjs` (390×844, touch, through an `allowed_hosts` name).
+
 ## Security
 
-v1 binds to `127.0.0.1` only, but is built to allow remote access later:
+Local use on `127.0.0.1` needs no login; other devices log into a profile with its
+password (`[server] auth = "password"`, 0.16.0):
 
 - **Host header check** against `127.0.0.1:<port>`, `localhost:<port>`, `[::1]:<port>`,
   the bind address and `allowed_hosts` (protection against DNS rebinding); it runs as the
@@ -416,16 +431,44 @@ v1 binds to `127.0.0.1` only, but is built to allow remote access later:
   `OPTIONS`/`TRACE` needs an `Origin` whose authority is on the same allowlist (not
   compared with the request's `Host`, which a reverse proxy may rewrite); a missing or
   `null` Origin is rejected.
-- If `bind` is not a loopback address and no authentication is configured, the program
-  refuses to start.
+- If `bind` is not a loopback address and `auth` is `"none"`, the program refuses to
+  start; with `auth = "password"` it refuses to start while no admin profile has a
+  password (checked in `main` before binding), so a remote bind never comes up with
+  nobody able to manage it.
+- **Reach** (`security::classify_reach`, after the Host check): a request is *remote*
+  when its TCP peer (`ConnectInfo`, from `into_make_service_with_connect_info`; a
+  missing peer counts as remote) is not a loopback address, when its `Host` is an
+  `allowed_hosts` name (a reverse proxy on the same computer connects from loopback),
+  or when it carries a header that proxies add (`security::PROXY_HEADERS`: `Forwarded`,
+  `X-Forwarded-For`, `X-Forwarded-Host`, `X-Real-IP`, `Tailscale-User-Login`; nginx
+  rewrites `Host` to the upstream and Apache keeps `ProxyPreserveHost Off` by default).
+  Header *values* are never read, so a header can only make a request remote, never
+  local. Everything else is *local*. Remote requests are refused with a hint while
+  `auth = "none"` (0.15.0 served `allowed_hosts` requests without any login; the
+  change is in the changelog). The request span gets `remote = true`. Oneshot tests add
+  the peer with `MockConnectInfo` (`tests/common`: `local`, `from_peer`).
+- **Auth slot** (`security::require_auth`) on the read, write and admin groups: a local
+  request passes to the profile middleware; a remote one needs a *password session*
+  (see Profiles) in its cookies, else a page `GET` goes (`303`) to `/login?next=…` and
+  fragments and `POST`s get `401` (the same split as the picker's). The picker and the
+  login routes sit outside the slot and send remote requests to the login themselves
+  (the PIN routes before a try is counted: a PIN is never checked remotely).
+- **Admin pages remotely**: `[server] remote_admin = false` by default; the admin group
+  then answers an admin on another device with `403` "On this computer only". Readers
+  get `403` as everywhere.
+- **Login cookie**: `SameSite=Strict`, `HttpOnly`, `Path` = base path; `Secure` when
+  the login `POST`'s `Origin` is `https://` (set by the browser, already accepted by the
+  Origin check), never from `X-Forwarded-Proto`, so plain HTTP in a private network
+  (WireGuard) keeps working. "Remember this device" gives 400 days, else a browser
+  session cookie.
 - Routes are split into a *read* group, an *admin* group (`POST /scan`, `GET`/`POST
   /settings`, the maintenance actions `POST /settings/reread`, `/settings/content-cache`
   and `/settings/export`, profile management under `/settings/profiles`), a *user
   writes* group (annotations, reading position, `POST /reading/clear`, the own
-  profile) and the profile *picker* (`/profiles`, which needs no profile), with an auth
-  middleware slot; the read, admin and write groups then resolve the request's profile,
-  and the admin group answers `403` to a reader (see Profiles); the admin group may stay
-  localhost-only, user writes need authentication for remote access. The admin pages
+  profile, `POST /logout`), the profile *picker* (`/profiles`, which needs no profile)
+  and the *login* (`/login`, `/login/{id}`); the read, admin and write groups pass the
+  auth slot, then resolve the request's profile, and the admin group answers `403` to a
+  reader (see Profiles) and to a remote admin without `remote_admin`. The admin pages
   are the one place that shows absolute paths (the library root in *About*); error
   messages stay path-free.
 - All routes and URLs are built with a configurable `base_path` (reverse proxy on a
@@ -438,7 +481,13 @@ v1 binds to `127.0.0.1` only, but is built to allow remote access later:
   only for known image types with a canonical `Content-Type` (the type stored from the
   book file is never echoed, so an SVG "cover" with a script is not served).
 - No built-in TLS: remote access goes through a reverse proxy with HTTPS or a private
-  network (Tailscale / WireGuard / SSH tunnel).
+  network (Tailscale / WireGuard / SSH tunnel). The library page shows the library
+  folder only locally.
+- **Accepted** (see `.debug/security-review.md`): the login page lists the profiles and
+  which of them have a password to anyone who reaches it; a proxy on another machine
+  shares one per-address budget among its clients, and one on this computer has none
+  (rate-limit in the proxy); browser-session logins have no server-side expiry; an SSH
+  tunnel arrives from loopback and counts as this computer.
 
 ## Logging (0.14.0)
 
@@ -472,11 +521,15 @@ daemon logs to journald or the container log), no metrics endpoint.
   HTML parser (`logging::catch_expected_panic`) are expected input failures: logged at
   `debug`, reported with the book.
 - **Never logged**: query strings and request bodies (search queries, notes, quotes,
-  form values); the headers `Authorization`, `Cookie`, `Set-Cookie`; profile names,
-  PINs, PIN hashes and session tokens (the `shelfgauge-profile` cookie) — profiles
-  appear only as `profile = N` (on the `request` span and in the events `profile
-  selected`, `profile added`, `pin rejected`, `pin locked`, `pin changed`, `profile
-  deleted`); `Profile` and the session `Token` have redacted `Debug` output; in V2 device
+  form values, among them the login form and the password forms of My profile); the
+  headers `Authorization`, `Cookie`, `Set-Cookie`; profile names, PINs, passwords,
+  their hashes and session tokens (the `shelfgauge-profile` cookie) — profiles appear
+  only as `profile = N` (on the `request` span and in the events `profile selected`,
+  `profile added`, `pin rejected`, `pin locked`, `pin changed`, `logged in`, `password
+  rejected`, `password locked`, `password changed`, `password removed by an admin`,
+  `profile deleted`); client addresses are not logged either (`remote = true` on the
+  span says a request came from another device); `Profile` and the session `Token`
+  have redacted `Debug` output; in V2 device
   tokens, pairing secrets, recovery codes, keys of any kind and publication ids. Books
   are named by id or library-relative path, never by absolute path at `info` and
   above. Untrusted values (`Host`/`Origin` headers, paths from archives, parser
@@ -492,11 +545,13 @@ annotations, reading positions and "Currently reading" list, theme and reader
 settings. The index, scans, caches and `config.toml` stay shared. A profile is a
 person, not authentication.
 
-- **Data** (`profiles` module, `userdata.sqlite` schema v3): `profiles` (integer id,
-  name 1–32 characters unique ignoring case, color 0–7, role `admin`/`reader`,
-  optional argon2id PHC PIN hash, `share_activity`, settings JSON or NULL, sort,
-  created) and `profile_sessions` (SHA-256 of a 32-byte random token from `getrandom`,
-  profile, created, last seen — written at most hourly). `annotations` and
+- **Data** (`profiles` module, `userdata.sqlite` schema v3, v4 since 0.16.0):
+  `profiles` (integer id, name 1–32 characters unique ignoring case, color 0–7, role
+  `admin`/`reader`, optional argon2id PHC PIN hash, optional password hash and its
+  change time, `share_activity`, settings JSON or NULL, sort, created) and
+  `profile_sessions` (SHA-256 of a 32-byte random token from `getrandom`, profile,
+  created, last seen — written at most hourly, `level` 0 = local / 1 = password,
+  `remote`). Sessions from before v4 are local ones. `annotations` and
   `reading_positions` were rebuilt with `profile_id … ON DELETE CASCADE`
   (`reading_positions` keyed by `(profile_id, book_key)`). The migration creates the
   *owner* (id 1, "Me", always admin, cannot be deleted) and moves all existing rows to
@@ -508,7 +563,8 @@ person, not authentication.
   groups resolves a `CurrentProfile` extension — the owner while it is the only
   profile (no cookie, no picker, no avatar), else the session in the cookie
   `shelfgauge-profile` (HttpOnly, SameSite=Strict, `Path` = base path, 400 days,
-  `Secure` behind an HTTPS proxy on an `allowed_hosts` name). Without a session a page
+  `Secure` when the `POST` that set it had an `https://` `Origin`). A remote request has
+  no implicit owner and only counts password sessions. Without a session a page
   `GET` gets `303` to `/profiles?next=<local path>`; fragments (sidebar, scan status,
   annotation lists, find, covers, images — told apart by route) and every `POST` get
   `401`, and the scripts reload the page. `next` must be a local path under the base
@@ -527,16 +583,30 @@ person, not authentication.
   tries left, `429` with the wait. Setting, changing or removing a PIN ends the profile's
   other sessions and renews the current token; an admin can remove another profile's
   PIN, `shelfgauge profiles reset-pin` the owner's.
-- **Not authentication**: `Auth` and the bind rule are unchanged; a PIN never makes a
-  non-loopback bind allowed. The planned password login will log into a profile.
+- **PIN and password** (0.16.0): a PIN is not authentication and never makes a
+  non-loopback bind allowed; it is asked only locally. The optional password
+  (`profiles::password`: 10–128 code points after NFC normalization, no other rules,
+  argon2id like the PIN, sharing its one-run-at-a-time lock) is the login from other
+  devices: `/login` lists the profiles (without a password: disabled, "On this computer
+  only"; with one profile it goes to the form directly), `/login/{id}` checks it and
+  starts a password session. The two are independent; a remote request can neither
+  change the PIN nor remove its own password (also not through the admin route). A
+  wrong password counts like a wrong PIN (its own `PinLimiter`), and a non-loopback
+  client also has `password::AddressLimiter`: 20 failed logins per 15 minutes per
+  address, then every login from it is refused. Setting or changing a password ends the
+  profile's other password sessions (the current one and local ones stay); removing
+  it, by the person locally, an admin or `shelfgauge profiles remove-password`, ends
+  all of them. The plan's `POST /profile/password` became the actions `set-password`
+  and `remove-password` of `POST /profile`, like the PIN's.
 - **Roles**: `admin` sees Settings, Rescan, maintenance and Settings → Profiles (add,
   rename, recolor, role, remove PIN, delete with typed-name confirmation and "Export
   first"); `reader` sees neither the gear nor Rescan. Everyone edits their own name,
   color, PIN, activity sharing and settings on My profile (`/profile`). Adding the
   second profile starts an owner session in the admin's browser.
-- **Look**: with two or more profiles an avatar (initials on the profile color) with a
-  `<details>` menu (My profile, Switch profile, Profiles for admins; on narrow screens
-  also Settings and Rescan, which leave the bar). `data-pcolor` on `<html>` sets
+- **Look**: with two or more profiles, and always on another device, an avatar
+  (initials on the profile color) with a `<details>` menu (My profile, Switch profile
+  or on another device Sign out, Profiles for admins; on narrow screens also Settings
+  and Rescan, which leave the bar). `data-pcolor` on `<html>` sets
   `--accent` and `--on-accent` from a palette of 8 colors defined for each theme;
   color 0 is each theme's own accent, so one user sees no change. Every color has at
   least 4.5:1 against its theme's background and against the text on it
@@ -558,7 +628,9 @@ person, not authentication.
   profile, kept when it is deleted; the owner's stale-file sweep never descends into
   `profiles/`).
 - **CLI**: `shelfgauge profiles list | add <name> [--admin] | remove <name> [--yes] |
-  reset-pin <name>`; `shelfgauge annotations export [--profile <name>]`. Unknown names
+  reset-pin <name> | set-password <name> | remove-password <name>` (`set-password`
+  asks twice without echo through `rpassword`, or reads one line from a non-terminal
+  stdin, removing only the line break); `shelfgauge annotations export [--profile <name>]`. Unknown names
   are errors that list the profiles.
 
 ## V2: hub — books on mobile devices (designed, not built)

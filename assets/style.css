@@ -2376,6 +2376,16 @@ button.danger,
     display: none;
   }
 
+  /* Behind the open sidebar: dims the page, and a tap on it closes the sidebar
+     (app.js). */
+  body.sidebar-shown .layout::after {
+    position: fixed;
+    inset: var(--topbar-height) 0 0;
+    z-index: 9;
+    content: "";
+    background: rgb(0 0 0 / 0.35);
+  }
+
   .main {
     padding: 1rem;
   }
@@ -2419,5 +2429,135 @@ button.danger,
 
   .cover {
     max-width: 12rem;
+  }
+}
+
+/* ---------- Touch screens ---------- */
+
+/* Fingers need bigger targets than a mouse pointer: at least 44 by 44 CSS pixels
+   (WCAG 2.5.5) for every control, menu entry and list of links. Links inside running
+   text keep their size. The layout stays the same, only the targets grow. */
+@media (pointer: coarse) {
+  .icon-button,
+  .avatar-button,
+  .twisty {
+    justify-content: center;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+
+  .twisty {
+    align-self: start;
+  }
+
+  .avatar-button {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  input:not([type="checkbox"], [type="radio"], [type="hidden"]),
+  select,
+  button,
+  .button {
+    min-height: 2.75rem;
+  }
+
+  input[type="checkbox"],
+  input[type="radio"] {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+
+  label.check {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 2.75rem;
+  }
+
+  summary {
+    box-sizing: border-box;
+    min-height: 2.75rem;
+    padding-block: 0.6rem;
+  }
+
+  .profile-menu .menu a,
+  .profile-menu .menu button {
+    display: flex;
+    align-items: center;
+    min-height: 2.75rem;
+  }
+
+  .modes a {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.75rem;
+  }
+
+  /* The sidebar tree: one row per finger. */
+  .tree .node {
+    grid-template-columns: 2.75rem 1.25rem minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  /* Author and folder names keep their ellipsis: a block with a tall line. */
+  .tree .node > a {
+    line-height: 2.75rem;
+  }
+
+  .tree .book > a {
+    display: flex;
+    align-items: center;
+    min-height: 2.75rem;
+  }
+
+  /* Lists of links: authors, folders, books, facts and the statistics. */
+  .authors a,
+  .folders a,
+  .books a,
+  .facts-list a,
+  .annotation-links a,
+  .find-hits a,
+  .latest-quotes a,
+  .annotation-list a,
+  .bars .bar-label a,
+  .facts dd a {
+    display: inline-flex;
+    align-items: center;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+
+  .swatch {
+    padding: 0.5rem;
+  }
+}
+
+/* ---------- Notches and rounded corners ---------- */
+
+/* With `viewport-fit=cover` the page reaches the screen edges: the bars and the text
+   keep clear of a notch, a rounded corner and the home indicator. */
+@supports (padding: env(safe-area-inset-left)) {
+  .topbar {
+    padding-right: max(1rem, env(safe-area-inset-right));
+    padding-left: max(1rem, env(safe-area-inset-left));
+  }
+
+  .main {
+    padding-right: max(2rem, env(safe-area-inset-right));
+    padding-bottom: calc(3rem + env(safe-area-inset-bottom));
+  }
+
+  .sidebar {
+    padding-bottom: calc(2rem + env(safe-area-inset-bottom));
+    padding-left: max(0.75rem, env(safe-area-inset-left));
+  }
+
+  @media (max-width: 48rem) {
+    .main {
+      padding-right: max(1rem, env(safe-area-inset-right));
+      padding-left: max(1rem, env(safe-area-inset-left));
+    }
   }
 }

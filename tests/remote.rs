@@ -400,6 +400,12 @@ async fn password_login_from_another_device() {
 
     let reply = lib.get(Via::Phone, "/", Some(&token)).await;
     assert_eq!(reply.status, StatusCode::OK);
+    // No path of this computer on the library page.
+    assert!(
+        !reply.body.contains(r#"class="muted path""#),
+        "{}",
+        reply.body
+    );
     // A single profile on another device still has the menu, with Sign out.
     assert!(reply.body.contains("Sign out"), "{}", reply.body);
     assert!(!reply.body.contains("Switch profile"));

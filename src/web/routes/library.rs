@@ -28,7 +28,8 @@ const RECENT_BOOKS: u32 = 8;
 #[template(path = "home.html")]
 struct HomePage {
     layout: Layout,
-    root: String,
+    /// The library folder; not shown on other devices (a path of this computer).
+    root: Option<String>,
     books: u64,
     /// "12 345 books · 2 345 authors · 4.2 GB".
     summary: String,
@@ -114,7 +115,7 @@ pub(crate) async fn home(
     }
     render(&HomePage {
         layout: Layout::new(&state, &current, "Library", sidebar),
-        root: state.library().root().display().to_string(),
+        root: (!current.remote).then(|| state.library().root().display().to_string()),
         books,
         summary: format!(
             "{} · {} · {}",

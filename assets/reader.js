@@ -491,11 +491,22 @@
     pending = null;
   }
 
+  const coarse = window.matchMedia("(pointer: coarse)");
+
+  // Below the selection, inside the viewport. On a touch screen the selection handles
+  // hang below the text, so the popup keeps clear of them; when there is no room
+  // below, it goes above the selection.
   function place(el, rect) {
-    const top = window.scrollY + rect.bottom + 8;
-    const left = Math.max(8, Math.min(window.scrollX + rect.left, window.scrollX + window.innerWidth - el.offsetWidth - 8));
-    el.style.top = `${top}px`;
-    el.style.left = `${left}px`;
+    const gap = coarse.matches ? 32 : 8;
+    const view = window.visualViewport;
+    const viewHeight = view ? view.height : window.innerHeight;
+    let top = rect.bottom + gap;
+    if (top + el.offsetHeight > viewHeight - 8 && rect.top - gap - el.offsetHeight > 8) {
+      top = rect.top - gap - el.offsetHeight;
+    }
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - el.offsetWidth - 8));
+    el.style.top = `${window.scrollY + top}px`;
+    el.style.left = `${window.scrollX + left}px`;
   }
 
   function showMarkButton(range, anchor) {
@@ -548,7 +559,13 @@
     actions.append(save, cancel);
     form.append(info, note, actions);
     popup.append(form);
-    note.focus();
+    // The form is taller than the button: place it again.
+    place(popup, range.getBoundingClientRect());
+    note.focus({ preventScroll: true });
+    // A phone's keyboard shrinks the viewport after the focus: keep the form in view.
+    const keepInView = () => popup && popup.scrollIntoView({ block: "nearest" });
+    window.visualViewport?.addEventListener("resize", keepInView, { once: true });
+    keepInView();
     form.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         hidePopup();

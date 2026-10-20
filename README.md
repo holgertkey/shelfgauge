@@ -1,11 +1,11 @@
-# shelfgauge v0.15.0
+# shelfgauge v0.16.0
 
 A single-binary tool that indexes a folder tree of ebooks — FB2, EPUB, plain text and
 (optionally) HTML files, plain or inside `.zip` archives — into a local SQLite
 database and serves a browsable, searchable web library on `localhost`, with an
 in-browser reader.
 
-**Current version:** 0.15.0
+**Current version:** 0.16.0
 
 ## Status
 
@@ -268,8 +268,10 @@ the configuration are shared.
   admin can remove a forgotten PIN of another profile, and
   `shelfgauge profiles reset-pin NAME` removes the owner's. **A PIN is not a password
   protection**: it keeps family members apart, but anyone with access to the computer
-  can read `.shelfgauge/userdata.sqlite`, and it does not make remote access safe (see
-  [Remote access](#remote-access)).
+  can read `.shelfgauge/userdata.sqlite`. It is asked only on this computer.
+- **Password** (optional): the login from a phone or another computer, see
+  [Remote access](#remote-access). Set on **My profile**; an admin can remove another
+  profile's, and `shelfgauge profiles remove-password NAME` removes a forgotten one.
 - **Colors**: a profile's color is its avatar and the color of links and buttons.
 - **Family activity** (off by default): with **Show my reading to the other profiles**
   on **My profile**, the others see the books you are reading and how far you are, on
@@ -325,37 +327,93 @@ as it is now. When changes take effect:
 
 ## Remote access
 
-shelfgauge listens on `127.0.0.1` and has no authentication, so it refuses a non-loopback
-`bind`; profiles and their PINs are not authentication and do not change this. It accepts requests only for the host names `localhost`, `127.0.0.1` and `[::1]`
-with its port, plus `server.allowed_hosts` (protection against DNS rebinding), and every
-state-changing request (rescan) must come with a matching `Origin` (CSRF protection).
+On the computer with the library nothing needs to be set up: shelfgauge listens on
+`127.0.0.1`, asks no password there, and profiles with a PIN ask for the PIN. To read
+from a phone or another computer, turn on the **password login**: each person then logs
+into their own profile with its password on other devices. The computer with the
+library must be on; shelfgauge has no offline copy of the books.
 
-- **SSH tunnel** (simplest): `ssh -L 8742:127.0.0.1:8742 user@server`, then open
-  `http://localhost:8742/` locally. No configuration change is needed.
-- **Reverse proxy with HTTPS** on the same host, forwarding to `127.0.0.1:8742`. The proxy
-  must add authentication. Add the public host name to `server.allowed_hosts` (and set
-  `server.base_path` if the library is served on a sub-path). For example with
-  [Caddy](https://caddyserver.com/docs/caddyfile/directives/basic_auth) (automatic HTTPS;
-  create the password hash with `caddy hash-password`):
+1. Give an admin profile a password: on **My profile** → **Password**, or with
+   `shelfgauge profiles set-password <name>` (asked twice without echo; in a script,
+   one line on standard input). Every person who reads from other devices sets their
+   own password on **My profile** (at least 10 characters; a few words are easier to
+   type on a phone than a jumble).
+2. In `.shelfgauge/config.toml`, section `[server]`: `auth = "password"`, plus the
+   address or names under which the other devices reach the computer (below). Restart
+   shelfgauge; it refuses to start while no admin has a password.
+
+**The PIN is for this computer, the password for other devices.** The two are
+independent: a PIN is never accepted from another device, and the password is never
+asked on this computer. To lock a profile in both places, set both. A profile without a
+password is shown as *On this computer only* on the login page. **Remember this device**
+keeps the login for about 400 days; without it the login ends when the browser closes.
+**Sign out** in the avatar menu ends it at once, **Sign out on other devices** on **My
+profile** ends all others, and changing the password logs out the other devices that
+used it. After 5 wrong passwords a profile is locked for 30 seconds, then longer; a
+device with its own address is refused for 15 minutes after 20 failed logins on any
+profiles. Settings, rescans and profile management stay on this computer unless
+`remote_admin = true`.
+
+**What counts as another device.** A request is from another device when it does not
+come from a loopback address, when its `Host` is a name from `allowed_hosts`, or when it
+carries a header that reverse proxies add (`Forwarded`, `X-Forwarded-For`,
+`X-Forwarded-Host`, `X-Real-IP`, `Tailscale-User-Login`). shelfgauge never *trusts*
+these headers (a client can send any value): they can only make a request "remote",
+never "local". Requests from other devices with `auth = "none"` are refused with a hint.
+
+- **Tailscale or WireGuard** (a private network, simplest): bind to the computer's
+  address in that network and keep plain HTTP (WireGuard encrypts the traffic):
+
+  ```toml
+  [server]
+  bind = "100.101.102.103"          # this computer's Tailscale address
+  auth = "password"
+  allowed_hosts = ["books-pc.tail1234.ts.net", "books-pc"]   # its MagicDNS names
+  ```
+
+  Then open `http://100.101.102.103:8742/` (or the MagicDNS name with the port) on the
+  phone. `tailscale serve --bg 8742` works too (HTTPS on the `ts.net` name; add that
+  name to `allowed_hosts` and keep `bind = "127.0.0.1"`).
+- **Reverse proxy with HTTPS** on the same computer, forwarding to `127.0.0.1:8742`:
+  add the public name to `allowed_hosts` (and set `base_path` on a sub-path). With
+  [Caddy](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy) (automatic
+  HTTPS; it passes `Host` through unchanged):
 
   ```
   books.example.org {
-  	basic_auth {
-  		reader <hashed password>
-  	}
   	reverse_proxy 127.0.0.1:8742
   }
   ```
 
-  and in `.shelfgauge/config.toml`: `allowed_hosts = ["books.example.org"]`. On a
-  sub-path, set `base_path` (e.g. `"/books"`) and forward the prefix unchanged: in Caddy
-  use `handle /books*` (not `handle_path`, which strips it); in nginx use
-  `location /books/ { proxy_pass http://127.0.0.1:8742; }` (no URI after the port). With nginx,
-  `proxy_pass http://127.0.0.1:8742;` works the same way (nginx sends the upstream
-  address as `Host` unless `proxy_set_header Host $host;` is set; either is accepted
-  when the public name is in `allowed_hosts`).
-- **Private network** (Tailscale, WireGuard): combine it with an SSH tunnel or a reverse
-  proxy as above, since shelfgauge itself only listens on loopback.
+  With nginx, pass the original `Host` (nginx replaces it with the upstream address by
+  default, and Apache does too unless `ProxyPreserveHost On`):
+
+  ```nginx
+  location /books/ {
+      proxy_pass http://127.0.0.1:8742;     # no URI after the port: the prefix stays
+      proxy_set_header Host $host;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  }
+  ```
+
+  with `allowed_hosts = ["books.example.org"]` and `base_path = "/books"`. In Caddy use
+  `handle /books*` for a sub-path (not `handle_path`, which strips the prefix). The
+  proxy may still ask for its own login (Caddy `basic_auth`); people then log in twice.
+  Behind a proxy on the same computer all clients share its address, so only the
+  per-profile lockout applies; add a rate limit in the proxy if the library is public.
+  A proxy on *another* machine shares one address budget among its clients.
+- **SSH tunnel** (no configuration change): `ssh -L 8742:127.0.0.1:8742 user@server`,
+  then open `http://localhost:8742/` locally. The tunnel arrives from loopback, so it
+  counts as this computer: only for people who may use it as such.
+
+shelfgauge has no built-in TLS. The `Secure` flag of the login cookie follows the
+address the browser uses (`https://` through a proxy, plain `http://` in a private
+network).
+
+**Upgrading from 0.15.0**: requests through an `allowed_hosts` name were served without
+any login before; now they need `auth = "password"`. Set a password for an admin
+profile and `auth = "password"` before you upgrade a library that is used through a
+reverse proxy.
 
 Note: making a library reachable by others makes its books available to them; whether
 that is allowed depends on the books' licenses and is the operator's responsibility.
@@ -370,4 +428,4 @@ MIT — see [LICENSE](LICENSE).
 
 ---
 
-_shelfgauge v0.15.0 — MIT License_
+_shelfgauge v0.16.0 — MIT License_

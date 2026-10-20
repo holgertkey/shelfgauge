@@ -8,6 +8,56 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-20
+
+### Added
+
+- **Remote access with password login**: with `auth = "password"` in the `[server]`
+  section of `config.toml`, each person logs into their own profile with its password
+  from a phone or another computer (over Tailscale / WireGuard, or through a reverse
+  proxy with HTTPS). On the computer with the library nothing changes: no password is
+  asked there, and PINs work as before. The README's "Remote access" section has
+  recipes for Tailscale, Caddy and nginx.
+- An optional **password** per profile (10 to 128 characters, Unicode-normalized,
+  stored as an argon2id hash), set on My profile or with
+  `shelfgauge profiles set-password NAME`; `remove-password NAME` and Settings →
+  Profiles remove it. The PIN is for this computer, the password for other devices; a
+  PIN is never accepted from another device.
+- **Login page** (`/login`): the profiles with a password, a password form with
+  "Remember this device" (about 400 days, else until the browser closes), **Sign out**
+  in the avatar menu. After 5 wrong passwords a profile is locked for 30 seconds,
+  doubling up to 15 minutes; a device is refused for 15 minutes after 20 failed logins.
+- `remote_admin` in `[server]` (off by default): whether admins may use the settings
+  page, rescans and profile management from other devices.
+- **Phones**: touch targets of at least 44 px, the sidebar as an overlay that a tap
+  beside it closes, a top bar that keeps room for the search field (focus mode is in the
+  Aa panel there), quoting with the touch selection (the Quote button keeps clear of the
+  selection handles), and room for notches and the home indicator.
+
+### Changed
+
+- A request through a name from `allowed_hosts`, or with a header that reverse proxies
+  add (`X-Forwarded-For`, `Forwarded`, `X-Forwarded-Host`, `X-Real-IP`,
+  `Tailscale-User-Login`), now counts as coming from another device: it needs
+  `auth = "password"` and a login, and is refused with a hint otherwise. **Before
+  upgrading** a library that is used through a reverse proxy, set a password for an
+  admin profile (`shelfgauge profiles set-password NAME`) and `auth = "password"`.
+- `bind` may be a non-loopback address with `auth = "password"`; shelfgauge then
+  refuses to start while no admin profile has a password.
+- The library page shows the library folder only on the computer with the library.
+- `shelfgauge profiles list` shows whether a profile has a password.
+- `userdata.sqlite` schema version 4 (migrated automatically; sessions from before stay
+  valid on this computer only).
+
+### Security
+
+- Requests through a reverse proxy are no longer served without a login (see Changed).
+- Forwarded headers are never trusted: they can only make a request "remote". The
+  login cookie is `Secure` when the browser uses `https://`, judged by the `Origin` of
+  the login, no longer by `X-Forwarded-Proto`.
+- Passwords, login forms and session tokens are never logged; requests from other
+  devices are marked `remote=true` in the request log.
+
 ## [0.15.0] - 2026-10-19
 
 ### Added

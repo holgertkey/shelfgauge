@@ -168,6 +168,27 @@ function setupSidebarToggle() {
     }
     syncToggle();
   });
+  // On a narrow screen the open sidebar lies over the page: a tap beside it (on the
+  // dimmed page) closes it and does nothing else.
+  document.addEventListener(
+    "click",
+    (event) => {
+      const target = event.target;
+      if (
+        narrow.matches &&
+        document.body.classList.contains("sidebar-shown") &&
+        target instanceof Element &&
+        target.closest(".layout") &&
+        !target.closest(".sidebar")
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        document.body.classList.remove("sidebar-shown");
+        syncToggle();
+      }
+    },
+    true,
+  );
   narrow.addEventListener("change", syncToggle);
   syncToggle();
 }

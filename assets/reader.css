@@ -859,3 +859,63 @@ mark.sg-find.current {
   font-size: 0.9rem;
   cursor: pointer;
 }
+
+/* Focus mode is also in the Aa panel (and on the f key): on a phone the top bar keeps
+   its room for the search field. */
+@media (max-width: 48rem) {
+  .topbar .focus-button {
+    display: none;
+  }
+}
+
+@media (pointer: coarse) {
+  .settings-form .setting label span,
+  .settings-form .size button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.75rem;
+  }
+
+  /* The theme circles: the name stays hidden beside the circle (not centered in
+     it), and the label itself adds no padding. */
+  .settings-form .swatches label {
+    padding: 0;
+    border: 0;
+  }
+
+  .settings-form .swatches label span {
+    display: block;
+    width: 2.75rem;
+    height: 2.75rem;
+    text-indent: 3.5rem;
+  }
+
+  .settings-form .swatches {
+    gap: 0.4rem;
+  }
+
+  .focus-toggle {
+    min-height: 2.75rem;
+  }
+
+  .mark-popup button {
+    min-height: 2.75rem;
+    padding-inline: 1rem;
+  }
+
+  .reader-nav a,
+  .reader-head .book-link {
+    display: inline-flex;
+    align-items: center;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+}
+
+/* The status line stays above the home indicator of a phone. */
+@supports (padding: env(safe-area-inset-bottom)) {
+  :root.reading-focus .status-line {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
