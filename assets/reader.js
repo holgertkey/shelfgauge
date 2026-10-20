@@ -15,6 +15,9 @@
   // footnote or another chapter do not move the position).
   const DWELL_MS = 6000;
   const BLOCK_ID = /^b[1-9][0-9]*$/;
+  // Until this time a scroll is a page turn, not the reader's: focus mode keeps the
+  // top bar hidden.
+  let pageTurnUntil = 0;
 
   const article = document.querySelector("article.reader");
   const text = article && article.querySelector(".text");
@@ -836,6 +839,148 @@
     }
   }
 
+  // ---------- Page turns on touch screens ----------
+
+  // A swipe to the left or a double tap on the right half turns a page forward, a
+  // swipe to the right or a double tap on the left half back; scrolling stays as it
+  // is. A page is the readable height (between the top bar or running head and the
+  // status line) less one line, so a line stays in view. At the end of a part the next
+  // part opens, at its start the previous one at its end (`#end`). Not on links and
+  // controls, with a selection (its handles are being dragged), in the quote popup,
+  // near the screen edges (the system's back gesture) or in a table that scrolls
+  // sideways.
+  const SWIPE_MIN = 60;
+  const SWIPE_MS = 600;
+  const TAP_SLOP = 10;
+  const TAP_MS = 300;
+  const DOUBLE_TAP_MS = 300;
+  const DOUBLE_TAP_SLOP = 40;
+  const EDGE = 24;
+
+  function bottomLimit() {
+    const view = window.visualViewport;
+    let bottom = view ? view.height : window.innerHeight;
+    const status = document.querySelector(".status-line");
+    if (status && getComputedStyle(status).display !== "none") {
+      bottom = Math.min(bottom, status.getBoundingClientRect().top);
+    }
+    return bottom;
+  }
+
+  function partLink(rel) {
+    return article.querySelector(`.reader-nav a[rel="${rel}"]`);
+  }
+
+  function turnPage(forward) {
+    const top = topLimit();
+    const bottom = bottomLimit();
+    const rect = text.getBoundingClientRect();
+    if (forward && rect.bottom <= bottom + 2) {
+      const next = partLink("next");
+      if (next) {
+        window.location.href = next.href;
+      } else {
+        toast("The end of the book.");
+      }
+      return;
+    }
+    if (!forward && rect.top >= top - 2) {
+      const prev = partLink("prev");
+      if (prev) {
+        window.location.href = `${prev.href.split("#")[0]}#end`;
+      }
+      return;
+    }
+    const line = parseFloat(getComputedStyle(text).lineHeight) || 24;
+    const page = Math.max(bottom - top - line, line);
+    pageTurnUntil = Date.now() + 400;
+    window.scrollBy({ top: forward ? page : -page, behavior: "instant" });
+  }
+
+  // Whether a touch at `target` may turn a page.
+  function turnsPages(target, x) {
+    if (!(target instanceof Element) || !article.contains(target)) {
+      return false;
+    }
+    if (target.closest("a, button, input, textarea, select, summary, label, .mark-popup")) {
+      return false;
+    }
+    if (x < EDGE || x > window.innerWidth - EDGE) {
+      return false;
+    }
+    const selection = window.getSelection();
+    if ((selection && !selection.isCollapsed) || popup) {
+      return false;
+    }
+    for (let el = target; el && el !== text; el = el.parentElement) {
+      if (el.scrollWidth > el.clientWidth + 1) {
+        const overflow = getComputedStyle(el).overflowX;
+        if (overflow === "auto" || overflow === "scroll") {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  function setupPaging() {
+    // The previous part opened at its end.
+    if (window.location.hash === "#end") {
+      history.replaceState(null, "", window.location.pathname + window.location.search);
+      pageTurnUntil = Date.now() + 400;
+      window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "instant" });
+    }
+    if (!coarse.matches) {
+      return;
+    }
+    let start = null;
+    let lastTap = null;
+    document.addEventListener("touchstart", (event) => {
+      const touch = event.touches[0];
+      start = event.touches.length === 1 && turnsPages(event.target, touch.clientX)
+        ? { x: touch.clientX, y: touch.clientY, t: Date.now() }
+        : null;
+    }, { passive: true });
+    document.addEventListener("touchmove", (event) => {
+      if (event.touches.length > 1) {
+        start = null;
+      }
+    }, { passive: true });
+    document.addEventListener("touchend", (event) => {
+      if (!start || event.touches.length > 0) {
+        return;
+      }
+      const touch = event.changedTouches[0];
+      const dx = touch.clientX - start.x;
+      const dy = touch.clientY - start.y;
+      const dt = Date.now() - start.t;
+      start = null;
+      if (Math.abs(dx) >= SWIPE_MIN && Math.abs(dx) > 2 * Math.abs(dy) && dt <= SWIPE_MS) {
+        lastTap = null;
+        turnPage(dx < 0);
+        return;
+      }
+      if (Math.abs(dx) > TAP_SLOP || Math.abs(dy) > TAP_SLOP || dt > TAP_MS) {
+        lastTap = null;
+        return;
+      }
+      const now = Date.now();
+      if (
+        lastTap &&
+        now - lastTap.t <= DOUBLE_TAP_MS &&
+        Math.abs(touch.clientX - lastTap.x) <= DOUBLE_TAP_SLOP &&
+        Math.abs(touch.clientY - lastTap.y) <= DOUBLE_TAP_SLOP
+      ) {
+        lastTap = null;
+        // No click (and no zoom) from the second tap.
+        event.preventDefault();
+        turnPage(touch.clientX >= window.innerWidth / 2);
+        return;
+      }
+      lastTap = { x: touch.clientX, y: touch.clientY, t: now };
+    });
+  }
+
   // ---------- Search in the book ----------
 
   // The server searches the whole book (`/book/{id}/find?q=`) and lists the results
@@ -1406,6 +1551,10 @@
     window.addEventListener("scroll", () => {
       const y = window.scrollY;
       const delta = y - lastY;
+      if (Date.now() < pageTurnUntil) {
+        lastY = y;
+        return;
+      }
       if (!focused() || panelOpen() || (Math.abs(delta) < 8 && y > 0)) {
         return;
       }
@@ -1730,5 +1879,6 @@
   setupBookmarks();
   setupPosition();
   setupRescroll();
+  setupPaging();
   highlight();
 })();

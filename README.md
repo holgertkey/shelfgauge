@@ -173,6 +173,11 @@ WantedBy=multi-user.target
   and alignment of the book text. They apply at once, keeping your place in the text,
   and are saved in your profile, so they are the same on every device (settings that an
   older version kept in the browser are taken over once); **Defaults** resets them.
+- **Turning pages on a phone or tablet**: swipe to the left or double-tap the right half
+  of the screen for the next page, swipe to the right or double-tap the left half for
+  the previous one; scrolling with a finger works as usual. At the end of a chapter the
+  next one opens, at its start the previous one at its end. Links, a selection and the
+  screen edges are left alone.
 - **Focus mode** (`f`, or the button next to **Aa**; on a phone the checkbox in **Aa**)
   hides the sidebar and the top bar; the top bar comes back when you scroll up or move
   the mouse to the top edge. On a phone every book opens in focus mode; leaving it

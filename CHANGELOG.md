@@ -29,6 +29,10 @@ Build numbers (`+NNN`) do not get their own sections.
   doubling up to 15 minutes; a device is refused for 15 minutes after 20 failed logins.
 - `remote_admin` in `[server]` (off by default): whether admins may use the settings
   page, rescans and profile management from other devices.
+- **Page turns on phones and tablets**: a swipe to the left or a double tap on the
+  right half of the screen turns to the next page, a swipe to the right or a double tap
+  on the left half to the previous one; at the end of a chapter the next one opens, at
+  its start the previous one at its end. Scrolling with a finger stays as it was.
 - **Phones**: touch targets of at least 44 px, the sidebar as an overlay that a tap
   beside it closes, a house icon in the top bar that leads to the library page, a top bar that keeps room for the search field (focus mode is in the
   Aa panel there; every book opens in focus mode, with the status line of the position

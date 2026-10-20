@@ -415,6 +415,14 @@ leaving it (the sidebar button, Esc, the Aa panel) holds for that page only. Wid
 screens keep the browser's choice in `localStorage` (`theme.js`). On touch screens (`pointer: coarse`) every
 control, menu entry and list of links is at least 44 by 44 CSS px; links in running text
 keep their size. Pages use `viewport-fit=cover` with `env(safe-area-inset-*)` padding.
+Page turns (`reader.js`, touch screens only): a sideways swipe (at least 60 px,
+mostly horizontal, within 600 ms) or a double tap on a half of the screen scrolls by
+the readable height (top bar or running head to status line) less one line, at once;
+at a part's end the next part opens, at its start the previous one with `#end` (scrolled
+to its end, the hash dropped). The reader article has `touch-action: pan-y pinch-zoom`
+and the page `overscroll-behavior-x: none`, so the browser neither zooms on a double tap
+nor goes back in history on a swipe; links, controls, a selection, the quote popup, the
+screen edges (24 px) and sideways-scrolling tables keep their touches.
 Quoting works with the touch selection (`selectionchange`); the Quote button keeps
 32 px below the selection handles, goes above the selection when there is no room, and
 the note form stays in view when the keyboard opens (`visualViewport`). Browser check:
