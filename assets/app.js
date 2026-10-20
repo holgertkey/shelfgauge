@@ -538,8 +538,8 @@ function setupBrowserSettings() {
   });
 
   const leaveFocus = section.querySelector(".leave-focus");
-  // theme.js has set the class: the stored choice, or the default of this screen.
-  leaveFocus.disabled = !document.documentElement.classList.contains("reading-focus");
+  // What this browser remembers (a phone-sized screen always starts in focus mode).
+  leaveFocus.disabled = storageGet(localStorage, "shelfgauge-focus") !== "1";
   leaveFocus.addEventListener("click", () => {
     shelfgaugeReader.setFocus(false);
     leaveFocus.disabled = true;

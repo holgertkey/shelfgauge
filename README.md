@@ -175,8 +175,8 @@ WantedBy=multi-user.target
   older version kept in the browser are taken over once); **Defaults** resets them.
 - **Focus mode** (`f`, or the button next to **Aa**; on a phone the checkbox in **Aa**)
   hides the sidebar and the top bar; the top bar comes back when you scroll up or move
-  the mouse to the top edge. On a phone the reader starts in focus mode until you turn
-  it off; each browser remembers the choice. A thin
+  the mouse to the top edge. On a phone every book opens in focus mode; leaving it
+  holds for that page. On a computer the browser remembers the choice. A thin
   running head shows the author and title, and a status line the current chapter and
   how much of the book you have read (both can be turned off in **Aa**). Between them a
   thin line maps the whole book: ticks for chapters and bookmarks, and a dot for where
