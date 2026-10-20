@@ -416,6 +416,10 @@ button:hover {
   font-weight: 600;
 }
 
+.topbar .home-link {
+  display: none;
+}
+
 .icon-button {
   display: inline-flex;
   align-items: center;
@@ -2396,6 +2400,16 @@ button.danger,
 
   .brand {
     display: none;
+  }
+
+  /* The way home on a phone, where the name is hidden. */
+  .topbar .home-link {
+    display: inline-flex;
+  }
+
+  /* The buttons have their own padding: little gap, more room for the search field. */
+  .topbar {
+    gap: 0.25rem;
   }
 
   /* The theme is also on the settings page (and in the reader's Aa panel), and the

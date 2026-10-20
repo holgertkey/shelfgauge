@@ -30,7 +30,7 @@ Build numbers (`+NNN`) do not get their own sections.
 - `remote_admin` in `[server]` (off by default): whether admins may use the settings
   page, rescans and profile management from other devices.
 - **Phones**: touch targets of at least 44 px, the sidebar as an overlay that a tap
-  beside it closes, a top bar that keeps room for the search field (focus mode is in the
+  beside it closes, a house icon in the top bar that leads to the library page, a top bar that keeps room for the search field (focus mode is in the
   Aa panel there; every book opens in focus mode, with the status line of the position
   and the marks), quoting with the touch selection (the Quote button keeps clear of the
   selection handles), and room for notches and the home indicator.

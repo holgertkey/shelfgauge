@@ -1437,7 +1437,7 @@ dependencies = [
 
 [[package]]
 name = "shelfgauge"
-version = "0.16.0+003"
+version = "0.16.0+004"
 dependencies = [
  "anyhow",
  "argon2",
