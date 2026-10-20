@@ -456,8 +456,15 @@ mark.sg-find.current {
 }
 
 :root.reading-focus.topbar-peek .topbar,
+:root.reading-focus.page-fits .topbar,
 :root.reading-focus .topbar:has(:focus-visible) {
   transform: none;
+}
+
+/* A page shorter than the window cannot be scrolled up to bring the top bar back: it
+   stays (reader.js sets `.page-fits`), and the text starts below it. */
+:root.reading-focus.page-fits .main {
+  padding-top: calc(var(--topbar-height) + 1rem);
 }
 
 :root.reading-focus .text [id] {

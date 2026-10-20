@@ -149,7 +149,9 @@
     const top = document.querySelector(".topbar");
     if (
       !top ||
-      (root.classList.contains("reading-focus") && !root.classList.contains("topbar-peek"))
+      (root.classList.contains("reading-focus") &&
+        !root.classList.contains("topbar-peek") &&
+        !root.classList.contains("page-fits"))
     ) {
       const head = document.querySelector(".running-head");
       return (head ? Math.max(head.getBoundingClientRect().bottom, 0) : 0) + 4;
@@ -1729,8 +1731,21 @@
       }
     }
 
+    // Focus mode on a page that fits the window: nothing to scroll, so the top bar
+    // stays. Measured without the room the class itself adds above the text.
+    function updateFits() {
+      const bar = document.querySelector(".topbar");
+      const barHeight = bar ? bar.getBoundingClientRect().height : 0;
+      const fits = root.classList.contains("page-fits");
+      // The body, not <html>: the root is never shorter than the window.
+      const content = document.body.scrollHeight - (fits ? barHeight : 0);
+      const view = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+      root.classList.toggle("page-fits", focused() && content + barHeight <= view + 1);
+    }
+
     function setFocus(on) {
       keepPlace(() => settings.setFocus(on));
+      updateFits();
       // Toggled from the open panel: the top bar it hangs from stays.
       peek(panelOpen());
       sync();
@@ -1788,6 +1803,12 @@
       document.addEventListener("shelfgauge:theme", sync);
     }
     sync();
+    // Late images, another text size or a turned phone change whether the page fits.
+    updateFits();
+    window.addEventListener("resize", updateFits);
+    if ("ResizeObserver" in window) {
+      new ResizeObserver(updateFits).observe(article);
+    }
 
     // In focus mode the sidebar toggle leaves focus mode; it goes on to show the
     // sidebar only when the sidebar is hidden (app.js handles that click).

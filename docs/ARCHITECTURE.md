@@ -412,7 +412,10 @@ the top bar (the name, replaced by a house icon to the library page; the theme m
 reader focus mode, which is in the Aa panel). Below `48rem` every reader page starts
 in focus mode, so a phone shows the status line with the position and the marks;
 leaving it (the sidebar button, Esc, the Aa panel) holds for that page only. Wider
-screens keep the browser's choice in `localStorage` (`theme.js`). On touch screens (`pointer: coarse`) every
+screens keep the browser's choice in `localStorage` (`theme.js`). In focus mode a page
+that fits the window (`body` height plus the top bar) keeps the top bar
+(`.page-fits`, re-measured on resize and by a `ResizeObserver`): it could not be
+scrolled up to bring it back. On touch screens (`pointer: coarse`) every
 control, menu entry and list of links is at least 44 by 44 CSS px; links in running text
 keep their size. Pages use `viewport-fit=cover` with `env(safe-area-inset-*)` padding.
 Notes (`reader.js`, every device): a note link opens the note in a panel at the

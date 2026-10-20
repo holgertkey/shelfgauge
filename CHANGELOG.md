@@ -55,6 +55,8 @@ Build numbers (`+NNN`) do not get their own sections.
   refuses to start while no admin profile has a password.
 - The library page shows the library folder only on the computer with the library.
 - `shelfgauge profiles list` shows whether a profile has a password.
+- Focus mode keeps the top bar on a page shorter than the window (such a page cannot
+  be scrolled up to bring it back).
 - `userdata.sqlite` schema version 4 (migrated automatically; sessions from before stay
   valid on this computer only).
 
