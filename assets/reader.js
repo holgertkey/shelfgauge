@@ -981,6 +981,262 @@
     });
   }
 
+  // ---------- Notes: the preview and the way back ----------
+
+  // A note link opens the note in a panel at the bottom instead of leaving the text;
+  // a note in another part is taken from that part's page (fetched once). "Open in
+  // notes" in the panel, and any other link in the text to a place in the book,
+  // remember where the reader was: the page they lead to shows "Back to text" in the
+  // status line (and above the text when the status line is hidden), which returns
+  // there. Ctrl/Cmd/Shift-clicks stay plain links.
+  const RETURN_KEY = "shelfgauge-return";
+  const notePages = new Map();
+  let notePanel = null;
+  let noteRef = null;
+
+  function here() {
+    return window.location.pathname + window.location.search;
+  }
+
+  function readReturn() {
+    try {
+      return JSON.parse(sessionStorage.getItem(RETURN_KEY) || "null");
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function writeReturn(state) {
+    try {
+      if (state) {
+        sessionStorage.setItem(RETURN_KEY, JSON.stringify(state));
+      } else {
+        sessionStorage.removeItem(RETURN_KEY);
+      }
+    } catch (e) {
+      // Not remembered: no way back.
+    }
+  }
+
+  // A link to a place in this book (this part or another one).
+  function bookLink(a) {
+    const url = new URL(a.href, window.location.href);
+    return url.origin === window.location.origin && url.pathname === window.location.pathname
+      ? url
+      : null;
+  }
+
+  function rememberReturn(url) {
+    const block = topBlock();
+    writeReturn({
+      from: here(),
+      block: block ? block.id : null,
+      y: window.scrollY,
+      to: url.pathname + url.search,
+    });
+  }
+
+  function showReturn(state) {
+    const href = state.from + (state.block ? `#${state.block}` : "");
+    for (const link of document.querySelectorAll(".back-to-text")) {
+      link.href = href;
+      link.hidden = false;
+    }
+    document.documentElement.classList.add("has-return");
+  }
+
+  function hideReturn() {
+    for (const link of document.querySelectorAll(".back-to-text")) {
+      link.hidden = true;
+    }
+    document.documentElement.classList.remove("has-return");
+  }
+
+  function closeNote() {
+    if (!notePanel) {
+      return;
+    }
+    notePanel.remove();
+    notePanel = null;
+    if (noteRef) {
+      noteRef.focus({ preventScroll: true });
+      noteRef = null;
+    }
+  }
+
+  // The note a link leads to, as nodes for the panel (no ids, no note title); null if
+  // it cannot be found.
+  async function noteContent(url) {
+    let doc = document;
+    const page = url.pathname + url.search;
+    if (page !== here()) {
+      if (!notePages.has(page)) {
+        notePages.set(
+          page,
+          fetch(page, { credentials: "same-origin" })
+            .then((r) => {
+              if (!r.ok) {
+                throw new Error(r.statusText);
+              }
+              return r.text();
+            })
+            .then((html) => new DOMParser().parseFromString(html, "text/html")),
+        );
+      }
+      try {
+        doc = await notePages.get(page);
+      } catch (e) {
+        notePages.delete(page);
+        return null;
+      }
+    }
+    const target = doc.getElementById(decodeURIComponent(url.hash.slice(1)));
+    if (!target) {
+      return null;
+    }
+    // In a notes body the note is the section around its title; elsewhere the block.
+    const section = target.closest(".notes section");
+    const clone = (section || target).cloneNode(true);
+    if (section) {
+      for (const title of clone.querySelectorAll(":scope > .title")) {
+        title.remove();
+      }
+    }
+    clone.removeAttribute("id");
+    for (const el of clone.querySelectorAll("[id]")) {
+      el.removeAttribute("id");
+    }
+    return document.importNode(clone, true);
+  }
+
+  // On a wide screen the panel sits under the text column (beside the sidebar), not
+  // in the middle of the window; on a phone it spans the screen (CSS).
+  function alignNote() {
+    if (!notePanel) {
+      return;
+    }
+    const style = notePanel.style;
+    if (window.matchMedia("(max-width: 48rem)").matches) {
+      style.left = style.right = style.width = style.maxWidth = "";
+      return;
+    }
+    const rect = text.getBoundingClientRect();
+    style.left = `${Math.max(rect.left - 16, 8)}px`;
+    style.right = "auto";
+    style.width = `${Math.min(rect.width + 32, window.innerWidth - 16)}px`;
+    style.maxWidth = "none";
+  }
+
+  async function openNote(a, url) {
+    closeNote();
+    noteRef = a;
+    const label = a.textContent.replace(/[[\]()]/g, "").trim();
+    const panel = document.createElement("div");
+    panel.className = "note-panel";
+    panel.setAttribute("role", "dialog");
+    panel.setAttribute("aria-label", label ? `Note ${label}` : "Note");
+    panel.tabIndex = -1;
+    panel.lang = "en";
+    const head = document.createElement("div");
+    head.className = "note-head";
+    const title = document.createElement("span");
+    title.className = "note-label";
+    title.textContent = label ? `Note ${label}` : "Note";
+    const open = document.createElement("a");
+    open.className = "note-open";
+    open.href = url.href;
+    open.textContent = "Open in notes";
+    open.addEventListener("click", () => rememberReturn(url));
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "icon-button note-close";
+    close.setAttribute("aria-label", "Close");
+    close.title = "Close (Esc)";
+    close.textContent = "×";
+    close.addEventListener("click", closeNote);
+    head.append(title, open, close);
+    const body = document.createElement("div");
+    body.className = "note-body";
+    body.lang = document.documentElement.lang;
+    body.textContent = "Loading…";
+    panel.append(head, body);
+    document.body.append(panel);
+    notePanel = panel;
+    alignNote();
+    panel.focus({ preventScroll: true });
+    const content = await noteContent(url);
+    if (notePanel !== panel) {
+      return;
+    }
+    if (!content) {
+      // Not found here: go there, with the way back.
+      closeNote();
+      rememberReturn(url);
+      window.location.href = url.href;
+      return;
+    }
+    body.textContent = "";
+    body.append(content);
+  }
+
+  function setupNotes() {
+    const state = readReturn();
+    if (state && state.to === here()) {
+      showReturn(state);
+    } else if (state) {
+      writeReturn(null);
+    }
+    for (const link of document.querySelectorAll(".back-to-text")) {
+      link.addEventListener("click", (event) => {
+        const back = readReturn();
+        writeReturn(null);
+        hideReturn();
+        // Within this page: back to where the reader was, without a reload.
+        if (back && back.from === here()) {
+          event.preventDefault();
+          window.scrollTo({ top: back.y, behavior: "instant" });
+        }
+      });
+    }
+    text.addEventListener("click", (event) => {
+      const a = event.target.closest("a[href]");
+      if (!a || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || event.button !== 0) {
+        return;
+      }
+      const url = bookLink(a);
+      if (!url || !url.hash) {
+        return;
+      }
+      if (a.classList.contains("note-ref")) {
+        event.preventDefault();
+        openNote(a, url);
+        return;
+      }
+      rememberReturn(url);
+      if (url.pathname + url.search === here()) {
+        // A jump within this part: the browser scrolls, the way back shows now.
+        setTimeout(() => showReturn(readReturn()), 0);
+      }
+    });
+    document.addEventListener("click", (event) => {
+      if (
+        notePanel &&
+        !notePanel.contains(event.target) &&
+        !(event.target instanceof Element && event.target.closest(".note-ref"))
+      ) {
+        closeNote();
+      }
+    });
+    window.addEventListener("resize", alignNote);
+    document.addEventListener("keydown", (event) => {
+      if (notePanel && event.key === "Escape") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        closeNote();
+      }
+    }, true);
+  }
+
   // ---------- Search in the book ----------
 
   // The server searches the whole book (`/book/{id}/find?q=`) and lists the results
@@ -1880,5 +2136,6 @@
   setupPosition();
   setupRescroll();
   setupPaging();
+  setupNotes();
   highlight();
 })();

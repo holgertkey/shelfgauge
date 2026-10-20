@@ -415,6 +415,15 @@ leaving it (the sidebar button, Esc, the Aa panel) holds for that page only. Wid
 screens keep the browser's choice in `localStorage` (`theme.js`). On touch screens (`pointer: coarse`) every
 control, menu entry and list of links is at least 44 by 44 CSS px; links in running text
 keep their size. Pages use `viewport-fit=cover` with `env(safe-area-inset-*)` padding.
+Notes (`reader.js`, every device): a note link opens the note in a panel at the
+bottom (under the text column on a wide screen, above the status line in focus mode)
+instead of navigating; a note in another part comes from that part's page (fetched once
+per page, parsed with `DOMParser`; the note is the `.notes section` around the target,
+without its title and ids), so there is no extra route. "Open in notes" and any other
+link in the text to a place in the book remember the reading place in
+`sessionStorage`; the page they lead to shows "↩ Back to text" in the status line, in
+place of the chapter, and in the reader head (the one for screen readers), which returns
+to that block. Modified clicks stay plain links.
 Page turns (`reader.js`, touch screens only): a sideways swipe (at least 60 px,
 mostly horizontal, within 600 ms) or a double tap on a half of the screen scrolls by
 the readable height (top bar or running head to status line) less one line, at once;

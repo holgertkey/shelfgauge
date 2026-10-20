@@ -29,6 +29,10 @@ Build numbers (`+NNN`) do not get their own sections.
   doubling up to 15 minutes; a device is refused for 15 minutes after 20 failed logins.
 - `remote_admin` in `[server]` (off by default): whether admins may use the settings
   page, rescans and profile management from other devices.
+- **Notes in a panel**: a note link shows the note at the bottom of the screen without
+  leaving the page; "Open in notes" goes to the notes. After it, or any other link in
+  the text to another place in the book, "↩ Back to text" in the status line (and above
+  the text) returns to where you were reading.
 - **Page turns on phones and tablets**: a swipe to the left or a double tap on the
   right half of the screen turns to the next page, a swipe to the right or a double tap
   on the left half to the previous one; at the end of a chapter the next one opens, at

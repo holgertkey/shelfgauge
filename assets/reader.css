@@ -545,6 +545,88 @@ mark.sg-find.current {
   max-width: 40%;
 }
 
+/* ---------- Notes: the way back and the preview ---------- */
+
+/* Stronger than the display rules below (touch screens). */
+.status-line .back-to-text[hidden],
+.reader-head .back-to-text[hidden] {
+  display: none;
+}
+
+.reader-head .back-to-text {
+  margin-left: 0.75rem;
+  white-space: nowrap;
+}
+
+/* In the status line it takes the chapter's place: the reader is in the notes. */
+.status-line .back-to-text {
+  flex: 0 0 auto;
+  color: var(--accent);
+  pointer-events: auto;
+}
+
+:root.has-return .status-line .status-chapter {
+  display: none;
+}
+
+/* The note, at the bottom: above the status line in focus mode. */
+.note-panel {
+  position: fixed;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  left: 0.75rem;
+  z-index: 25;
+  box-sizing: border-box;
+  max-width: 40rem;
+  max-height: 45vh;
+  margin: 0 auto;
+  padding: 0.5rem 1rem 0.75rem;
+  overflow-y: auto;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 -2px 16px rgb(0 0 0 / 0.2);
+}
+
+:root.reading-focus:not([data-rstatus="off"]) .note-panel {
+  bottom: calc(1.75rem + 0.5rem + env(safe-area-inset-bottom, 0px));
+}
+
+.note-panel:focus {
+  outline: none;
+}
+
+.note-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.note-label {
+  font-weight: 600;
+}
+
+.note-open {
+  margin-left: auto;
+}
+
+.note-close {
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.note-body {
+  font-family: var(--reader-font, inherit);
+  line-height: 1.5;
+}
+
+.note-body p {
+  margin: 0.5rem 0 0;
+}
+
 /* The track: a hairline over the whole book with chapter ticks (faint), bookmark
    ticks, the read part and the current position; reader.js places them (CSSOM) and
    makes it clickable. It is the only part of the bars that takes the pointer. */
@@ -916,7 +998,22 @@ mark.sg-find.current {
     touch-action: pan-y pinch-zoom;
   }
 
+  /* The way back in the status line: a taller hit area, the line keeps its height. */
+  .status-line .back-to-text {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+    margin: -0.5rem 0;
+  }
+
+  .note-open {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+  }
+
   .reader-nav a,
+  .reader-head .back-to-text,
   .reader-head .book-link {
     display: inline-flex;
     align-items: center;

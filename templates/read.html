@@ -76,6 +76,8 @@
   <header class="reader-head">
     <a class="book-link" href="{{ card_href }}">{{ book_title }}</a>
     {%- if !part_title.is_empty() %} <span class="muted">· {{ part_title }}</span>{% endif %}
+    {#- reader.js: after a link from the text, the way back to where the reader was. #}
+    <a class="back-to-text" lang="en" hidden>↩ Back to text</a>
   </header>
   {% include "partials/reader_nav.html" %}
   <div class="text">{{ html|safe }}</div>
@@ -86,6 +88,9 @@
   <span class="running-title">{% if !book_authors.is_empty() %}{{ book_authors }} · {% endif %}{{ book_title }}</span>
 </div></div>
 <div class="status-line" aria-hidden="true"><div class="bar">
+  {#- The way back again (reader.js), in place of the chapter; the one above the text
+      is the one for screen readers. #}
+  <a class="back-to-text" lang="en" tabindex="-1" hidden>↩ Back to text</a>
   <span class="status-chapter">{{ part_title }}</span>
   {#- The track: chapter ticks from the server; reader.js places them and adds the
       bookmarks, the read part and the current position, and handles clicks. #}

@@ -173,6 +173,10 @@ WantedBy=multi-user.target
   and alignment of the book text. They apply at once, keeping your place in the text,
   and are saved in your profile, so they are the same on every device (settings that an
   older version kept in the browser are taken over once); **Defaults** resets them.
+- **Notes**: a note link (`[1]`) shows the note in a panel at the bottom, without
+  leaving the page; **Open in notes** goes to the notes. After that, or after any other
+  link in the text to another place in the book, **↩ Back to text** in the status line
+  (and above the text) returns to where you were reading.
 - **Turning pages on a phone or tablet**: swipe to the left or double-tap the right half
   of the screen for the next page, swipe to the right or double-tap the left half for
   the previous one; scrolling with a finger works as usual. At the end of a chapter the
