@@ -175,7 +175,7 @@ WantedBy=multi-user.target
   older version kept in the browser are taken over once); **Defaults** resets them.
 - **Notes**: a note link (`[1]`) shows the note in a panel at the bottom, without
   leaving the page; **Open in notes** goes to the notes. After that, or after any other
-  link in the text to another place in the book, **↩ Back to text** in the status line
+  link in the text to another place in the book, **Back to text** in the status line
   (and above the text) returns to where you were reading.
 - **Turning pages on a phone or tablet**: tap the right side of the screen or swipe to
   the left for the next page, tap the left side or swipe to the right for the previous

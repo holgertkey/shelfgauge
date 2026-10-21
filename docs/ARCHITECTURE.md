@@ -428,7 +428,7 @@ instead of navigating; a note in another part comes from that part's page (fetch
 per page, parsed with `DOMParser`; the note is the `.notes section` around the target,
 without its title and ids), so there is no extra route. "Open in notes" and any other
 link in the text to a place in the book remember the reading place in
-`sessionStorage`; the page they lead to shows "↩ Back to text" in the status line,
+`sessionStorage`; the page they lead to shows "Back to text" in the status line,
 before the track, and in the reader head (the one for screen readers), which returns
 to that block. Modified clicks stay plain links.
 Page turns (`reader.js`, touch screens only): a tap on the outer 30 % of the text on
