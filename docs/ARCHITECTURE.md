@@ -436,7 +436,13 @@ either side or a sideways swipe (at least 60 px, mostly horizontal, within 600 m
 from the screen edges of 24 px) turns a page; a tap in the middle shows or hides the top
 bar in focus mode, and a turn hides it. A page ends at the start of the text line at the
 bottom edge (found with `caretPositionFromPoint`, else a page less one line), so that
-line opens the next page uncut; it is lit up briefly (`.turn-line`). The text slides
+line opens the next page uncut; it is lit up briefly (`.turn-line`). In focus mode (all
+pointers) a page at rest, after a turn or once scrolling has stopped (`scrollend`, else
+150 ms without scrolling), covers the text line cut by the bottom edge (`.page-cut`, in
+the document down to the screen bottom, re-placed on resize and `visualViewport`
+resize), so only whole lines show. The bottom edge is the top of the status line, but
+at most the visible height less its height: while a browser toolbar slides, the status
+line can still be laid out below the screen. The text slides
 out and back in (Web Animations, 80 + 120 ms, not with `prefers-reduced-motion`). At a
 part's end the next part opens, at its start the previous one with `#end` (scrolled to
 its end, the hash dropped). The reader article has `touch-action: pan-y pinch-zoom` and

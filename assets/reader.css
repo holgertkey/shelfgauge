@@ -1048,6 +1048,21 @@ mark.sg-find.current {
   pointer-events: none;
 }
 
+/* The text line cut by the bottom edge of a page at rest (reader.js): covered, so only
+   whole lines show. In the document, below the bars and the status line's fade. */
+.page-cut {
+  position: absolute;
+  right: 0;
+  left: 0;
+  z-index: 4;
+  background: var(--bg);
+  pointer-events: none;
+}
+
+.page-cut[hidden] {
+  display: none;
+}
+
 /* The status line (and the note panel above it) stays above the home indicator of a
    phone. Firefox on Android reports its system navigation bar as this inset while its
    own toolbar is shown, though the page never reaches under that bar: the status line

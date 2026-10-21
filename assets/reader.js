@@ -872,12 +872,16 @@
   // reader's: it is dropped.
   let tapSelectionUntil = 0;
 
+  // The bottom of the readable area: above the status line. While a browser's toolbar
+  // slides, the status line may still be laid out below the screen (taller layout
+  // viewport): the visible height less its height is the edge then.
   function bottomLimit() {
     const view = window.visualViewport;
     let bottom = view ? view.height : window.innerHeight;
     const status = document.querySelector(".status-line");
     if (status && getComputedStyle(status).display !== "none") {
-      bottom = Math.min(bottom, status.getBoundingClientRect().top);
+      const rect = status.getBoundingClientRect();
+      bottom = Math.min(bottom, rect.top, bottom - rect.height);
     }
     return bottom;
   }
@@ -989,6 +993,7 @@
       pageTurnUntil = Date.now() + 400;
       window.scrollBy({ top: delta, behavior: "instant" });
       lightLine(band[0], band[1]);
+      coverCut();
     };
     if (reducedMotion.matches || typeof text.animate !== "function") {
       scroll();
@@ -1011,6 +1016,79 @@
         { duration: TURN_IN_MS, easing: "ease-out" },
       );
     });
+  }
+
+  // ---------- Whole lines at the bottom ----------
+
+  // In focus mode a page at rest (after a turn, once scrolling has stopped) shows whole
+  // lines only: the text line cut by the bottom edge is covered with the background
+  // (`.page-cut`, placed in the document down to the screen bottom, so it stays on that
+  // line if a browser toolbar still moves the screen); after a turn that line opens the
+  // next page. Not while scrolling, and not for an image or a table at the edge.
+  const CUT_IDLE_MS = 150;
+  let cutCover = null;
+
+  function hideCut() {
+    if (cutCover) {
+      cutCover.hidden = true;
+    }
+  }
+
+  function coverCut() {
+    if (!document.documentElement.classList.contains("reading-focus")) {
+      hideCut();
+      return;
+    }
+    const bottom = bottomLimit();
+    const line = lineAt(bottom - 2);
+    if (!line || line.bottom <= bottom + 1 || line.top <= topLimit()) {
+      hideCut();
+      return;
+    }
+    if (!cutCover) {
+      cutCover = document.createElement("div");
+      cutCover.className = "page-cut";
+      cutCover.setAttribute("aria-hidden", "true");
+      document.body.append(cutCover);
+    }
+    const view = window.visualViewport;
+    const screenBottom = view ? view.height : window.innerHeight;
+    const top = line.top + window.scrollY;
+    // Not below the document, which would make it longer.
+    const height = Math.min(screenBottom - line.top, document.documentElement.scrollHeight - top);
+    // CSSOM, not a style attribute: allowed by the CSP.
+    cutCover.style.top = `${top}px`;
+    cutCover.style.height = `${Math.max(height, 0)}px`;
+    cutCover.hidden = false;
+  }
+
+  function setupCut() {
+    let timer = 0;
+    const atRest = () => {
+      clearTimeout(timer);
+      timer = 0;
+      coverCut();
+    };
+    window.addEventListener("scroll", () => {
+      // A page turn covers the cut itself.
+      if (Date.now() < pageTurnUntil) {
+        return;
+      }
+      hideCut();
+      if (!("onscrollend" in window)) {
+        clearTimeout(timer);
+        timer = setTimeout(atRest, CUT_IDLE_MS);
+      }
+    }, { passive: true });
+    window.addEventListener("scrollend", atRest);
+    // Another window height (also a browser toolbar sliding in or out) moves the edge.
+    const resized = () => {
+      clearTimeout(timer);
+      timer = setTimeout(atRest, CUT_IDLE_MS);
+    };
+    window.addEventListener("resize", resized);
+    window.visualViewport?.addEventListener("resize", resized);
+    coverCut();
   }
 
   // Whether a touch at `target` may turn a page.
@@ -1812,6 +1890,8 @@
       if (focusButton) {
         focusButton.setAttribute("aria-pressed", String(focused()));
       }
+      // Another text size, width or focus mode moves the lines at the bottom edge.
+      coverCut();
       if (!form) {
         return;
       }
@@ -2336,6 +2416,7 @@
   setupPosition();
   setupRescroll();
   setupPaging();
+  setupCut();
   setupNotes();
   highlight();
 })();

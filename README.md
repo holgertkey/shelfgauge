@@ -181,7 +181,8 @@ WantedBy=multi-user.target
   the left for the next page, tap the left side or swipe to the right for the previous
   one; a tap in the middle shows or hides the top bar. Scrolling with a finger works as
   usual. The text slides briefly in the direction of the turn, and the line you read
-  last stays in view, lit up for a moment. At the end of a chapter the next one opens,
+  last stays in view, lit up for a moment. In focus mode a page at rest shows whole
+  lines only: a line cut by the bottom edge is hidden until it opens the next page. At the end of a chapter the next one opens,
   at its start the previous one at its end. Links and a selection are left alone.
 - **Focus mode** (`f`, or the button next to **Aa**) hides the sidebar and the top
   bar; the top bar comes back when you scroll up or move the mouse to the top edge, and
