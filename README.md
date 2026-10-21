@@ -182,10 +182,11 @@ WantedBy=multi-user.target
   the previous one; scrolling with a finger works as usual. At the end of a chapter the
   next one opens, at its start the previous one at its end. Links, a selection and the
   screen edges are left alone.
-- **Focus mode** (`f`, or the button next to **Aa**; on a phone the checkbox in **Aa**)
-  hides the sidebar and the top bar; the top bar comes back when you scroll up or move
-  the mouse to the top edge, and stays on a page shorter than the window. On a phone every book opens in focus mode; leaving it
-  holds for that page. On a computer the browser remembers the choice. A thin
+- **Focus mode** (`f`, or the button next to **Aa**) hides the sidebar and the top
+  bar; the top bar comes back when you scroll up or move the mouse to the top edge, and
+  stays on a page shorter than the window. On a phone focus mode is always on: the
+  sidebar button opens the sidebar over the text, and a jump from it closes it again.
+  On a computer the browser remembers the choice. A thin
   running head shows the author and title, and a status line the current chapter and
   how much of the book you have read (both can be turned off in **Aa**). Between them a
   thin line maps the whole book: ticks for chapters and bookmarks, and a dot for where

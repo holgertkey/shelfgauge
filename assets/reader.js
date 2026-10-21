@@ -1683,6 +1683,8 @@
     let peekByMouse = false;
 
     const focused = () => root.classList.contains("reading-focus");
+    // A phone-sized screen is always in focus mode (theme.js).
+    const phone = () => settings.phone.matches;
     const panelOpen = () => Boolean(panel) && panel.matches(":popover-open");
 
     function sync() {
@@ -1744,6 +1746,10 @@
     }
 
     function setFocus(on) {
+      if (phone()) {
+        sync();
+        return;
+      }
       keepPlace(() => settings.setFocus(on));
       updateFits();
       // Toggled from the open panel: the top bar it hangs from stays.
@@ -1810,10 +1816,19 @@
       new ResizeObserver(updateFits).observe(article);
     }
 
-    // In focus mode the sidebar toggle leaves focus mode; it goes on to show the
-    // sidebar only when the sidebar is hidden (app.js handles that click).
+    // A turned phone or a resized window may enter or leave the phone-sized screen.
+    settings.phone.addEventListener("change", () => {
+      updateFits();
+      peek(panelOpen());
+      sync();
+      updateStatus();
+    });
+
+    // On a wide screen the sidebar toggle leaves focus mode; it goes on to show the
+    // sidebar only when the sidebar is hidden (app.js handles that click). On a phone
+    // the sidebar opens over the text in focus mode.
     document.addEventListener("click", (event) => {
-      if (!focused() || !event.target.closest(".sidebar-toggle")) {
+      if (!focused() || phone() || !event.target.closest(".sidebar-toggle")) {
         return;
       }
       setFocus(false);
@@ -1822,6 +1837,26 @@
         event.stopPropagation();
       }
     }, true);
+
+    // On a phone a jump from the open sidebar (contents, bookmarks, quotes, search
+    // results) closes it, so the text is seen at once. Runs after the handlers of the
+    // links themselves (a bubbling listener on the document).
+    document.addEventListener("click", (event) => {
+      const link = event.target.closest(".sidebar a[href]");
+      if (
+        !phone() ||
+        !link ||
+        link.closest(".reader-tabs") ||
+        !document.body.classList.contains("sidebar-shown")
+      ) {
+        return;
+      }
+      document.body.classList.remove("sidebar-shown");
+      const toggle = document.querySelector(".sidebar-toggle");
+      if (toggle) {
+        toggle.setAttribute("aria-expanded", "false");
+      }
+    });
 
     // Focus mode: the top bar comes back on scroll up and at the top edge.
     let lastY = window.scrollY;

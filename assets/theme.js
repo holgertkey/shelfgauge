@@ -164,16 +164,28 @@ const shelfgaugeReader = (() => {
     });
   }
 
-  // On a phone-sized screen every reader page starts in focus mode (its status line
-  // shows the position and the marks); leaving it (the sidebar button, Esc, the Aa
-  // panel) holds for that page only. Elsewhere this browser remembers the choice.
+  // On a phone-sized screen focus mode is always on (its status line shows the
+  // position and the marks; the sidebar opens over it). Elsewhere this browser
+  // remembers the choice. The media query is followed after the load too: a browser may
+  // apply the viewport meta tag only after this script has run.
   const phone = matchMedia("(max-width: 48rem)");
+  let remembered = false;
+  try {
+    remembered = localStorage.getItem(FOCUS_KEY) === "1";
+  } catch (e) {
+    // Storage unavailable: no focus mode on a wide screen.
+  }
+
+  function applyFocus() {
+    root.classList.toggle("reading-focus", phone.matches || remembered);
+  }
 
   function setFocus(on) {
-    root.classList.toggle("reading-focus", on);
     if (phone.matches) {
       return;
     }
+    remembered = on;
+    applyFocus();
     try {
       if (on) {
         localStorage.setItem(FOCUS_KEY, "1");
@@ -188,15 +200,10 @@ const shelfgaugeReader = (() => {
   if ("adopt" in root.dataset) {
     adopt();
   }
-  try {
-    if (phone.matches || localStorage.getItem(FOCUS_KEY) === "1") {
-      root.classList.add("reading-focus");
-    }
-  } catch (e) {
-    // Storage unavailable: no focus mode.
-  }
+  applyFocus();
+  phone.addEventListener("change", applyFocus);
 
-  return { OPTIONS, THEMES, current, save, setTheme, setFocus };
+  return { OPTIONS, THEMES, current, save, setTheme, setFocus, phone };
 })();
 
 (() => {

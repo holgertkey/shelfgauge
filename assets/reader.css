@@ -949,11 +949,27 @@ mark.sg-find.current {
   cursor: pointer;
 }
 
-/* Focus mode is also in the Aa panel (and on the f key): on a phone the top bar keeps
-   its room for the search field. */
+/* A phone is always in focus mode (theme.js): no button, no checkbox in the Aa panel.
+   The sidebar button opens the sidebar over the text, and the top bar with that button
+   stays while it is open. */
 @media (max-width: 48rem) {
-  .topbar .focus-button {
+  .topbar .focus-button,
+  .focus-toggle:has(input[name="focus"]) {
     display: none;
+  }
+
+  /* Above the status line (z-index 15), like the dimmed page behind it. */
+  :root.reading-focus body.sidebar-shown .sidebar {
+    z-index: 17;
+    display: block;
+  }
+
+  :root.reading-focus body.sidebar-shown .layout::after {
+    z-index: 16;
+  }
+
+  :root.reading-focus body.sidebar-shown .topbar {
+    transform: none;
   }
 }
 

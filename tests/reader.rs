@@ -792,6 +792,44 @@ async fn reader_settings_assets_agree_on_the_values() {
     assert!(!style_css.contains("reading-focus"));
 }
 
+/// A phone-sized screen is always in focus mode: theme.js ignores leaving it there and
+/// follows the media query after the load, and the sidebar opens over the text in
+/// focus mode (a jump within the part once left focus mode for good).
+#[tokio::test]
+async fn a_phone_is_always_in_focus_mode() {
+    let lib = TestLibrary::new();
+    let server = lib.server("/", whole());
+    let theme_js = server
+        .ok("/assets/theme.js")
+        .await
+        .body
+        .replace("\r\n", "\n");
+    let reader_css = server
+        .ok("/assets/reader.css")
+        .await
+        .body
+        .replace("\r\n", "\n");
+    let reader_js = server
+        .ok("/assets/reader.js")
+        .await
+        .body
+        .replace("\r\n", "\n");
+    assert!(theme_js.contains("function setFocus(on) {\n    if (phone.matches) {\n      return;"));
+    assert!(theme_js.contains("phone.addEventListener(\"change\", applyFocus);"));
+    assert!(reader_css.contains(
+        ":root.reading-focus body.sidebar-shown .sidebar {\n    z-index: 17;\n    display: block;"
+    ));
+    assert!(
+        reader_css
+            .contains(":root.reading-focus body.sidebar-shown .topbar {\n    transform: none;")
+    );
+    assert!(reader_css.contains(".focus-toggle:has(input[name=\"focus\"])"));
+    assert!(
+        reader_js
+            .contains("if (!focused() || phone() || !event.target.closest(\".sidebar-toggle\"))")
+    );
+}
+
 /// The value of attribute `name` in the first tag that has it.
 fn attribute(body: &str, name: &str) -> Option<u16> {
     let start = body.find(&format!(" {name}=\""))? + name.len() + 3;

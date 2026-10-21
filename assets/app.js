@@ -538,10 +538,12 @@ function setupBrowserSettings() {
   });
 
   const leaveFocus = section.querySelector(".leave-focus");
-  // What this browser remembers (a phone-sized screen always starts in focus mode).
+  // What this browser remembers for wide screens (a phone-sized one is always in
+  // focus mode, and there setFocus changes nothing).
   leaveFocus.disabled = storageGet(localStorage, "shelfgauge-focus") !== "1";
   leaveFocus.addEventListener("click", () => {
     shelfgaugeReader.setFocus(false);
+    storageSet(localStorage, "shelfgauge-focus", null);
     leaveFocus.disabled = true;
     say("Focus mode is off.");
   });

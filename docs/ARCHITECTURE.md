@@ -410,10 +410,12 @@ The same pages serve phones; there is no separate mobile UI and no Node toolchai
 Below `48rem` the sidebar becomes an overlay over a dimmed page (a tap on the dimmed
 page closes it and does nothing else, `app.js`), and controls that exist elsewhere leave
 the top bar (the name, replaced by a house icon to the library page; the theme menu; Settings and Rescan move into the avatar menu; in the
-reader focus mode, which is in the Aa panel). Below `48rem` every reader page starts
-in focus mode, so a phone shows the status line with the position and the marks;
-leaving it (the sidebar button, Esc, the Aa panel) holds for that page only. Wider
-screens keep the browser's choice in `localStorage` (`theme.js`). In focus mode a page
+reader focus mode). Below `48rem` the reader is always in focus mode, so a phone shows
+the status line with the position and the marks: `theme.js` follows the media query
+(also after the load, since a browser may apply the viewport meta tag late), the
+button, the Aa checkbox, `f` and Esc do not leave it, and the sidebar button opens the
+sidebar over the text with the top bar kept; a jump from a sidebar link closes it.
+Wider screens keep the browser's choice in `localStorage` (`theme.js`). In focus mode a page
 that fits the window (`body` height plus the top bar) keeps the top bar
 (`.page-fits`, re-measured on resize and by a `ResizeObserver`): it could not be
 scrolled up to bring it back. On touch screens (`pointer: coarse`) every
