@@ -830,6 +830,29 @@ async fn a_phone_is_always_in_focus_mode() {
     );
 }
 
+/// Firefox on Android reports a bottom safe-area inset while its toolbar is shown,
+/// though the page never reaches under the navigation bar: the status line grew and
+/// jumped up. Gecko gets no inset; the status line and the note panel use the variable.
+#[tokio::test]
+async fn gecko_gets_no_bottom_inset() {
+    let lib = TestLibrary::new();
+    let server = lib.server("/", whole());
+    let reader_css = server
+        .ok("/assets/reader.css")
+        .await
+        .body
+        .replace("\r\n", "\n");
+    assert!(reader_css.contains("--safe-bottom: env(safe-area-inset-bottom, 0px);"));
+    assert!(
+        reader_css
+            .contains("@supports (-moz-appearance: none) {\n  :root {\n    --safe-bottom: 0px;")
+    );
+    assert!(reader_css.contains("padding-bottom: var(--safe-bottom);"));
+    assert!(reader_css.contains("bottom: calc(1.75rem + 0.5rem + var(--safe-bottom));"));
+    // Every other bottom inset of a fixed reader element goes through the variable.
+    assert_eq!(reader_css.matches("env(safe-area-inset-bottom").count(), 1);
+}
+
 /// The value of attribute `name` in the first tag that has it.
 fn attribute(body: &str, name: &str) -> Option<u16> {
     let start = body.find(&format!(" {name}=\""))? + name.len() + 3;

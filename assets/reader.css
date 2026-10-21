@@ -597,7 +597,7 @@ mark.sg-find.current {
 }
 
 :root.reading-focus:not([data-rstatus="off"]) .note-panel {
-  bottom: calc(1.75rem + 0.5rem + env(safe-area-inset-bottom, 0px));
+  bottom: calc(1.75rem + 0.5rem + var(--safe-bottom));
 }
 
 .note-panel:focus {
@@ -1045,9 +1045,21 @@ mark.sg-find.current {
   }
 }
 
-/* The status line stays above the home indicator of a phone. */
-@supports (padding: env(safe-area-inset-bottom)) {
-  :root.reading-focus .status-line {
-    padding-bottom: env(safe-area-inset-bottom);
+/* The status line (and the note panel above it) stays above the home indicator of a
+   phone. Firefox on Android reports its system navigation bar as this inset while its
+   own toolbar is shown, though the page never reaches under that bar: the status line
+   grew and jumped up by that much. Gecko does not run on iOS, the one place the inset
+   is needed, so it gets none. */
+:root {
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@supports (-moz-appearance: none) {
+  :root {
+    --safe-bottom: 0px;
   }
+}
+
+:root.reading-focus .status-line {
+  padding-bottom: var(--safe-bottom);
 }
