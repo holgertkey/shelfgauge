@@ -766,6 +766,11 @@
     if (candidate.closest(".notes") || candidate.id === lastSaved) {
       return;
     }
+    // While "Back to text" is shown, the position stays where the reader came from;
+    // a place past the link's target means the reader has stayed here: no way back.
+    if (!leftReturn(candidate)) {
+      return;
+    }
     lastSaved = candidate.id;
     postJson(positionUrl, { block: candidate.id }, keepalive).catch((e) => console.error(e));
   }
@@ -1219,7 +1224,9 @@
   // notes" in the panel, and any other link in the text to a place in the book,
   // remember where the reader was: the page they lead to shows "Back to text" in the
   // status line (and above the text when the status line is hidden), which returns
-  // there. Ctrl/Cmd/Shift-clicks stay plain links.
+  // there. Until then the reading position is not saved; reading on past the link's
+  // target until a position is saved drops the way back (`leftReturn`).
+  // Ctrl/Cmd/Shift-clicks stay plain links.
   const RETURN_KEY = "shelfgauge-return";
   const notePages = new Map();
   let notePanel = null;
@@ -1264,7 +1271,30 @@
       block: block ? block.id : null,
       y: window.scrollY,
       to: url.pathname + url.search,
+      target: decodeURIComponent(url.hash.slice(1)),
     });
+  }
+
+  // False while the way back is pending and `block` is not past the link's target
+  // (in the notes it never is: no position is saved there); otherwise the way back
+  // is dropped and the position may be saved.
+  function leftReturn(block) {
+    const state = readReturn();
+    if (!state || state.to !== here()) {
+      return true;
+    }
+    const target = state.target && document.getElementById(state.target);
+    if (
+      target &&
+      (block === target ||
+        target.contains(block) ||
+        !(target.compareDocumentPosition(block) & Node.DOCUMENT_POSITION_FOLLOWING))
+    ) {
+      return false;
+    }
+    writeReturn(null);
+    hideReturn();
+    return true;
   }
 
   function showReturn(state) {
@@ -1424,6 +1454,9 @@
         if (back && back.from === here()) {
           event.preventDefault();
           window.scrollTo({ top: back.y, behavior: "instant" });
+        } else {
+          // Leaving this page must not save the place the link led to.
+          suspendPosition();
         }
       });
     }
