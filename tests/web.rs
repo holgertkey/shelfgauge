@@ -156,7 +156,9 @@ async fn allowed_hosts_need_password_auth() {
             .await;
         assert_eq!(reply.status, StatusCode::FORBIDDEN, "{uri}");
         assert!(
-            reply.body.contains("auth = \"password\"") && reply.body.contains("set-password"),
+            reply.body.contains("auth = \"password\"")
+                && reply.body.contains("My profile")
+                && reply.body.contains("set-password"),
             "{}",
             reply.body
         );
@@ -452,6 +454,9 @@ fn non_loopback_bind_is_refused_before_listening() {
         let err = web::bind(&config.server, Auth::None).unwrap_err();
         assert!(matches!(err, WebError::UnsafeBind(_)), "{bind}: {err:?}");
         assert!(err.to_string().contains("loopback"), "{err}");
+        // Both ways to the first password: the web page and the CLI.
+        assert!(err.to_string().contains("My profile"), "{err}");
+        assert!(err.to_string().contains("set-password"), "{err}");
     }
 }
 

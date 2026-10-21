@@ -7,7 +7,7 @@ default-members = [".", "crates/*"]
 # requirement on `shelfgauge-core` below as well (publishing needs it, and Cargo refuses
 # to build while the two differ); the `+BUILD` counter is changed only here.
 [workspace.package]
-version = "0.16.0+019"
+version = "0.16.0+020"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/holgertkey/shelfgauge"

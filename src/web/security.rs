@@ -380,8 +380,8 @@ pub(crate) async fn classify_reach(
                  Requests through a name from `server.allowed_hosts` or a reverse proxy \
                  come from other devices. To use the library from them, set `auth = \"password\"` in the \
                  [server] section of .shelfgauge/config.toml, give an admin profile a \
-                 password (`shelfgauge profiles set-password <name>`) and restart \
-                 shelfgauge.\n",
+                 password (on My profile, or `shelfgauge profiles set-password <name>`) \
+                 and restart shelfgauge.\n",
             );
         }
     }

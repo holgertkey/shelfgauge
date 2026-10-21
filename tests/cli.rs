@@ -498,6 +498,11 @@ fn password_login_setup() {
         err.contains("needs an admin profile with a password") && err.contains("set-password"),
         "{err}"
     );
+    // The server is not running, so the web way goes through `auth = "none"` first.
+    assert!(
+        err.contains("auth = \"none\"") && err.contains("My profile"),
+        "{err}"
+    );
 
     // Too short: refused, nothing stored. Spaces are part of the password.
     let output = run_with_input(dir.path(), &["profiles", "set-password", "me"], "short\n");

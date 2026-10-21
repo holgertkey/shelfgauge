@@ -71,7 +71,7 @@ pub enum WebError {
         "refusing to listen on {0}: it is not a loopback address and `auth` is \"none\". \
          Use 127.0.0.1 or ::1, or for access from other devices set `auth = \"password\"` \
          in the [server] section of .shelfgauge/config.toml and give an admin profile a \
-         password (`shelfgauge profiles set-password <name>`)"
+         password (on My profile, or `shelfgauge profiles set-password <name>`)"
     )]
     UnsafeBind(IpAddr),
 
@@ -79,7 +79,7 @@ pub enum WebError {
     #[error(
         "`auth = \"password\"` needs an admin profile with a password, or nobody could \
          manage this library from another device. Set one with `shelfgauge profiles \
-         set-password <name>`"
+         set-password <name>`, or start with `auth = \"none\"` and set it on My profile"
     )]
     NoAdminPassword,
 

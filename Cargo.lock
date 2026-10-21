@@ -1437,7 +1437,7 @@ dependencies = [
 
 [[package]]
 name = "shelfgauge"
-version = "0.16.0+019"
+version = "0.16.0+020"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1483,7 +1483,7 @@ dependencies = [
 
 [[package]]
 name = "shelfgauge-core"
-version = "0.16.0+019"
+version = "0.16.0+020"
 dependencies = [
  "postcard",
  "serde",

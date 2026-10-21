@@ -46,7 +46,8 @@ base_path = "/"
 # Login for other devices: "none" (only this computer) or "password" (each person
 # logs into their profile with a password from other devices; requests through an
 # allowed_hosts name count as other devices). Needed for a bind address other than
-# 127.0.0.1 or ::1. Set a password first: shelfgauge profiles set-password <name>.
+# 127.0.0.1 or ::1. Set a password first: on My profile, or with
+# shelfgauge profiles set-password <name>.
 auth = "none"
 # Whether admin profiles may use the settings page, rescans and profile management
 # from other devices (with auth = "password").
