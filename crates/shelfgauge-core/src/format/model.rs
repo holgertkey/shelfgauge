@@ -1,4 +1,4 @@
-//! The format-independent book model produced by every [`BookParser`](super::BookParser).
+//! The format-independent book model produced by every parser (`shelfgauge::format::BookParser`).
 //!
 //! Everything downstream of the parsers (storage, rendering, the web UI) works only
 //! with [`BookMetadata`] and [`BookContent`], never with format-specific details.
@@ -100,7 +100,7 @@ impl FromStr for BlockId {
     /// # Examples
     ///
     /// ```
-    /// use shelfgauge::format::model::BlockId;
+    /// use shelfgauge_core::format::model::BlockId;
     ///
     /// let id: BlockId = "b12".parse().unwrap();
     /// assert_eq!(id.ordinal(), 12);
@@ -230,7 +230,7 @@ impl BookContent {
     /// # Examples
     ///
     /// ```
-    /// use shelfgauge::format::model::*;
+    /// use shelfgauge_core::format::model::*;
     ///
     /// let section = Section {
     ///     title: vec![Block::paragraph("Chapter 1")],

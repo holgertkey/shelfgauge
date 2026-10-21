@@ -19,12 +19,12 @@
 //! - [`export`]: the one-way Markdown export;
 //! - [`attach`]: re-attaching orphans and the cleanup after a scan.
 
-pub mod anchor;
 pub mod attach;
 pub mod export;
-pub mod find;
 pub mod store;
-pub mod text;
+
+// Shared with the reading device: these live in the core crate (`shelfgauge-core`).
+pub use shelfgauge_core::annotations::{anchor, find, text};
 
 use anchor::{Anchor, Quote};
 

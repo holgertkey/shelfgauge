@@ -98,9 +98,9 @@ impl Unit {
 /// # Examples
 ///
 /// ```
-/// use shelfgauge::config::{ReaderConfig, SplitMode};
-/// use shelfgauge::format::model::{Block, Body, BookContent, Section};
-/// use shelfgauge::render::split::split;
+/// use shelfgauge_core::config::{ReaderConfig, SplitMode};
+/// use shelfgauge_core::format::model::{Block, Body, BookContent, Section};
+/// use shelfgauge_core::render::split::split;
 ///
 /// let chapter = |t: &str| Section {
 ///     title: vec![Block::paragraph(t)],
@@ -330,8 +330,8 @@ fn absorb_small_parts(units: &[Unit], cuts: &[usize]) -> Vec<usize> {
 /// # Examples
 ///
 /// ```
-/// use shelfgauge::format::model::BlockId;
-/// use shelfgauge::render::split::{Part, part_of};
+/// use shelfgauge_core::format::model::BlockId;
+/// use shelfgauge_core::render::split::{Part, part_of};
 ///
 /// let id = |n| BlockId::new(n).unwrap();
 /// let parts = [

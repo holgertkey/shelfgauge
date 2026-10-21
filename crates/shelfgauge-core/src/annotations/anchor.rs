@@ -83,9 +83,9 @@ pub enum AnchorError {
 /// # Examples
 ///
 /// ```
-/// use shelfgauge::annotations::anchor::{Anchor, quote};
-/// use shelfgauge::annotations::text::BookText;
-/// use shelfgauge::format::model::{Block, BlockId, Body, BookContent, Section};
+/// use shelfgauge_core::annotations::anchor::{Anchor, quote};
+/// use shelfgauge_core::annotations::text::BookText;
+/// use shelfgauge_core::format::model::{Block, BlockId, Body, BookContent, Section};
 ///
 /// let root = Section {
 ///     blocks: vec![Block::paragraph("Call me Ishmael."), Block::paragraph("Some years ago")],

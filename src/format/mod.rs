@@ -9,7 +9,7 @@ pub mod encoding;
 pub mod epub;
 pub mod fb2;
 pub mod html;
-pub mod model;
+pub use shelfgauge_core::format::model;
 pub(crate) mod repair;
 pub(crate) mod sections;
 pub mod txt;

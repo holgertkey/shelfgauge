@@ -33,6 +33,7 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+      # The default members are both crates (`shelfgauge` and `shelfgauge-core`).
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
       - run: cargo doc --no-deps
@@ -40,3 +41,17 @@ jobs:
       # committed docs are out of date with Cargo.toml.
       - name: Check docs are in sync with the version
         run: git diff --exit-code
+
+  wasm:
+    name: core for wasm32
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # The core crate also runs on the reading device: it must build for the browser.
+      - run: cargo clippy -p shelfgauge-core --target wasm32-unknown-unknown -- -D warnings
+      - run: cargo build -p shelfgauge-core --target wasm32-unknown-unknown

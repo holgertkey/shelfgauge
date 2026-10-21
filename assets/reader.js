@@ -1244,7 +1244,7 @@
   // The server searches the whole book (`/book/{id}/find?q=`) and lists the results
   // in the Search tab; each links to `read?part=<n>&find=<query>&hit=<k>#<block>`.
   // Here the matches of the query in this part are highlighted, with the same
-  // normalization as the server (src/annotations/find.rs; both are tested with
+  // normalization as the server (crates/shelfgauge-core/src/annotations/find.rs; both are tested with
   // tests/fixtures/find/normalize.json): one code point at a time lowercased, ё → е,
   // ς → σ, ’ and ʼ → ', soft hyphens and zero-width characters dropped, whitespace
   // runs → one space. Offsets count code points, like anchors.

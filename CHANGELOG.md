@@ -8,6 +8,15 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+### Changed
+
+- The repository is now a Cargo workspace of two crates with one version: the program
+  `shelfgauge` and the new library crate **`shelfgauge-core`** (the book model, the
+  split into reading parts, HTML rendering, the rendered text, anchors and search
+  within a book), which also builds for WebAssembly so the planned hub reader can
+  render books exactly as the server does. Nothing changes for users: `cargo install
+  shelfgauge` installs the same program, and `shelfgauge` keeps its module paths.
+
 ## [0.16.0] - 2026-10-20
 
 ### Added

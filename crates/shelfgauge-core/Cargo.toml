@@ -1,0 +1,19 @@
+[package]
+name = "shelfgauge-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The book model, reader split, HTML rendering and text search of shelfgauge, shared with its WebAssembly reader"
+readme = "README.md"
+keywords = ["ebook", "reader", "wasm"]
+categories = ["text-processing", "wasm"]
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+postcard.workspace = true
+serde_json.workspace = true

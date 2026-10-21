@@ -1437,7 +1437,7 @@ dependencies = [
 
 [[package]]
 name = "shelfgauge"
-version = "0.16.0+009"
+version = "0.16.0+010"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1465,6 +1465,7 @@ dependencies = [
  "serde_ignored",
  "serde_json",
  "sha2",
+ "shelfgauge-core",
  "tempfile",
  "thiserror",
  "tokio",
@@ -1478,6 +1479,17 @@ dependencies = [
  "walkdir",
  "xxhash-rust",
  "zip",
+]
+
+[[package]]
+name = "shelfgauge-core"
+version = "0.16.0+010"
+dependencies = [
+ "postcard",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tracing",
 ]
 
 [[package]]

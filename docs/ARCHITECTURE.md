@@ -4,7 +4,7 @@
 > hardening), annotations (0.6.0), reader settings (0.7.0), EPUB (0.8.0), plain text
 > and `.fbz` (0.9.0), HTML (0.10.0, opt-in), search within the book (0.11.0), library
 > statistics (0.12.0), the settings page (0.13.0). The V2 hub below is designed, not
-> built.
+> built; the core crate it needs exists (see "Crates").
 
 `shelfgauge` is a single-binary Rust app that indexes a directory tree of ebook files (FB2
 (also `.fbz`), EPUB, TXT and opt-in HTML, plain files and `.zip` archives with any number of books inside) into a local SQLite DB
@@ -275,7 +275,8 @@ Key design points to keep in mind when implementing:
     the number of matches), which exists only while there is a query. No index: the
     query and the rendered text of every leaf block are normalized (lowercase one code
     point at a time, `ё` → `е`, `ς` → `σ`, `’ʼ` → `'`, soft hyphens and zero-width
-    characters dropped, whitespace runs → one space; `src/annotations/find.rs`) and
+    characters dropped, whitespace runs → one space; `annotations::find` in the core
+    crate) and
     matched as plain substrings, never across two blocks; a map leads back to the
     original code points. The normalized text of the whole book is built on its first
     search and kept in the book's `BookText`, which stays in memory with the parsed
@@ -296,7 +297,7 @@ Key design points to keep in mind when implementing:
     built when first needed). Source-format anchors are resolved to block
     IDs and never emitted as HTML ids.
   - **Block IDs** are the block's ordinal in document order (`b1234`), counting every
-    block (the exact rule is documented in `src/format/model.rs` and pinned by a golden
+    block (the exact rule is documented in `format::model` in the core crate and pinned by a golden
     test, with a second golden test for the EPUB mapping). Each FB2 `<body>` is a root
     section (main body first, then notes bodies); an EPUB has one main body and at most
     one notes body. They must be deterministic and **must not depend on the split setting**; deep
@@ -305,8 +306,8 @@ Key design points to keep in mind when implementing:
 
 ## Annotations (0.6.0)
 
-Code: `src/annotations/` (`text`, `anchor`, `store`, `export`, `attach`),
-`src/web/routes/annotations.rs`, `assets/reader.js`/`reader.css`.
+Code: `src/annotations/` (`store`, `export`, `attach`; `text`, `anchor` and `find` are
+in the core crate), `src/web/routes/annotations.rs`, `assets/reader.js`/`reader.css`.
 
 - **One entity**, the annotation (UI: "Quote"; "mark" in the code), replaces bookmarks,
   notes and quotes: the **selected text is immutable** (it is the quote and the anchor's
@@ -700,9 +701,8 @@ independent features.
 - **Rendering on the device runs the same Rust code in WASM** (`render` and
   `annotations::text`): blob data is untrusted, so trusted code turns it into escaped
   HTML exactly as the server does, under a strict CSP (`script-src 'self'
-  'wasm-unsafe-eval'`, no inline code). This requires a workspace with a core crate
-  (format model, split, render, annotation text; no filesystem, SQLite or Tokio) that
-  builds for `wasm32` (`wasm-bindgen --target web`, no Node). The reader app is plain
+  'wasm-unsafe-eval'`, no inline code). That code is the core crate `shelfgauge-core`
+  (see "Crates"), built for the device with `wasm-bindgen --target web` (no Node). The reader app is plain
   JS + WASM, reusing `reader.css`/`theme.js`.
 - **Sync**: the hub keeps per-account records `(id, kind, seq, ciphertext)` of kinds
   `shelf_item`, `annotation` (id = annotation UUID) and `position` (id = HMAC(account
@@ -757,6 +757,32 @@ while a change still costs only a `PARSER_VERSION` bump. FB2 block numbering sta
 unchanged (its golden test must not change). TXT and `.fbz` followed in 0.9.0, HTML
 (opt-in) followed in 0.10.0; no other formats (decided 2026-10-15). Images of HTML books
 (sibling files) need a container-layer extension and come later.
+
+## Crates (0.17.0)
+
+The repository is a Cargo workspace of two crates with one version
+(`[workspace.package]` in the root `Cargo.toml`), published together:
+
+- **`shelfgauge`** (the root package): the library and the binary — parsers,
+  containers, scanner, storage, caches, profiles, the web server, the CLI. `cargo
+  install shelfgauge` installs it as before.
+- **`shelfgauge-core`** (`crates/shelfgauge-core/`): what runs both on the server and on
+  a reading device — `format::model` (the book model and block numbering),
+  `config::{ReaderConfig, SplitMode}`, `render::{split, html}` and
+  `annotations::{text, anchor, find}`. It does no IO and parses no book files; its only
+  dependencies are `serde`, `thiserror` and `tracing`, and it builds for
+  `wasm32-unknown-unknown` (checked in CI). Code that must render or count text exactly
+  as the reader does belongs here; anything that touches files, SQLite, Tokio or a
+  parser library does not.
+
+`shelfgauge` re-exports these modules at their old paths (`shelfgauge::format::model`,
+`shelfgauge::render::{split, html}`, `shelfgauge::annotations::{text, anchor, find}`,
+`shelfgauge::config::{ReaderConfig, SplitMode}`), so code and tests use one path for
+both. The app depends on the core with `path` and an exact `version = "=X.Y.Z"` (one
+line in `[workspace.dependencies]`; Cargo refuses to build while it differs from the
+workspace version). The release workflow publishes with `cargo publish --workspace`,
+the core first. The core's tracing targets are `shelfgauge_core::…`, which the
+`shelfgauge=…` log filters cover by prefix.
 
 ## Planned tech stack
 

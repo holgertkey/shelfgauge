@@ -28,7 +28,7 @@ pub trait ReaderLinks {
 /// # Examples
 ///
 /// ```
-/// use shelfgauge::render::html::escape;
+/// use shelfgauge_core::render::html::escape;
 ///
 /// assert_eq!(escape(r#"<a href="x">&'"#), "&lt;a href=&quot;x&quot;&gt;&amp;&#39;");
 /// ```
@@ -96,10 +96,10 @@ fn section_range(section: &Section) -> Option<(BlockId, BlockId)> {
 /// # Examples
 ///
 /// ```
-/// use shelfgauge::config::ReaderConfig;
-/// use shelfgauge::format::model::{Block, BlockId, Body, BookContent, Section};
-/// use shelfgauge::render::html::{ReaderLinks, render_part};
-/// use shelfgauge::render::split::split;
+/// use shelfgauge_core::config::ReaderConfig;
+/// use shelfgauge_core::format::model::{Block, BlockId, Body, BookContent, Section};
+/// use shelfgauge_core::render::html::{ReaderLinks, render_part};
+/// use shelfgauge_core::render::split::split;
 ///
 /// struct Links;
 /// impl ReaderLinks for Links {

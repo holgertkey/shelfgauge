@@ -1,5 +1,5 @@
 {
-  "comment": "In-book search normalization, shared by the Rust core (src/annotations/find.rs) and its JavaScript port (assets/reader.js, checked by .debug/TESTS/find_smoke.mjs). Offsets count code points. Dropped: U+00AD, U+200B-U+200D, U+2060, U+FEFF. Whitespace: U+0009-U+000D, U+0020, U+00A0, U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, U+3000.",
+  "comment": "In-book search normalization, shared by the Rust core (crates/shelfgauge-core/src/annotations/find.rs) and its JavaScript port (assets/reader.js, checked by .debug/TESTS/find_smoke.mjs). Offsets count code points. Dropped: U+00AD, U+200B-U+200D, U+2060, U+FEFF. Whitespace: U+0009-U+000D, U+0020, U+00A0, U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, U+3000.",
   "normalize": [
     ["Hello World", "hello world"],
     ["ЁЛКА и ёж", "елка и еж"],

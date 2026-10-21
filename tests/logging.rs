@@ -278,6 +278,31 @@ async fn blocking_and_parser_threads_keep_the_request_span() {
     assert!(stats.contains("time.busy="), "{stats}");
 }
 
+/// The default `-v` filter (`shelfgauge=debug`) also covers the core crate, whose
+/// spans have targets `shelfgauge_core::…`: the timing of a search is logged.
+#[tokio::test]
+async fn the_filter_covers_the_core_crate() {
+    let server = server("book.fb2", None, UNBALANCED);
+    let capture = Capture::default();
+    let _log = tracing::dispatcher::set_default(&capture.dispatch(
+        "warn,shelfgauge=debug",
+        LogFormat::Text,
+        true,
+    ));
+    let (status, _) = server
+        .get(&format!("/book/{}/find?q=the", server.book))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let log = capture.text();
+    let find = log
+        .lines()
+        .find(|l| l.contains("find: ") && l.contains("close"))
+        .unwrap_or_else(|| panic!("no timing of the search in\n{log}"));
+    assert!(find.contains("shelfgauge_core::"), "{find}");
+    assert!(find.contains("route=/book/{id}/find profile=1}"), "{find}");
+}
+
 #[tokio::test]
 async fn json_logs_are_one_object_per_line_with_the_span_chain() {
     let server = server("book.fb2", None, UNBALANCED);

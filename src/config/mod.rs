@@ -14,6 +14,8 @@ use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
 
+pub use shelfgauge_core::config::{ReaderConfig, SplitMode};
+
 use crate::{Error, Result};
 
 pub mod edit;
@@ -214,35 +216,6 @@ impl Default for LibraryConfig {
     }
 }
 
-/// The `[reader]` section: how books are split into parts in reading mode.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ReaderConfig {
-    /// The split mode.
-    pub split: SplitMode,
-    /// For [`SplitMode::Section`]: split at sections of this nesting depth (1 = top level).
-    pub section_depth: u32,
-    /// For [`SplitMode::Size`]: approximate number of characters per part.
-    pub part_size: u32,
-    /// The longest part in characters, in every mode; longer parts are cut into equal
-    /// pieces at block boundaries. 0 means no limit.
-    pub max_part_size: u32,
-    /// Whether the reading position of each book is saved and offered on the book card.
-    pub remember_position: bool,
-}
-
-impl Default for ReaderConfig {
-    fn default() -> Self {
-        Self {
-            split: SplitMode::Section,
-            section_depth: 1,
-            part_size: 50_000,
-            max_part_size: 300_000,
-            remember_position: true,
-        }
-    }
-}
-
 /// The `[annotations]` section: limits of marks and notes, and cleanup.
 ///
 /// Lengths are in Unicode code points. They apply when an annotation is created or its
@@ -267,18 +240,6 @@ impl Default for AnnotationsConfig {
             removed_book_retention_days: 30,
         }
     }
-}
-
-/// How a book is split into parts for reading.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SplitMode {
-    /// The whole book is one part.
-    None,
-    /// One part per section at [`ReaderConfig::section_depth`].
-    Section,
-    /// Parts of about [`ReaderConfig::part_size`] characters, cut at block boundaries.
-    Size,
 }
 
 /// Values given on the command line that override the config file.

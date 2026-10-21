@@ -11,7 +11,8 @@
 //! The normalized text keeps a map back to the original code points, so a hit is a
 //! range of the block's rendered text (the offsets annotations use, see
 //! [`text`](super::text)). `assets/reader.js` repeats the rules to highlight matches in
-//! the page; `tests/fixtures/find/normalize.json` is the table both are tested with.
+//! the page; `tests/fixtures/find/normalize.json` (in the repository root) is the table
+//! both are tested with.
 
 use super::text::BookText;
 use crate::format::model::BlockId;
@@ -111,7 +112,7 @@ fn normalize_into(text: &str, out: &mut String, mut map: Option<&mut Vec<Span>>)
 /// # Examples
 ///
 /// ```
-/// use shelfgauge::annotations::find::normalize;
+/// use shelfgauge_core::annotations::find::normalize;
 ///
 /// assert_eq!(normalize("Ёлка\u{a0} и\u{ad}ли"), "елка или");
 /// ```
@@ -181,7 +182,7 @@ impl Query {
     /// # Examples
     ///
     /// ```
-    /// use shelfgauge::annotations::find::{Query, QueryError};
+    /// use shelfgauge_core::annotations::find::{Query, QueryError};
     ///
     /// assert_eq!(Query::parse("  Ёлка ").unwrap().as_str(), "елка");
     /// assert_eq!(Query::parse(" a "), Err(QueryError::TooShort));
@@ -231,14 +232,14 @@ pub struct Hits {
 /// joined with `\n`, which normalization never produces (a match cannot span two
 /// blocks). Built on the first search and kept in the [`BookText`].
 #[derive(Debug, Clone, Default)]
-pub(super) struct BookIndex {
+pub(crate) struct BookIndex {
     text: String,
     /// The byte offset of each leaf's text, in the order of [`BookText::leaves`].
     starts: Vec<usize>,
 }
 
 impl BookIndex {
-    pub(super) fn new(text: &BookText) -> Self {
+    pub(crate) fn new(text: &BookText) -> Self {
         let mut index = Self::default();
         for &block in text.leaves() {
             if !index.starts.is_empty() {
@@ -257,9 +258,9 @@ impl BookIndex {
 /// # Examples
 ///
 /// ```
-/// use shelfgauge::annotations::find::{Query, find};
-/// use shelfgauge::annotations::text::BookText;
-/// use shelfgauge::format::model::{Block, Body, BookContent, Section};
+/// use shelfgauge_core::annotations::find::{Query, find};
+/// use shelfgauge_core::annotations::text::BookText;
+/// use shelfgauge_core::format::model::{Block, Body, BookContent, Section};
 ///
 /// let section = Section {
 ///     blocks: vec![Block::paragraph("Ёлка, ёлочка"), Block::paragraph("Ель")],
@@ -326,7 +327,7 @@ impl Snippet {
     /// # Examples
     ///
     /// ```
-    /// use shelfgauge::annotations::find::Snippet;
+    /// use shelfgauge_core::annotations::find::Snippet;
     ///
     /// let s = Snippet::new("one two three four five", 8, 13, 6);
     /// assert_eq!((s.before.as_str(), s.matched.as_str(), s.after.as_str()), ("two ", "three", " four"));
@@ -408,8 +409,12 @@ mod tests {
         hits: Vec<(usize, usize)>,
     }
 
+    // The table is shared with `assets/reader.js`, so it stays in the repository root.
     fn table() -> Table {
-        serde_json::from_str(include_str!("../../tests/fixtures/find/normalize.json")).unwrap()
+        serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/find/normalize.json"
+        ))
+        .unwrap()
     }
 
     #[test]

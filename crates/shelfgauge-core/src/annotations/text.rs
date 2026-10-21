@@ -32,8 +32,8 @@ pub const BLOCK_SEPARATOR: char = '\n';
 /// # Examples
 ///
 /// ```
-/// use shelfgauge::annotations::text::rendered_text;
-/// use shelfgauge::format::model::{Block, BlockKind, Inline};
+/// use shelfgauge_core::annotations::text::rendered_text;
+/// use shelfgauge_core::format::model::{Block, BlockKind, Inline};
 ///
 /// let p = Block::new(BlockKind::Paragraph(vec![
 ///     Inline::Text("Hello, ".into()),
@@ -398,12 +398,12 @@ impl BookText {
 
     /// The index of the innermost titled section around block `id`: blocks of the same
     /// section have the same index (unlike titles, which may repeat).
-    pub(crate) fn section_index(&self, id: BlockId) -> Option<usize> {
+    pub fn section_index(&self, id: BlockId) -> Option<usize> {
         self.info(id)?.section
     }
 
     /// The normalized text that [`find`](super::find::find) searches.
-    pub(super) fn find_index(&self) -> &super::find::BookIndex {
+    pub(crate) fn find_index(&self) -> &super::find::BookIndex {
         self.find_index
             .get_or_init(|| super::find::BookIndex::new(self))
     }
