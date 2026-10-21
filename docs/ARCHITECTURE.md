@@ -448,7 +448,8 @@ part's end the next part opens, at its start the previous one with `#end` (scrol
 its end, the hash dropped). The reader article has `touch-action: pan-y pinch-zoom` and
 the page `overscroll-behavior-x: none`, so the browser neither zooms on a double tap
 nor goes back in history on a swipe; a turning tap cancels its click, and a selection
-the browser makes of quick taps is dropped. Links, controls, a selection, an open quote
+the browser makes of quick taps is dropped. A tap within 24 px of a link in the text
+(a note reference is a tiny target) opens that link instead. Links, controls, a selection, an open quote
 popup, note or panel (the tap closes it) and sideways-scrolling tables keep their
 touches.
 Quoting works with the touch selection (`selectionchange`); the Quote button keeps

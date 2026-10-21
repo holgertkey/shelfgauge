@@ -852,12 +852,14 @@
   // reduced motion). At the end of a part the next part opens, at its start the
   // previous one at its end (`#end`). Not on links and controls, with a selection, an
   // open popup, note or panel (the tap closes it), or in a table that scrolls sideways;
-  // swipes not from the screen edges (the system's back gesture).
+  // swipes not from the screen edges (the system's back gesture). A tap that misses a
+  // link in the text (a note reference is a tiny target) by a little opens the link.
   const SWIPE_MIN = 60;
   const SWIPE_MS = 600;
   const TAP_SLOP = 10;
   const TAP_MS = 300;
   const TAP_ZONE = 0.3;
+  const LINK_REACH = 24;
   const EDGE = 24;
   const TURN_SHIFT = 24;
   const TURN_OUT_MS = 80;
@@ -1091,6 +1093,27 @@
     coverCut();
   }
 
+  // The link in the text nearest to the point, within LINK_REACH.
+  function linkNear(x, y) {
+    let nearest = null;
+    let distance = LINK_REACH;
+    for (const link of text.querySelectorAll("a[href]")) {
+      for (const rect of link.getClientRects()) {
+        if (rect.bottom < y - LINK_REACH || rect.top > y + LINK_REACH) {
+          continue;
+        }
+        const dx = Math.max(rect.left - x, 0, x - rect.right);
+        const dy = Math.max(rect.top - y, 0, y - rect.bottom);
+        const d = Math.hypot(dx, dy);
+        if (d <= distance) {
+          nearest = link;
+          distance = d;
+        }
+      }
+    }
+    return nearest;
+  }
+
   // Whether a touch at `target` may turn a page.
   function turnsPages(target) {
     if (!(target instanceof Element) || !article.contains(target)) {
@@ -1166,6 +1189,11 @@
       // No click, and no double tap for the browser (a word selection or a zoom).
       event.preventDefault();
       tapSelectionUntil = Date.now() + 600;
+      const link = linkNear(touch.clientX, touch.clientY);
+      if (link) {
+        link.click();
+        return;
+      }
       const share = touch.clientX / window.innerWidth;
       if (share < TAP_ZONE) {
         turnPage(false);

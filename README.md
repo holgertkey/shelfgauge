@@ -183,7 +183,8 @@ WantedBy=multi-user.target
   usual. The text slides briefly in the direction of the turn, and the line you read
   last stays in view, lit up for a moment. In focus mode a page at rest shows whole
   lines only: a line cut by the bottom edge is hidden until it opens the next page. At the end of a chapter the next one opens,
-  at its start the previous one at its end. Links and a selection are left alone.
+  at its start the previous one at its end. Links and a selection are left alone, and a
+  tap just beside a link (such as a tiny note reference) opens the link.
 - **Focus mode** (`f`, or the button next to **Aa**) hides the sidebar and the top
   bar; the top bar comes back when you scroll up or move the mouse to the top edge, and
   stays on a page shorter than the window. On a phone focus mode is always on: the
