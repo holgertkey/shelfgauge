@@ -872,17 +872,34 @@ async fn read_pages_carry_the_running_head_and_progress() {
     );
     let parts = server.parts(&format!("/book/{id}/read")).await;
     assert!(parts.len() > 2, "several parts");
-    for part in &parts {
-        assert!(
-            part.body
-                .contains("<div class=\"running-head\" aria-hidden=\"true\">")
-        );
-        assert!(part.body.contains("<span class=\"status-chapter\">"));
-        assert!(
-            part.body.contains("The Lighthouse Keeper · "),
-            "authors · title in the running head"
-        );
-    }
+    // The running head carries the chapter in effect at the part start (the status line
+    // none, so its track keeps its length); before the first chapter the authors and the
+    // title.
+    let heads: Vec<String> = parts
+        .iter()
+        .map(|part| {
+            assert!(
+                part.body
+                    .contains("<div class=\"running-head\" aria-hidden=\"true\">")
+            );
+            assert!(!part.body.contains("status-chapter"));
+            let rest = part
+                .body
+                .split("<span class=\"running-title\"")
+                .nth(1)
+                .unwrap();
+            let text = rest.split('>').nth(1).unwrap();
+            text.split('<').next().unwrap().to_owned()
+        })
+        .collect();
+    assert_eq!(
+        heads,
+        [
+            "Сидоров Иван Петрович, The Lighthouse Keeper · Старый маяк",
+            "Глава 2",
+            "Примечания"
+        ]
+    );
     // Progress per part, in ten-thousandths: from 0 to 10 000 without gaps; the notes
     // part has none.
     let (main, notes): (Vec<_>, Vec<_>) = parts

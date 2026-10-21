@@ -1044,14 +1044,12 @@
       link.href = href;
       link.hidden = false;
     }
-    document.documentElement.classList.add("has-return");
   }
 
   function hideReturn() {
     for (const link of document.querySelectorAll(".back-to-text")) {
       link.hidden = true;
     }
-    document.documentElement.classList.remove("has-return");
   }
 
   function closeNote() {
@@ -1939,13 +1937,13 @@
 
   // ---------- Status line ----------
 
-  // Focus mode's status line: the current chapter (the last title above the block at
-  // the top of the screen) and the reading progress. The server gives the progress at
-  // the start of this part and of the next one (in ten-thousandths of the main text);
-  // in between it grows with the main text (notes excluded) above that block, so it
-  // matches the book card's figure.
+  // Focus mode's running head and status line: the current chapter in the running head
+  // (the last title above the block at the top of the screen), the reading progress in
+  // the status line. The server gives the progress at the start of this part and of the
+  // next one (in ten-thousandths of the main text); in between it grows with the main
+  // text (notes excluded) above that block, so it matches the book card's figure.
   //
-  // The track between them shows the whole book: chapter ticks (from the server),
+  // The track before the figure shows the whole book: chapter ticks (from the server),
   // bookmark ticks (from the Bookmarks list, so they follow its changes), the read part
   // and the current position. A click jumps to that place: within this part by
   // scrolling to the block (a fragment link, so Back returns), elsewhere through
@@ -1959,12 +1957,20 @@
     if (!line) {
       return;
     }
-    const chapter = line.querySelector(".status-chapter");
+    // The running head shows the chapter, so the track keeps its length.
+    const chapter = document.querySelector(".running-title");
+    // Where no title is above the top block: the server's title in effect at the part
+    // start (or the authors and the book title).
+    const startTitle = chapter ? chapter.textContent : "";
     const progress = line.querySelector(".status-progress");
     const start = Number(article.dataset.progressStart);
     const end = Number(article.dataset.progressEnd);
     const hasProgress = "progressStart" in article.dataset && end >= start;
-    const titles = Array.from(text.querySelectorAll(".title"));
+    // Not the book's own title (the main body's): the running head shows the authors
+    // and the title instead.
+    const titles = Array.from(text.querySelectorAll(".title")).filter(
+      (title) => !title.matches(".body:not(.notes) > .title"),
+    );
     const track = line.querySelector(".track");
     let before = null;
     let total = 0;
@@ -2011,8 +2017,11 @@
         }
         current = title;
       }
-      if (current) {
-        chapter.textContent = titleText(current);
+      if (chapter) {
+        const title = current ? titleText(current) : startTitle;
+        if (chapter.textContent !== title) {
+          chapter.textContent = title;
+        }
       }
       if (hasProgress) {
         const map = counts();

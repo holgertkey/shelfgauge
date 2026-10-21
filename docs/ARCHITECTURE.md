@@ -392,10 +392,11 @@ in the core crate), `src/web/routes/annotations.rs`, `assets/reader.js`/`reader.
     `web::write_body_limit` (derived from `max_note_length`).
 - Reader settings (font family from system stacks, size, line height, column width,
   alignment; the background is the color theme) and a focus mode (no sidebar, top bar
-  shown on scroll up, a running head and a status line with the chapter and the
-  progress, and a track over the whole book with chapter and bookmark ticks that jumps
-  on click) are purely client-side; the server only adds positions as shares of the
-  main text in ten-thousandths (`BookText::share_before`: the part's bounds, chapter
+  shown on scroll up, a running head with the current chapter, and a status line of
+  constant length with the progress and a track over the whole book with chapter and
+  bookmark ticks that jumps on click) are purely client-side; the server only adds the
+  title in effect at the part start (the running head before the reader updates it)
+  and positions as shares of the main text in ten-thousandths (`BookText::share_before`: the part's bounds, chapter
   ticks, `data-progress` on bookmark list items) and resolves `?progress=` back to a
   block (`BookText::block_at_share`) with the `?at=` redirect. Settings are
   whitelisted values stored in the profile (0.15.0; `localStorage` before), rendered

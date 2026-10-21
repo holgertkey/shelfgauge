@@ -104,6 +104,48 @@ fn chapter_ticks(content: &BookContent, text: &BookText) -> Vec<ChapterTick> {
     ticks
 }
 
+/// The section title in effect where a part starts: the last title at or above
+/// `start` in book order (not the book's own title, the main body's), its lines joined with ". "
+/// as the reader joins them (`reader.js`, `titleText`). `None` before the first one.
+fn title_before(content: &BookContent, start: BlockId) -> Option<String> {
+    fn walk(section: &Section, start: BlockId, found: &mut Option<String>) {
+        match section.title.first() {
+            Some(first) if first.id > start => return,
+            Some(_) => {
+                let lines: Vec<String> = section
+                    .title
+                    .iter()
+                    .map(|line| {
+                        line.plain_text()
+                            .split_whitespace()
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    })
+                    .filter(|line| !line.is_empty())
+                    .collect();
+                if !lines.is_empty() {
+                    *found = Some(lines.join(". "));
+                }
+            }
+            None => {}
+        }
+        for child in &section.children {
+            walk(child, start, found);
+        }
+    }
+    let mut found = None;
+    for body in content.bodies() {
+        if body.kind == BodyKind::Main {
+            for child in &body.section.children {
+                walk(child, start, &mut found);
+            }
+        } else {
+            walk(&body.section, start, &mut found);
+        }
+    }
+    found
+}
+
 /// A neighbouring part.
 struct PartLink {
     href: String,
@@ -125,6 +167,9 @@ struct ReadPage {
     read_href: String,
     card_href: String,
     part_title: String,
+    /// The running head before the reader updates it: the title in effect where the
+    /// part starts, else (`None`) the authors and the book title.
+    head_title: Option<String>,
     label: String,
     html: String,
     toc: String,
@@ -303,6 +348,9 @@ fn page(
         card_href: urls.book(book.id),
         label: format!("Part {} of {count}", index + 1),
         part_title,
+        head_title: parts
+            .get(index)
+            .and_then(|part| title_before(&content, part.start)),
         html,
         toc: render_toc(&content, &parts, index, &links),
         prev: index.checked_sub(1).and_then(neighbour),
@@ -366,7 +414,54 @@ pub(crate) async fn image(
 
 #[cfg(test)]
 mod tests {
-    use super::html_lang;
+    use super::{html_lang, title_before};
+    use crate::format::model::{Block, Body, BookContent, Section};
+
+    fn section(title: &[&str], blocks: &[&str], children: Vec<Section>) -> Section {
+        Section {
+            title: title.iter().map(|line| Block::paragraph(*line)).collect(),
+            blocks: blocks.iter().map(|text| Block::paragraph(*text)).collect(),
+            children,
+            ..Section::default()
+        }
+    }
+
+    #[test]
+    fn the_running_head_starts_with_the_title_in_effect() {
+        let chapter1 = section(&["Chapter 1", "The  Start"], &["a", "b"], vec![]);
+        let sub = section(&["2.1"], &["d"], vec![]);
+        let chapter2 = section(&["Chapter 2"], &["c"], vec![sub]);
+        let root = section(&["Book"], &["intro"], vec![chapter1, chapter2]);
+        let notes = section(&["Notes"], &[], vec![section(&["1"], &["Note"], vec![])]);
+        let content = BookContent::new(
+            vec![Body::main(root), Body::notes(notes)],
+            Default::default(),
+        );
+        let main = &content.bodies()[0].section;
+        let notes = &content.bodies()[1].section;
+        let head = |id| title_before(&content, id);
+        // Before the first chapter: no title (the book's own one does not count).
+        assert_eq!(head(main.title[0].id), None);
+        assert_eq!(head(main.blocks[0].id), None);
+        // A part starting at a title, or inside its section; lines joined with ". ".
+        let chapter1 = &main.children[0];
+        assert_eq!(
+            head(chapter1.title[0].id).as_deref(),
+            Some("Chapter 1. The Start")
+        );
+        assert_eq!(
+            head(chapter1.blocks[1].id).as_deref(),
+            Some("Chapter 1. The Start")
+        );
+        // The innermost title above: a subsection's.
+        assert_eq!(
+            head(main.children[1].children[0].blocks[0].id).as_deref(),
+            Some("2.1")
+        );
+        // The notes have their own titles.
+        assert_eq!(head(notes.title[0].id).as_deref(), Some("Notes"));
+        assert_eq!(head(notes.children[0].blocks[0].id).as_deref(), Some("1"));
+    }
 
     #[test]
     fn book_languages_become_html_lang_tags() {

@@ -83,15 +83,18 @@
   <div class="text">{{ html|safe }}</div>
   {% include "partials/reader_nav.html" %}
 </article>
-{#- Focus mode: running head and status line (they repeat what the page shows). #}
+{#- Focus mode: running head and status line (they repeat what the page shows). The
+    running head shows the current chapter (reader.js), before the first one the
+    authors and the title. #}
 <div class="running-head" aria-hidden="true"><div class="bar">
-  <span class="running-title">{% if !book_authors.is_empty() %}{{ book_authors }} · {% endif %}{{ book_title }}</span>
+  <span class="running-title">
+    {%- if let Some(head_title) = head_title %}{{ head_title }}{% else %}{% if !book_authors.is_empty() %}{{ book_authors }} · {% endif %}{{ book_title }}{% endif -%}
+  </span>
 </div></div>
 <div class="status-line" aria-hidden="true"><div class="bar">
-  {#- The way back again (reader.js), in place of the chapter; the one above the text
-      is the one for screen readers. #}
+  {#- The way back again (reader.js), before the track; the one above the text is the
+      one for screen readers. #}
   <a class="back-to-text" lang="en" tabindex="-1" hidden>↩ Back to text</a>
-  <span class="status-chapter">{{ part_title }}</span>
   {#- The track: chapter ticks from the server; reader.js places them and adds the
       bookmarks, the read part and the current position, and handles clicks. #}
   <div class="track" data-href="{{ read_href }}" hidden>

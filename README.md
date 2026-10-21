@@ -187,10 +187,10 @@ WantedBy=multi-user.target
   stays on a page shorter than the window. On a phone focus mode is always on: the
   sidebar button opens the sidebar over the text, and a jump from it closes it again.
   On a computer the browser remembers the choice. A thin
-  running head shows the author and title, and a status line the current chapter and
-  how much of the book you have read (both can be turned off in **Aa**). Between them a
-  thin line maps the whole book: ticks for chapters and bookmarks, and a dot for where
-  you are. Pointing at the line shows the place (percentage and chapter); a click goes
+  running head shows the current chapter (before the first one the author and title),
+  and a status line how much of the book you have read (both can be turned off in
+  **Aa**). In the status line a thin line maps the whole book: ticks for chapters and
+  bookmarks, and a dot for where you are. Pointing at the line shows the place (percentage and chapter); a click goes
   there (on a touch screen, tap twice), and Back returns. `Esc` or `f`
   leaves it, and it stays on for the next book until you do.
 - **Search in the book**: while reading, the search field in the top bar (`/` or `s`)

@@ -541,15 +541,9 @@ mark.sg-find.current {
   justify-content: center;
 }
 
-.running-title,
-.status-chapter {
+.running-title {
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.status-chapter {
-  flex: 0 1 auto;
-  max-width: 40%;
 }
 
 /* ---------- Notes: the way back and the preview ---------- */
@@ -565,15 +559,11 @@ mark.sg-find.current {
   white-space: nowrap;
 }
 
-/* In the status line it takes the chapter's place: the reader is in the notes. */
+/* In the status line it goes before the track while the reader is in the notes. */
 .status-line .back-to-text {
   flex: 0 0 auto;
   color: var(--accent);
   pointer-events: auto;
-}
-
-:root.has-return .status-line .status-chapter {
-  display: none;
 }
 
 /* The note, at the bottom: above the status line in focus mode. */
@@ -730,9 +720,12 @@ mark.sg-find.current {
   display: none;
 }
 
+/* Room for "100 %": the track keeps its length as the figure grows. */
 .status-progress {
   flex: none;
+  min-width: 5.5ch;
   font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 /* At the top of the page the top bar is shown over the content (it is fixed in focus
