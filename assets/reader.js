@@ -2162,7 +2162,8 @@
   // bookmark ticks (from the Bookmarks list, so they follow its changes), the read part
   // and the current position. A click jumps to that place: within this part by
   // scrolling to the block (a fragment link, so Back returns), elsewhere through
-  // `?progress=`. On a touch screen the first tap only shows the place.
+  // `?progress=`. On a touch screen the first tap only shows the place. A part of notes
+  // only comes after the main text: 100 %.
   const SCALE = 10000;
   let updateStatus = () => {};
   let drawBookmarks = () => {};
@@ -2238,25 +2239,32 @@
           chapter.textContent = title;
         }
       }
-      if (hasProgress) {
-        const map = counts();
-        const atEnd =
-          window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2;
-        let value = null;
-        if (atEnd) {
-          value = end;
-        } else if (map.has(block) && total > 0) {
-          value = start + ((end - start) * map.get(block)) / total;
-        }
-        if (value !== null) {
-          progress.textContent = `${Math.min(Math.floor(value / 100), 100)} %`;
-          if (point) {
-            point.hidden = false;
-            place(point, value);
-            fill.style.width = `${value / 100}%`;
-          }
+      const value = hasProgress ? shareAt(block) : SCALE;
+      if (value !== null) {
+        progress.textContent = `${Math.min(Math.floor(value / 100), 100)} %`;
+        if (point) {
+          point.hidden = false;
+          place(point, value);
+          fill.style.width = `${value / 100}%`;
         }
       }
+    }
+
+    // The reading progress at `block`, or null outside the main text.
+    function shareAt(block) {
+      if (!hasProgress || !block) {
+        return null;
+      }
+      const map = counts();
+      const atEnd =
+        window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2;
+      if (atEnd) {
+        return end;
+      }
+      if (map.has(block) && total > 0) {
+        return start + ((end - start) * map.get(block)) / total;
+      }
+      return null;
     }
 
     // CSSOM, not a style attribute: allowed by the CSP.

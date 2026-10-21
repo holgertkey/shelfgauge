@@ -901,15 +901,16 @@ async fn read_pages_carry_the_running_head_and_progress() {
         ]
     );
     // Progress per part, in ten-thousandths: from 0 to 10 000 without gaps; the notes
-    // part has none.
+    // part has none of its own.
     let (main, notes): (Vec<_>, Vec<_>) = parts
         .iter()
         .partition(|p| attribute(&p.body, "data-progress-start").is_some());
     assert_eq!(notes.len(), 1, "only the notes part has no progress");
+    // It comes after the main text: 100 %, so the status line looks as elsewhere.
     assert!(
         notes[0]
             .body
-            .contains("<span class=\"status-progress\"></span>")
+            .contains("<span class=\"status-progress\">100 %</span>")
     );
     let ranges: Vec<(u16, u16)> = main
         .iter()

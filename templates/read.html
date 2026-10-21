@@ -100,7 +100,8 @@
   <div class="track" data-href="{{ read_href }}" hidden>
     {%- for chapter in chapters %}<i class="tick chapter" data-at="{{ chapter.at }}" data-title="{{ chapter.title }}"></i>{% endfor -%}
   </div>
-  <span class="status-progress">{% if let Some(progress) = progress %}{{ progress.label() }}{% endif %}</span>
+  {#- A part of notes only comes after the main text. #}
+  <span class="status-progress">{% if let Some(progress) = progress %}{{ progress.label() }}{% else %}100 %{% endif %}</span>
 </div></div>
 {% include "partials/reader_settings.html" %}
 {% endblock %}
