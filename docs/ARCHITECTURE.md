@@ -428,17 +428,23 @@ instead of navigating; a note in another part comes from that part's page (fetch
 per page, parsed with `DOMParser`; the note is the `.notes section` around the target,
 without its title and ids), so there is no extra route. "Open in notes" and any other
 link in the text to a place in the book remember the reading place in
-`sessionStorage`; the page they lead to shows "↩ Back to text" in the status line, in
-place of the chapter, and in the reader head (the one for screen readers), which returns
+`sessionStorage`; the page they lead to shows "↩ Back to text" in the status line,
+before the track, and in the reader head (the one for screen readers), which returns
 to that block. Modified clicks stay plain links.
-Page turns (`reader.js`, touch screens only): a sideways swipe (at least 60 px,
-mostly horizontal, within 600 ms) or a double tap on a half of the screen scrolls by
-the readable height (top bar or running head to status line) less one line, at once;
-at a part's end the next part opens, at its start the previous one with `#end` (scrolled
-to its end, the hash dropped). The reader article has `touch-action: pan-y pinch-zoom`
-and the page `overscroll-behavior-x: none`, so the browser neither zooms on a double tap
-nor goes back in history on a swipe; links, controls, a selection, the quote popup, the
-screen edges (24 px) and sideways-scrolling tables keep their touches.
+Page turns (`reader.js`, touch screens only): a tap on the outer 30 % of the text on
+either side or a sideways swipe (at least 60 px, mostly horizontal, within 600 ms, not
+from the screen edges of 24 px) turns a page; a tap in the middle shows or hides the top
+bar in focus mode, and a turn hides it. A page ends at the start of the text line at the
+bottom edge (found with `caretPositionFromPoint`, else a page less one line), so that
+line opens the next page uncut; it is lit up briefly (`.turn-line`). The text slides
+out and back in (Web Animations, 80 + 120 ms, not with `prefers-reduced-motion`). At a
+part's end the next part opens, at its start the previous one with `#end` (scrolled to
+its end, the hash dropped). The reader article has `touch-action: pan-y pinch-zoom` and
+the page `overscroll-behavior-x: none`, so the browser neither zooms on a double tap
+nor goes back in history on a swipe; a turning tap cancels its click, and a selection
+the browser makes of quick taps is dropped. Links, controls, a selection, an open quote
+popup, note or panel (the tap closes it) and sideways-scrolling tables keep their
+touches.
 Quoting works with the touch selection (`selectionchange`); the Quote button keeps
 32 px below the selection handles, goes above the selection when there is no room, and
 the note form stays in view when the keyboard opens (`visualViewport`). Browser check:

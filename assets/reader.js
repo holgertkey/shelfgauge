@@ -843,21 +843,34 @@
 
   // ---------- Page turns on touch screens ----------
 
-  // A swipe to the left or a double tap on the right half turns a page forward, a
-  // swipe to the right or a double tap on the left half back; scrolling stays as it
-  // is. A page is the readable height (between the top bar or running head and the
-  // status line) less one line, so a line stays in view. At the end of a part the next
-  // part opens, at its start the previous one at its end (`#end`). Not on links and
-  // controls, with a selection (its handles are being dragged), in the quote popup,
-  // near the screen edges (the system's back gesture) or in a table that scrolls
-  // sideways.
+  // A tap on the right 30 % of the text turns a page forward, on the left 30 % back,
+  // in the middle it shows or hides the top bar (focus mode); a swipe to the left turns
+  // forward, to the right back. Scrolling stays as it is. A page ends at the start of
+  // the line cut by the bottom edge (or of the last line), which opens the next page,
+  // so no line is cut at the top and the last line stays in view; that line is lit up
+  // briefly. The text slides away and back in the direction of the turn (not with
+  // reduced motion). At the end of a part the next part opens, at its start the
+  // previous one at its end (`#end`). Not on links and controls, with a selection, an
+  // open popup, note or panel (the tap closes it), or in a table that scrolls sideways;
+  // swipes not from the screen edges (the system's back gesture).
   const SWIPE_MIN = 60;
   const SWIPE_MS = 600;
   const TAP_SLOP = 10;
   const TAP_MS = 300;
-  const DOUBLE_TAP_MS = 300;
-  const DOUBLE_TAP_SLOP = 40;
+  const TAP_ZONE = 0.3;
   const EDGE = 24;
+  const TURN_SHIFT = 24;
+  const TURN_OUT_MS = 80;
+  const TURN_IN_MS = 120;
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  // Set by setupSettings: the top bar in focus mode.
+  let toggleBar = () => {};
+  let hideBar = () => {};
+  // The scroll of a turn still sliding out (run at once by the next turn).
+  let pendingTurn = null;
+  // Until this time a new selection is the browser's answer to quick taps, not the
+  // reader's: it is dropped.
+  let tapSelectionUntil = 0;
 
   function bottomLimit() {
     const view = window.visualViewport;
@@ -873,7 +886,71 @@
     return article.querySelector(`.reader-nav a[rel="${rel}"]`);
   }
 
+  // The box of the text line at height `y` of the window: the character there, or
+  // null between paragraphs, in an image or without the caret APIs.
+  function lineAt(y) {
+    const rect = text.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    let node = null;
+    let offset = 0;
+    if (document.caretPositionFromPoint) {
+      const position = document.caretPositionFromPoint(x, y);
+      node = position && position.offsetNode;
+      offset = position ? position.offset : 0;
+    } else if (document.caretRangeFromPoint) {
+      const caret = document.caretRangeFromPoint(x, y);
+      node = caret && caret.startContainer;
+      offset = caret ? caret.startOffset : 0;
+    }
+    if (!node || node.nodeType !== Node.TEXT_NODE || !text.contains(node)) {
+      return null;
+    }
+    const range = document.createRange();
+    const length = node.textContent.length;
+    // The character at the caret, or the one before it at the end of the node.
+    const start = Math.min(offset, Math.max(length - 1, 0));
+    range.setStart(node, start);
+    range.setEnd(node, Math.min(start + 1, length));
+    const box = Array.from(range.getClientRects()).find(
+      (r) => r.height > 0 && r.top - 2 <= y && r.bottom + 2 >= y,
+    );
+    return box ? { top: box.top, bottom: box.bottom } : null;
+  }
+
+  function flushTurn() {
+    if (pendingTurn) {
+      const turn = pendingTurn;
+      pendingTurn = null;
+      turn();
+    }
+    for (const animation of text.getAnimations()) {
+      animation.cancel();
+    }
+  }
+
+  // Lights up the band from `top` to `bottom` of the window over the text column.
+  function lightLine(top, bottom) {
+    const rect = text.getBoundingClientRect();
+    const mark = document.createElement("div");
+    mark.className = "turn-line";
+    mark.setAttribute("aria-hidden", "true");
+    // CSSOM, not a style attribute: allowed by the CSP.
+    mark.style.top = `${top}px`;
+    mark.style.left = `${rect.left}px`;
+    mark.style.width = `${rect.width}px`;
+    mark.style.height = `${Math.max(bottom - top, 0)}px`;
+    document.body.append(mark);
+    const fade = mark.animate([{ opacity: 1 }, { opacity: 1, offset: 0.4 }, { opacity: 0 }], {
+      duration: 1200,
+      easing: "ease-in",
+    });
+    fade.addEventListener("finish", () => mark.remove());
+    fade.addEventListener("cancel", () => mark.remove());
+  }
+
   function turnPage(forward) {
+    flushTurn();
+    hideBar();
     const top = topLimit();
     const bottom = bottomLimit();
     const rect = text.getBoundingClientRect();
@@ -893,25 +970,62 @@
       }
       return;
     }
-    const line = parseFloat(getComputedStyle(text).lineHeight) || 24;
-    const page = Math.max(bottom - top - line, line);
-    pageTurnUntil = Date.now() + 400;
-    window.scrollBy({ top: forward ? page : -page, behavior: "instant" });
+    const lineHeight = parseFloat(getComputedStyle(text).lineHeight) || 24;
+    const height = bottom - top;
+    // Forward: the line at the bottom edge goes to the top. Back: the line at the top
+    // edge goes to the bottom. Else (no text line there, or a turn that would hardly
+    // move) a page less one line.
+    const line = lineAt(forward ? bottom - 2 : top + 2);
+    let delta = forward ? height - lineHeight : -(height - lineHeight);
+    let band = forward ? [top, top + lineHeight] : [bottom - lineHeight, bottom];
+    if (line) {
+      const aligned = forward ? line.top - top : line.bottom - bottom;
+      if (Math.abs(aligned) >= height / 2) {
+        delta = aligned;
+        band = [line.top - delta, line.bottom - delta];
+      }
+    }
+    const scroll = () => {
+      pageTurnUntil = Date.now() + 400;
+      window.scrollBy({ top: delta, behavior: "instant" });
+      lightLine(band[0], band[1]);
+    };
+    if (reducedMotion.matches || typeof text.animate !== "function") {
+      scroll();
+      return;
+    }
+    const shift = forward ? -TURN_SHIFT : TURN_SHIFT;
+    pendingTurn = scroll;
+    const out = text.animate(
+      [{ transform: "none", opacity: 1 }, { transform: `translateX(${shift}px)`, opacity: 0 }],
+      { duration: TURN_OUT_MS, easing: "ease-in" },
+    );
+    out.addEventListener("finish", () => {
+      if (pendingTurn !== scroll) {
+        return;
+      }
+      pendingTurn = null;
+      scroll();
+      text.animate(
+        [{ transform: `translateX(${-shift}px)`, opacity: 0 }, { transform: "none", opacity: 1 }],
+        { duration: TURN_IN_MS, easing: "ease-out" },
+      );
+    });
   }
 
   // Whether a touch at `target` may turn a page.
-  function turnsPages(target, x) {
+  function turnsPages(target) {
     if (!(target instanceof Element) || !article.contains(target)) {
       return false;
     }
     if (target.closest("a, button, input, textarea, select, summary, label, .mark-popup")) {
       return false;
     }
-    if (x < EDGE || x > window.innerWidth - EDGE) {
+    const selection = window.getSelection();
+    if ((selection && !selection.isCollapsed) || popup || notePanel) {
       return false;
     }
-    const selection = window.getSelection();
-    if ((selection && !selection.isCollapsed) || popup) {
+    if (document.querySelector(":popover-open")) {
       return false;
     }
     for (let el = target; el && el !== text; el = el.parentElement) {
@@ -936,11 +1050,15 @@
       return;
     }
     let start = null;
-    let lastTap = null;
     document.addEventListener("touchstart", (event) => {
       const touch = event.touches[0];
-      start = event.touches.length === 1 && turnsPages(event.target, touch.clientX)
-        ? { x: touch.clientX, y: touch.clientY, t: Date.now() }
+      start = event.touches.length === 1 && turnsPages(event.target)
+        ? {
+          x: touch.clientX,
+          y: touch.clientY,
+          t: Date.now(),
+          edge: touch.clientX < EDGE || touch.clientX > window.innerWidth - EDGE,
+        }
         : null;
     }, { passive: true });
     document.addEventListener("touchmove", (event) => {
@@ -956,30 +1074,35 @@
       const dx = touch.clientX - start.x;
       const dy = touch.clientY - start.y;
       const dt = Date.now() - start.t;
+      const edge = start.edge;
       start = null;
       if (Math.abs(dx) >= SWIPE_MIN && Math.abs(dx) > 2 * Math.abs(dy) && dt <= SWIPE_MS) {
-        lastTap = null;
-        turnPage(dx < 0);
+        if (!edge) {
+          turnPage(dx < 0);
+        }
         return;
       }
       if (Math.abs(dx) > TAP_SLOP || Math.abs(dy) > TAP_SLOP || dt > TAP_MS) {
-        lastTap = null;
         return;
       }
-      const now = Date.now();
-      if (
-        lastTap &&
-        now - lastTap.t <= DOUBLE_TAP_MS &&
-        Math.abs(touch.clientX - lastTap.x) <= DOUBLE_TAP_SLOP &&
-        Math.abs(touch.clientY - lastTap.y) <= DOUBLE_TAP_SLOP
-      ) {
-        lastTap = null;
-        // No click (and no zoom) from the second tap.
-        event.preventDefault();
-        turnPage(touch.clientX >= window.innerWidth / 2);
-        return;
+      // No click, and no double tap for the browser (a word selection or a zoom).
+      event.preventDefault();
+      tapSelectionUntil = Date.now() + 600;
+      const share = touch.clientX / window.innerWidth;
+      if (share < TAP_ZONE) {
+        turnPage(false);
+      } else if (share > 1 - TAP_ZONE) {
+        turnPage(true);
+      } else {
+        toggleBar();
       }
-      lastTap = { x: touch.clientX, y: touch.clientY, t: now };
+    });
+    // A selection the browser makes of quick taps all the same.
+    document.addEventListener("selectionchange", () => {
+      const selection = window.getSelection();
+      if (Date.now() < tapSelectionUntil && selection && !selection.isCollapsed) {
+        selection.removeAllRanges();
+      }
     });
   }
 
@@ -1759,6 +1882,18 @@
     leaveFocus = () => {
       if (focused()) {
         setFocus(false);
+      }
+    };
+    // A tap in the middle of the text (setupPaging) shows or hides the top bar; a page
+    // turn hides it.
+    toggleBar = () => {
+      if (focused() && !panelOpen()) {
+        peek(!root.classList.contains("topbar-peek"));
+      }
+    };
+    hideBar = () => {
+      if (focused() && !panelOpen() && !document.body.classList.contains("sidebar-shown")) {
+        peek(false);
       }
     };
     if (focusButton) {

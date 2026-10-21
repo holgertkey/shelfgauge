@@ -1002,8 +1002,8 @@ mark.sg-find.current {
     padding-inline: 1rem;
   }
 
-  /* Sideways swipes and double taps turn pages (reader.js): the browser only scrolls
-     up and down and zooms with two fingers here (no double-tap zoom), and a sideways
+  /* Sideways swipes and taps turn pages (reader.js): the browser only scrolls up and
+     down and zooms with two fingers here (no double-tap zoom), and a sideways
      swipe is not its history gesture. A table that scrolls sideways is its own
      scroller and keeps its swipes. */
   :root {
@@ -1036,6 +1036,16 @@ mark.sg-find.current {
     min-width: 2.75rem;
     min-height: 2.75rem;
   }
+}
+
+/* The line that stays in view on a page turn (reader.js), lit up for a moment: the
+   place to read on from. Below the bars. */
+.turn-line {
+  position: fixed;
+  z-index: 5;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-radius: 2px;
+  pointer-events: none;
 }
 
 /* The status line (and the note panel above it) stays above the home indicator of a

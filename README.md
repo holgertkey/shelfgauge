@@ -177,11 +177,12 @@ WantedBy=multi-user.target
   leaving the page; **Open in notes** goes to the notes. After that, or after any other
   link in the text to another place in the book, **↩ Back to text** in the status line
   (and above the text) returns to where you were reading.
-- **Turning pages on a phone or tablet**: swipe to the left or double-tap the right half
-  of the screen for the next page, swipe to the right or double-tap the left half for
-  the previous one; scrolling with a finger works as usual. At the end of a chapter the
-  next one opens, at its start the previous one at its end. Links, a selection and the
-  screen edges are left alone.
+- **Turning pages on a phone or tablet**: tap the right side of the screen or swipe to
+  the left for the next page, tap the left side or swipe to the right for the previous
+  one; a tap in the middle shows or hides the top bar. Scrolling with a finger works as
+  usual. The text slides briefly in the direction of the turn, and the line you read
+  last stays in view, lit up for a moment. At the end of a chapter the next one opens,
+  at its start the previous one at its end. Links and a selection are left alone.
 - **Focus mode** (`f`, or the button next to **Aa**) hides the sidebar and the top
   bar; the top bar comes back when you scroll up or move the mouse to the top edge, and
   stays on a page shorter than the window. On a phone focus mode is always on: the
