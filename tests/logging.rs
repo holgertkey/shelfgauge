@@ -520,3 +520,45 @@ async fn passwords_and_login_forms_are_never_logged() {
         assert!(!log.contains(secret), "{secret} in\n{log}");
     }
 }
+
+/// Publications: building, sealing and opening (also failing to open) a publication
+/// never logs its book key, its id or the book's text, not even at trace level.
+#[test]
+fn publication_keys_and_ids_are_never_logged() {
+    use shelfgauge::config::ReaderConfig;
+    use shelfgauge::format::BookParser;
+    use shelfgauge::format::fb2::Fb2Parser;
+    use shelfgauge::publication::format::{BlobPath, PublicationId};
+    use shelfgauge::publication::{BookInfo, BookKey, build, open};
+
+    let capture = Capture::default();
+    let _log = tracing::dispatcher::set_default(&capture.dispatch("trace", LogFormat::Text, false));
+    let content = shelfgauge::format::run_with_parser_stack(|| {
+        Fb2Parser.parse_content(include_bytes!("fixtures/fb2/full.fb2"))
+    })
+    .unwrap();
+    let key = BookKey::new([0x6b; 32]);
+    let id = PublicationId::new([0x1d; 16]);
+    let info = BookInfo {
+        title: "Secret Title".into(),
+        content_key: vec![0x3c; 16],
+        ..BookInfo::default()
+    };
+    let publication = build(&info, &content, None, &ReaderConfig::default()).unwrap();
+    let sealed = publication.seal(&id, &key).unwrap();
+    for (path, blob) in &sealed {
+        open(&id, &key, *path, blob, 1 << 26).unwrap();
+        let error = open(&id, &BookKey::new([0; 32]), *path, blob, 1 << 26).unwrap_err();
+        tracing::warn!(%error, "opening failed");
+    }
+    let error = open(&id, &key, BlobPath::Manifest, &sealed[1].1, 1 << 26).unwrap_err();
+    tracing::warn!(%error, ?id, ?key, "opening failed");
+
+    let log = capture.text();
+    assert!(log.contains("opening failed"), "{log}");
+    for secret in ["6b".repeat(32), "1d".repeat(16), "3c".repeat(16)] {
+        assert!(!log.contains(&secret), "{log}");
+    }
+    assert!(!log.contains("Secret Title"), "{log}");
+    assert!(!log.contains("[107, 107"), "key bytes in {log}");
+}

@@ -1,0 +1,5 @@
+{
+  "deflate_raw": "bb30f9c2ee0b1b2e6cbab041c1504fc1b344a13cb15821512125b1285b21312f45a1b824bf28b752212f333da3c45aa1242355a12831334f212d35274721334fa124bfa82835afa4584fe1c2f0350800",
+  "description": "raw deflate (RFC 1951, no zlib header): DecompressionStream('deflate-raw')",
+  "plaintext_utf8": "Глава 1. It was a dark and stormy night; the rain fell in torrents. Глава 1. It was a dark and stormy night; the rain fell in torrents. Глава 1. It was a dark and stormy night; the rain fell in torrents. Глава 1. It was a dark and stormy night; the rain fell in torrents. "
+}

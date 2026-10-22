@@ -91,6 +91,17 @@ impl fmt::Display for BlockId {
 #[error("invalid block id {0:?} (expected `b` followed by a number, e.g. `b12`)")]
 pub struct ParseBlockIdError(String);
 
+/// The error returned by [`BookContent::from_numbered`] for blocks that are not numbered
+/// `b1`, `b2`, ... in order.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("block numbering broken: expected {expected}, found {found}")]
+pub struct NumberingError {
+    /// The ID the block should have.
+    pub expected: BlockId,
+    /// The ID it has.
+    pub found: BlockId,
+}
+
 impl FromStr for BlockId {
     type Err = ParseBlockIdError;
 
@@ -250,6 +261,52 @@ impl BookContent {
             });
         }
         Self { bodies, images }
+    }
+
+    /// Creates the content from bodies whose blocks are numbered already, keeping their
+    /// IDs (a book put together again from a publication's parts, see
+    /// `shelfgauge_core::publication`).
+    ///
+    /// Fails unless the IDs are exactly `b1`, `b2`, ... in numbering order, so the
+    /// result is the same as [`BookContent::new`] would make of these bodies.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use shelfgauge_core::format::model::*;
+    ///
+    /// let content = BookContent::new(
+    ///     vec![Body::main(Section { blocks: vec![Block::paragraph("Text")], ..Section::default() })],
+    ///     Default::default(),
+    /// );
+    /// let again = BookContent::from_numbered(content.bodies().to_vec(), Default::default());
+    /// assert_eq!(again.unwrap(), content);
+    /// assert!(BookContent::from_numbered(
+    ///     vec![Body::main(Section { blocks: vec![Block::paragraph("Unnumbered")], ..Section::default() })],
+    ///     Default::default(),
+    /// )
+    /// .is_err());
+    /// ```
+    pub fn from_numbered(
+        bodies: Vec<Body>,
+        images: BTreeMap<String, Image>,
+    ) -> Result<Self, NumberingError> {
+        let content = Self { bodies, images };
+        let mut expected = 0u32;
+        let mut wrong = None;
+        content.for_each_block(|block| {
+            expected += 1;
+            if wrong.is_none() && block.id.0 != expected {
+                wrong = Some(NumberingError {
+                    expected: BlockId(expected),
+                    found: block.id,
+                });
+            }
+        });
+        match wrong {
+            Some(error) => Err(error),
+            None => Ok(content),
+        }
     }
 
     /// The bodies in document order: the main body first, then notes bodies.

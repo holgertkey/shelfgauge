@@ -1,11 +1,11 @@
-# shelfgauge v0.16.0
+# shelfgauge v0.17.0
 
 A single-binary tool that indexes a folder tree of ebooks — FB2, EPUB, plain text and
 (optionally) HTML files, plain or inside `.zip` archives — into a local SQLite
 database and serves a browsable, searchable web library on `localhost`, with an
 in-browser reader.
 
-**Current version:** 0.16.0
+**Current version:** 0.17.0
 
 ## Status
 
@@ -457,4 +457,4 @@ MIT — see [LICENSE](LICENSE).
 
 ---
 
-_shelfgauge v0.16.0 — MIT License_
+_shelfgauge v0.17.0 — MIT License_

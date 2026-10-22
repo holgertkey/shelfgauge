@@ -4,7 +4,8 @@
 > hardening), annotations (0.6.0), reader settings (0.7.0), EPUB (0.8.0), plain text
 > and `.fbz` (0.9.0), HTML (0.10.0, opt-in), search within the book (0.11.0), library
 > statistics (0.12.0), the settings page (0.13.0). The V2 hub below is designed, not
-> built; the core crate it needs exists (see "Crates").
+> built; the core crate it needs and the publication format exist (see "Crates" and
+> "Publication format").
 
 `shelfgauge` is a single-binary Rust app that indexes a directory tree of ebook files (FB2
 (also `.fbz`), EPUB, TXT and opt-in HTML, plain files and `.zip` archives with any number of books inside) into a local SQLite DB
@@ -570,7 +571,9 @@ daemon logs to journald or the container log), no metrics endpoint.
   `profile deleted`); client addresses are not logged either (`remote = true` on the
   span says a request came from another device); `Profile` and the session `Token`
   have redacted `Debug` output; in V2 device
-  tokens, pairing secrets, recovery codes, keys of any kind and publication ids. Books
+  tokens, pairing secrets, recovery codes, keys of any kind and publication ids
+  (`BookKey` and `PublicationId` have redacted `Debug` output; checked for building
+  and sealing a publication since 0.17.0). Books
   are named by id or library-relative path, never by absolute path at `info` and
   above. Untrusted values (`Host`/`Origin` headers, paths from archives, parser
   messages) are logged with `?` (Debug escapes newlines and control characters) or as
@@ -706,14 +709,14 @@ independent features.
   the hub from becoming a file-sharing service and keeps purchased books with their
   watermarks on the buyer's devices. DRM-protected books are never published (they
   cannot be read at all, see below).
-- **Publication = structured data, never HTML**: an encrypted manifest (format version,
-  metadata, content key, TOC, part ranges, shares for the progress track, image list),
-  one blob per part (the part's `BookContent` blocks) and one per image (whitelisted
-  types, shown through `blob:` URLs). Each blob is compressed, padded to the next size of
-  a geometric sequence with ratio 9/8 (hides the size fingerprint of well-known books)
-  and encrypted with AES-256-GCM (random nonce; associated data = publication id + blob
-  path + format version). Block ids do not depend on the split, so annotations made on a
-  device anchor exactly like local ones; a changed book is a new publication.
+- **Publication = structured data, never HTML** (format built in 0.17.0, see
+  "Publication format"): an encrypted manifest, one blob per part (the part's
+  `BookContent` blocks) and one per image (whitelisted types, shown through `blob:`
+  URLs). Each blob is compressed, padded to the next size of a geometric sequence with
+  ratio 9/8 (hides the size fingerprint of well-known books) and encrypted with
+  AES-256-GCM (random nonce; associated data = format version + publication id + blob
+  path). Block ids do not depend on the split, so annotations made on a device anchor
+  exactly like local ones; a changed book is a new publication.
 - **Rendering on the device runs the same Rust code in WASM** (`render` and
   `annotations::text`): blob data is untrusted, so trusted code turns it into escaped
   HTML exactly as the server does, under a strict CSP (`script-src 'self'
@@ -756,6 +759,40 @@ independent features.
   (re-encrypting all records on a trusted client); copies already cached on a device
   cannot be retracted, nor can exported `.sgbook` files.
 
+### Publication format (0.17.0)
+
+Built in 0.17.0, nothing is uploaded yet. Types and decoding are in the core crate
+(`shelfgauge_core::publication`, so the device decodes with the same code); building
+and sealing in the app (`src/publication/`).
+
+- **Blobs**: `manifest`, `p/<n>` (parts, 0-based), `i/<n>` (images). The manifest
+  (postcard) holds the metadata (title, authors, series, the `lang` tag), the content
+  key, the block count, per part its range, title, running head and progress, the TOC
+  entries, the chapter ticks, the image list and the cover: everything the reader page
+  derives from the whole book (`render::outline` in the core), so a device needs only
+  the part it shows. A part blob (postcard) holds the book's section structure cut down
+  to the part's blocks (ids unchanged; `continued` says how many sections go on from
+  the previous part) and the resolved targets of its internal links (text ↔ notes).
+  `PartBlob::render` gives exactly the server's `render_part` output; all parts
+  together give the book again (`publication::assemble`, ids checked by
+  `BookContent::from_numbered`).
+- **Sealing**: raw deflate (`flate2`; `DecompressionStream("deflate-raw")` on the
+  device) → padding (`[len u32 BE][data][zeros]` up to the bucket: 256 bytes, then
+  each size plus an eighth) → AES-256-GCM with the book key (`aes-gcm`; WebCrypto on
+  the device; the core crate does no cryptography). A blob is `[format version u16
+  BE][nonce 12][ciphertext + tag]`; associated data `[version u16 BE][publication id
+  16][path UTF-8]`. The version is checked before decrypting (unknown versions are
+  refused with a clear error) and authenticated through the associated data.
+- **Versions**: `FORMAT_VERSION` (1) and `SUPPORTED_VERSIONS`; postcard is not
+  self-describing, so any change to the format types or to the model is a new format
+  version.
+- **Refusals**: DRM-protected books; SVG and other non-raster images are left out.
+- **Tests**: `tests/publication.rs` decodes the publication of every synthetic book in
+  every split mode and compares part HTML, TOC, progress and the rendered text with the
+  server's; interop vectors for the browser side are in `tests/fixtures/publication/`
+  (encryption from a fixed key, nonce and padded plaintext; a raw deflate stream; a
+  whole sealed publication; regenerate with `SHELFGAUGE_WRITE_VECTORS=1`).
+
 **DRM** (implemented for EPUB in 0.8.0): DRM-free books,
 including purchased ones with a watermark, are ordinary books and watermarks are never
 removed; EPUB font obfuscation is not DRM (embedded fonts are not used anyway).
@@ -784,15 +821,16 @@ The repository is a Cargo workspace of two crates with one version
   install shelfgauge` installs it as before.
 - **`shelfgauge-core`** (`crates/shelfgauge-core/`): what runs both on the server and on
   a reading device — `format::model` (the book model and block numbering),
-  `config::{ReaderConfig, SplitMode}`, `render::{split, html}` and
-  `annotations::{text, anchor, find}`. It does no IO and parses no book files; its only
-  dependencies are `serde`, `thiserror` and `tracing`, and it builds for
+  `config::{ReaderConfig, SplitMode}`, `render::{split, html, outline}`,
+  `annotations::{text, anchor, find}` and `publication` (the publication format's
+  types and decoding). It does no IO, parses no book files and does no cryptography; its
+  only dependencies are `postcard`, `serde`, `thiserror` and `tracing`, and it builds for
   `wasm32-unknown-unknown` (checked in CI). Code that must render or count text exactly
   as the reader does belongs here; anything that touches files, SQLite, Tokio or a
   parser library does not.
 
 `shelfgauge` re-exports these modules at their old paths (`shelfgauge::format::model`,
-`shelfgauge::render::{split, html}`, `shelfgauge::annotations::{text, anchor, find}`,
+`shelfgauge::render::{split, html, outline}`, `shelfgauge::annotations::{text, anchor, find}`,
 `shelfgauge::config::{ReaderConfig, SplitMode}`), so code and tests use one path for
 both. The app depends on the core with `path` and an exact `version = "=X.Y.Z"` (one
 line in `[workspace.dependencies]`; Cargo refuses to build while it differs from the

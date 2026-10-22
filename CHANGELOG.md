@@ -8,8 +8,32 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-22
+
+### Added
+
+- The **publication format** for the planned hub (internal, nothing is uploaded yet):
+  a book becomes a manifest, one blob per reading part and one per image, each
+  compressed, padded to a size sequence that hides the book's size, and encrypted with
+  AES-256-GCM under a key of its own. The core crate decodes and renders it exactly as
+  the server renders the book. DRM-protected books are never published.
+
 ### Changed
 
+- **Reading on a phone**: phones always read in focus mode; taps on the left and
+  right sides of the screen turn pages, pages are aligned to whole lines (a page at
+  rest shows no cut line at the bottom), the text slides when turning and the line
+  kept from the previous page is lit briefly. The sidebar opens over the text and
+  closes after a jump. A tap just beside a link opens the link instead of turning the
+  page.
+- The running head shows the current chapter, so the status line keeps its length;
+  the status line of the notes shows 100 %, and it stays in place in Firefox on
+  Android when the toolbar shows.
+- **Back to text** after following a link (e.g. to a note) has no arrow any more, and
+  it disappears once you read on past the link target; the reading position is kept
+  until then.
+- The startup errors that ask for a first admin password name My profile beside the
+  CLI command.
 - The repository is now a Cargo workspace of two crates with one version: the program
   `shelfgauge` and the new library crate **`shelfgauge-core`** (the book model, the
   split into reading parts, HTML rendering, the rendered text, anchors and search

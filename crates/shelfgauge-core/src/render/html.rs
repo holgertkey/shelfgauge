@@ -9,9 +9,12 @@
 use std::collections::HashMap;
 use std::fmt::Write;
 
+use serde::{Deserialize, Serialize};
+
 use super::split::{Part, part_of};
 use crate::format::model::{
-    Align, Block, BlockId, BlockKind, BodyKind, BookContent, ImageRef, Inline, LinkTarget, Section,
+    Align, Block, BlockId, BlockKind, Body, BodyKind, BookContent, ImageRef, Inline, LinkTarget,
+    Section,
 };
 
 /// Builds the URLs a rendered part links to.
@@ -52,7 +55,7 @@ fn escape_into(text: &str, out: &mut String) {
 }
 
 /// Source-format anchors (section and block ids) resolved to block IDs.
-fn anchors(content: &BookContent) -> HashMap<&str, BlockId> {
+pub(crate) fn anchors(content: &BookContent) -> HashMap<&str, BlockId> {
     fn section<'a>(s: &'a Section, map: &mut HashMap<&'a str, BlockId>) {
         if let (Some(anchor), Some(id)) = (&s.anchor, s.first_block_id()) {
             map.entry(anchor.as_str()).or_insert(id);
@@ -76,7 +79,7 @@ fn anchors(content: &BookContent) -> HashMap<&str, BlockId> {
 }
 
 /// The first and last block IDs of a section and everything in it.
-fn section_range(section: &Section) -> Option<(BlockId, BlockId)> {
+pub(crate) fn section_range(section: &Section) -> Option<(BlockId, BlockId)> {
     let first = section.first_block_id()?;
     let mut last = first;
     fn walk(s: &Section, last: &mut BlockId) {
@@ -119,18 +122,38 @@ pub fn render_part(
     index: usize,
     links: &dyn ReaderLinks,
 ) -> String {
+    let anchors = anchors(content);
+    render_bodies(
+        content.bodies(),
+        &|anchor| anchors.get(anchor).copied(),
+        parts,
+        index,
+        links,
+    )
+}
+
+/// Renders part `index` of `parts` from `bodies`, which need to hold only the blocks of
+/// that part (a publication's part blob); `anchor` resolves the targets of internal
+/// links. With a book's full bodies and its own anchors, this is [`render_part`].
+pub fn render_bodies<'a>(
+    bodies: impl IntoIterator<Item = &'a Body>,
+    anchor: &dyn Fn(&str) -> Option<BlockId>,
+    parts: &[Part],
+    index: usize,
+    links: &dyn ReaderLinks,
+) -> String {
     let Some(part) = parts.get(index) else {
         return String::new();
     };
     let mut renderer = Renderer {
-        anchors: anchors(content),
+        anchor,
         parts,
         index,
         part,
         links,
         out: String::new(),
     };
-    for body in content.bodies() {
+    for body in bodies {
         let Some((first, last)) = section_range(&body.section) else {
             continue;
         };
@@ -149,7 +172,7 @@ pub fn render_part(
 }
 
 struct Renderer<'a> {
-    anchors: HashMap<&'a str, BlockId>,
+    anchor: &'a dyn Fn(&str) -> Option<BlockId>,
     parts: &'a [Part],
     index: usize,
     part: &'a Part,
@@ -379,7 +402,7 @@ impl Renderer<'_> {
                 children,
             } => {
                 let href = match target {
-                    LinkTarget::Anchor(anchor) => self.anchors.get(anchor.as_str()).map(|&id| {
+                    LinkTarget::Anchor(anchor) => (self.anchor)(anchor).map(|id| {
                         if self.part.contains(id) {
                             format!("#{id}")
                         } else {
@@ -422,25 +445,25 @@ fn safe_url(url: &str) -> Option<&str> {
         .then_some(url)
 }
 
-/// Renders the table of contents: the titled sections as nested lists linking to
-/// their first block. One entry is marked `class="active"`: the section the current
-/// part starts in (the reader moves the mark along while scrolling). A book without
-/// titled sections or notes has no contents: the result is then empty.
-pub fn render_toc(
-    content: &BookContent,
-    parts: &[Part],
-    current: usize,
-    links: &dyn ReaderLinks,
-) -> String {
-    struct Entry {
-        depth: usize,
-        title: String,
-        id: BlockId,
-    }
-    fn collect(section: &Section, depth: usize, out: &mut Vec<Entry>) {
+/// An entry of the table of contents: a titled section, or a notes body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TocEntry {
+    /// The nesting level, 0 for the top level.
+    pub depth: u32,
+    /// The title on one line.
+    pub title: String,
+    /// The section's first block.
+    pub id: BlockId,
+}
+
+/// The entries of the table of contents in book order: the titled sections (the main
+/// body's own title, the book title, is not one) and each notes body. A book without
+/// titled sections or notes has none.
+pub fn toc_entries(content: &BookContent) -> Vec<TocEntry> {
+    fn collect(section: &Section, depth: u32, out: &mut Vec<TocEntry>) {
         let mut child_depth = depth;
         if let (Some(title), Some(id)) = (section.title_text(), section.first_block_id()) {
-            out.push(Entry { depth, title, id });
+            out.push(TocEntry { depth, title, id });
             child_depth = depth + 1;
         }
         for child in &section.children {
@@ -451,14 +474,13 @@ pub fn render_toc(
     for body in content.bodies() {
         match body.kind {
             BodyKind::Main => {
-                // The book title (the main body's title) is not a TOC entry.
                 for child in &body.section.children {
                     collect(child, 0, &mut entries);
                 }
             }
             BodyKind::Notes => {
                 if let Some(id) = body.section.first_block_id() {
-                    entries.push(Entry {
+                    entries.push(TocEntry {
                         depth: 0,
                         title: body
                             .section
@@ -470,7 +492,30 @@ pub fn render_toc(
             }
         }
     }
+    entries
+}
 
+/// Renders the table of contents: the titled sections as nested lists linking to
+/// their first block. One entry is marked `class="active"`: the section the current
+/// part starts in (the reader moves the mark along while scrolling). A book without
+/// titled sections or notes has no contents: the result is then empty.
+pub fn render_toc(
+    content: &BookContent,
+    parts: &[Part],
+    current: usize,
+    links: &dyn ReaderLinks,
+) -> String {
+    render_toc_entries(&toc_entries(content), parts, current, links)
+}
+
+/// Renders the table of contents from its [entries](toc_entries), as [`render_toc`]
+/// does.
+pub fn render_toc_entries(
+    entries: &[TocEntry],
+    parts: &[Part],
+    current: usize,
+    links: &dyn ReaderLinks,
+) -> String {
     if entries.is_empty() {
         return String::new();
     }
@@ -483,7 +528,7 @@ pub fn render_toc(
     let mut out = String::from("<nav class=\"toc\" aria-label=\"Contents\">");
     let mut open = 0usize; // currently open <ul> levels
     for (index, entry) in entries.iter().enumerate() {
-        let depth = entry.depth.min(open); // never skip a level
+        let depth = (entry.depth as usize).min(open); // never skip a level
         if depth + 1 > open {
             out.push_str("<ul>");
             open += 1;

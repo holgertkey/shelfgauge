@@ -10,12 +10,14 @@ use super::annotations::{Lists, book_annotations};
 use super::find::FindResults;
 use super::{Params, parse_id, render};
 use crate::annotations::attach;
-use crate::annotations::text::BookText;
 use crate::cache::covers;
-use crate::format::model::{BlockId, BodyKind, BookContent, Section};
+use crate::format::model::BlockId;
 use crate::format::run_with_parser_stack;
 use crate::render::html::{ReaderLinks, render_part, render_toc};
-use crate::render::split::{Part, part_of, split};
+use crate::render::outline::{
+    ChapterTick, PartProgress, SHARE_SCALE, chapter_ticks, html_lang, part_progress, title_before,
+};
+use crate::render::split::{part_of, split};
 use crate::storage::books::{BookDetails, BookStatus, book_by_id};
 use crate::web::layout::{Layout, SidebarView, page_number};
 use crate::web::profile::CurrentProfile;
@@ -38,112 +40,22 @@ impl ReaderLinks for Links<'_> {
     }
 }
 
-/// Positions in the book are shares of the main text in units of `1 / SCALE` (the
-/// status line's track, `?progress=`).
-const SCALE: u64 = 10_000;
+/// The reading progress over the part, as the template shows it.
+struct Progress(PartProgress);
 
-/// Chapter ticks: titled sections down to this depth (1 = top level).
-const CHAPTER_DEPTH: u32 = 2;
+impl std::ops::Deref for Progress {
+    type Target = PartProgress;
 
-/// The reading progress (in `1 / SCALE` of the main text) at the start of a part and at
-/// the start of the next one (`SCALE` for the last part of the main text); the reader
-/// interpolates between them. `None` for a part that starts in the notes.
-struct PartProgress {
-    start: u64,
-    end: u64,
+    fn deref(&self) -> &PartProgress {
+        &self.0
+    }
 }
 
-impl PartProgress {
-    fn of(text: &BookText, parts: &[Part], index: usize) -> Option<Self> {
-        let start = text.share_before(parts.get(index)?.start, SCALE)?;
-        let end = parts
-            .get(index + 1)
-            .and_then(|next| text.share_before(next.start, SCALE))
-            .unwrap_or(SCALE);
-        Some(Self {
-            start,
-            end: end.max(start),
-        })
-    }
-
+impl Progress {
     /// The progress at the start of the part, as shown before the reader updates it.
     fn label(&self) -> String {
-        format!("{} %", self.start * 100 / SCALE)
+        format!("{} %", self.start * 100 / SHARE_SCALE)
     }
-}
-
-/// A chapter tick on the status line's track.
-struct ChapterTick {
-    /// Where the chapter starts, in `1 / SCALE` of the main text.
-    at: u64,
-    title: String,
-}
-
-/// The titled sections of the main bodies down to [`CHAPTER_DEPTH`], in book order.
-fn chapter_ticks(content: &BookContent, text: &BookText) -> Vec<ChapterTick> {
-    fn walk(section: &Section, depth: u32, text: &BookText, ticks: &mut Vec<ChapterTick>) {
-        if depth > CHAPTER_DEPTH {
-            return;
-        }
-        if depth > 0
-            && let (Some(title), Some(first)) = (section.title_text(), section.first_block_id())
-            && let Some(at) = text.share_before(first, SCALE)
-        {
-            ticks.push(ChapterTick { at, title });
-        }
-        for child in &section.children {
-            walk(child, depth + 1, text, ticks);
-        }
-    }
-    let mut ticks = Vec::new();
-    for body in content.bodies() {
-        if body.kind != BodyKind::Notes {
-            walk(&body.section, 0, text, &mut ticks);
-        }
-    }
-    ticks
-}
-
-/// The section title in effect where a part starts: the last title at or above
-/// `start` in book order (not the book's own title, the main body's), its lines joined with ". "
-/// as the reader joins them (`reader.js`, `titleText`). `None` before the first one.
-fn title_before(content: &BookContent, start: BlockId) -> Option<String> {
-    fn walk(section: &Section, start: BlockId, found: &mut Option<String>) {
-        match section.title.first() {
-            Some(first) if first.id > start => return,
-            Some(_) => {
-                let lines: Vec<String> = section
-                    .title
-                    .iter()
-                    .map(|line| {
-                        line.plain_text()
-                            .split_whitespace()
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                    })
-                    .filter(|line| !line.is_empty())
-                    .collect();
-                if !lines.is_empty() {
-                    *found = Some(lines.join(". "));
-                }
-            }
-            None => {}
-        }
-        for child in &section.children {
-            walk(child, start, found);
-        }
-    }
-    let mut found = None;
-    for body in content.bodies() {
-        if body.kind == BodyKind::Main {
-            for child in &body.section.children {
-                walk(child, start, &mut found);
-            }
-        } else {
-            walk(&body.section, start, &mut found);
-        }
-    }
-    found
 }
 
 /// A neighbouring part.
@@ -160,7 +72,7 @@ struct ReadPage {
     /// The authors, comma-separated (the focus mode's running head).
     book_authors: String,
     /// The reading progress over this part (the focus mode's status line).
-    progress: Option<PartProgress>,
+    progress: Option<Progress>,
     /// The chapters on the status line's track.
     chapters: Vec<ChapterTick>,
     /// The book's read URL; the track adds `?progress=` to it.
@@ -197,25 +109,6 @@ struct FindPanel {
     part: usize,
     query: String,
     results: Option<FindResults>,
-}
-
-/// The book's language as an HTML `lang` value: a BCP 47 tag such as `ru` or `en-GB`
-/// (`_` is accepted for `-`); anything else (`Русский`, `ru, en`) is dropped.
-///
-/// Browsers hyphenate and reader views pick a voice by it, so a wrong value is worse
-/// than none.
-fn html_lang(language: Option<&str>) -> Option<String> {
-    let tag = language?.trim().replace('_', "-");
-    let mut subtags = tag.split('-');
-    let primary = subtags.next()?;
-    let valid = (2..=3).contains(&primary.len())
-        && primary.bytes().all(|b| b.is_ascii_alphabetic())
-        && subtags
-            .all(|s| (1..=8).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric()));
-    valid.then(|| {
-        let rest = &tag[primary.len()..];
-        format!("{}{rest}", primary.to_ascii_lowercase())
-    })
 }
 
 /// What a read request results in.
@@ -280,10 +173,10 @@ fn page(
         let share: u64 = progress
             .parse()
             .ok()
-            .filter(|&share| share <= SCALE)
+            .filter(|&share| share <= SHARE_SCALE)
             .ok_or(AppError::NotFound)?;
         let block = text
-            .block_at_share(share, SCALE)
+            .block_at_share(share, SHARE_SCALE)
             .ok_or(AppError::NotFound)?;
         let part = part_of(&parts, block).ok_or(AppError::NotFound)?;
         return Ok(Outcome::Redirect(links.block(part, block)));
@@ -336,7 +229,7 @@ fn page(
     } else {
         book.title.clone()
     };
-    let progress = PartProgress::of(&text, &parts, index);
+    let progress = part_progress(&text, &parts, index).map(Progress);
     Ok(Outcome::Page(Box::new(ReadPage {
         layout: Layout::new(state, profile, title, SidebarView::default())
             .with_lang(html_lang(book.language.as_deref())),
@@ -410,82 +303,4 @@ pub(crate) async fn image(
         &headers,
         data,
     ))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{html_lang, title_before};
-    use crate::format::model::{Block, Body, BookContent, Section};
-
-    fn section(title: &[&str], blocks: &[&str], children: Vec<Section>) -> Section {
-        Section {
-            title: title.iter().map(|line| Block::paragraph(*line)).collect(),
-            blocks: blocks.iter().map(|text| Block::paragraph(*text)).collect(),
-            children,
-            ..Section::default()
-        }
-    }
-
-    #[test]
-    fn the_running_head_starts_with_the_title_in_effect() {
-        let chapter1 = section(&["Chapter 1", "The  Start"], &["a", "b"], vec![]);
-        let sub = section(&["2.1"], &["d"], vec![]);
-        let chapter2 = section(&["Chapter 2"], &["c"], vec![sub]);
-        let root = section(&["Book"], &["intro"], vec![chapter1, chapter2]);
-        let notes = section(&["Notes"], &[], vec![section(&["1"], &["Note"], vec![])]);
-        let content = BookContent::new(
-            vec![Body::main(root), Body::notes(notes)],
-            Default::default(),
-        );
-        let main = &content.bodies()[0].section;
-        let notes = &content.bodies()[1].section;
-        let head = |id| title_before(&content, id);
-        // Before the first chapter: no title (the book's own one does not count).
-        assert_eq!(head(main.title[0].id), None);
-        assert_eq!(head(main.blocks[0].id), None);
-        // A part starting at a title, or inside its section; lines joined with ". ".
-        let chapter1 = &main.children[0];
-        assert_eq!(
-            head(chapter1.title[0].id).as_deref(),
-            Some("Chapter 1. The Start")
-        );
-        assert_eq!(
-            head(chapter1.blocks[1].id).as_deref(),
-            Some("Chapter 1. The Start")
-        );
-        // The innermost title above: a subsection's.
-        assert_eq!(
-            head(main.children[1].children[0].blocks[0].id).as_deref(),
-            Some("2.1")
-        );
-        // The notes have their own titles.
-        assert_eq!(head(notes.title[0].id).as_deref(), Some("Notes"));
-        assert_eq!(head(notes.children[0].blocks[0].id).as_deref(), Some("1"));
-    }
-
-    #[test]
-    fn book_languages_become_html_lang_tags() {
-        for (language, expected) in [
-            ("ru", Some("ru")),
-            (" RU ", Some("ru")),
-            ("en-GB", Some("en-GB")),
-            ("en_US", Some("en-US")),
-            ("rus", Some("rus")),
-            ("sr-Latn-RS", Some("sr-Latn-RS")),
-            ("", None),
-            ("r", None),
-            ("Русский", None),
-            ("russian", None),
-            ("ru, en", None),
-            ("ru-", None),
-            ("ru\"><script>", None),
-        ] {
-            assert_eq!(
-                html_lang(Some(language)).as_deref(),
-                expected,
-                "{language:?}"
-            );
-        }
-        assert_eq!(html_lang(None), None);
-    }
 }

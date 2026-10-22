@@ -14,6 +14,7 @@ pub mod format;
 pub mod library;
 pub mod logging;
 pub mod profiles;
+pub mod publication;
 pub mod render;
 pub mod scanner;
 pub mod storage;

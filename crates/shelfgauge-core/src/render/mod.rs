@@ -4,4 +4,5 @@
 //! never on a format's source.
 
 pub mod html;
+pub mod outline;
 pub mod split;
