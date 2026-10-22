@@ -599,3 +599,116 @@ fn a_whole_sealed_publication_vector_opens() {
     let book = assemble(parts, BTreeMap::new(), manifest.block_count).unwrap();
     assert!(!BookText::new(&book).flat().is_empty());
 }
+
+/// Times building, sealing and opening the publications of the books (any registered
+/// format) in the directory named by `SHELFGAUGE_PUBLICATION_SAMPLES`, with the
+/// default split, and reports blob sizes and the padding overhead:
+/// `cargo test --release --test publication -- --ignored --nocapture`.
+#[test]
+#[ignore = "needs real books in SHELFGAUGE_PUBLICATION_SAMPLES"]
+fn timing_on_real_books() {
+    use std::time::Instant;
+
+    let Ok(dir) = std::env::var("SHELFGAUGE_PUBLICATION_SAMPLES") else {
+        eprintln!("SHELFGAUGE_PUBLICATION_SAMPLES is not set");
+        return;
+    };
+    let registry = shelfgauge::format::Registry::with_builtin_formats();
+    let mut paths: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    paths.sort();
+    let config = ReaderConfig::default();
+    println!(
+        "| book | file | parts | images | build | seal | open + decode | render all | assemble + BookText | plaintext | deflate | sealed | padding |"
+    );
+    println!("|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+    for path in paths {
+        let Some(parser) = registry.for_path(&path) else {
+            continue;
+        };
+        let data = std::fs::read(&path).unwrap();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        run_with_parser_stack(|| {
+            let (Ok(metadata), Ok(content)) =
+                (parser.parse_metadata(&data), parser.parse_content(&data))
+            else {
+                return;
+            };
+            let ms = |start: Instant| format!("{:.1} ms", start.elapsed().as_secs_f64() * 1e3);
+
+            let start = Instant::now();
+            let publication = build(&info(), &content, metadata.cover.as_ref(), &config).unwrap();
+            let built = ms(start);
+
+            let key = BookKey::generate().unwrap();
+            let start = Instant::now();
+            let sealed = publication.seal(&id(), &key).unwrap();
+            let seal_time = ms(start);
+
+            let start = Instant::now();
+            let manifest = Manifest::decode(
+                &open(&id(), &key, BlobPath::Manifest, &sealed[0].1, LIMIT).unwrap(),
+            )
+            .unwrap();
+            let blobs: Vec<PartBlob> = sealed[1..=manifest.parts.len()]
+                .iter()
+                .map(|(path, blob)| {
+                    PartBlob::decode(&open(&id(), &key, *path, blob, LIMIT).unwrap()).unwrap()
+                })
+                .collect();
+            for (path, blob) in &sealed[1 + manifest.parts.len()..] {
+                open(&id(), &key, *path, blob, LIMIT).unwrap();
+            }
+            let opened = ms(start);
+
+            let parts = manifest.split();
+            let start = Instant::now();
+            let html: usize = blobs
+                .iter()
+                .enumerate()
+                .map(|(i, blob)| blob.render(&parts, i, &Links).len())
+                .sum();
+            let rendered = ms(start);
+            assert!(html > 0);
+
+            let start = Instant::now();
+            let book = assemble(blobs, BTreeMap::new(), manifest.block_count).unwrap();
+            let text = BookText::new(&book);
+            let assembled = ms(start);
+            assert!(!text.flat().is_empty());
+
+            let plain: usize = publication.blobs().iter().map(|(_, b)| b.len()).sum();
+            let compressed: usize = publication
+                .blobs()
+                .iter()
+                .map(|(_, b)| compress(b).len())
+                .sum();
+            let padded: usize = sealed
+                .iter()
+                .map(|(_, b)| b.len() - HEADER_LEN - TAG_LEN)
+                .sum();
+            let total: usize = sealed.iter().map(|(_, b)| b.len()).sum();
+            let kb = |n: usize| format!("{:.0} KB", n as f64 / 1024.0);
+            println!(
+                "| {name} | {} | {} | {} | {built} | {seal_time} | {opened} | {rendered} | {assembled} | {} | {} | {} | {:.1} % |",
+                kb(data.len()),
+                manifest.parts.len(),
+                manifest.images.len(),
+                kb(plain),
+                kb(compressed),
+                kb(total),
+                (padded - compressed) as f64 * 100.0 / compressed as f64,
+            );
+            let largest = sealed.iter().map(|(_, b)| b.len()).max().unwrap();
+            let smallest = sealed.iter().map(|(_, b)| b.len()).min().unwrap();
+            println!(
+                "|  | blobs {}: {}–{} |",
+                sealed.len(),
+                kb(smallest),
+                kb(largest)
+            );
+        });
+    }
+}
