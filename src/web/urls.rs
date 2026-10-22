@@ -405,6 +405,17 @@ impl Urls {
         self.path("/profile")
     }
 
+    /// The current profile's hub account: Phone and other devices (`GET`; `POST`
+    /// registers, joins, pairs, revokes or leaves).
+    pub fn profile_hub(&self) -> String {
+        self.path("/profile/hub")
+    }
+
+    /// The current profile's recovery code while it waits for "I saved it" (`GET`).
+    pub fn profile_hub_recovery(&self) -> String {
+        self.path("/profile/hub/recovery")
+    }
+
     /// Saves the current profile's theme and reader settings (`POST`, JSON).
     pub fn profile_settings(&self) -> String {
         self.path("/profile/settings")

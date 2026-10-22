@@ -305,7 +305,7 @@ the configuration are shared.
 use their defaults, unknown keys are reported as warnings, and invalid values stop the
 program with a message naming the key. `--port` and `--bind` override the file.
 
-All sections but `[server]` can also be changed on the **Settings** page. It edits the
+All sections but `[server]` and `[hub]` can also be changed on the **Settings** page. It edits the
 file in place, keeping your comments, key order and unknown keys, writes only the keys
 you changed, and checks the new values the way the program does at startup, so a save
 never produces a file the next start rejects. If the file was changed since the page
@@ -319,6 +319,7 @@ as it is now. When changes take effect:
 | `[annotations]` | At once: the limits for the next quote or note, the retention at the next cleanup after a scan. |
 | `[scan]` | At the next scan. The page tells how many books a change would remove from the index (a format turned off, a new exclude pattern) and offers **Rescan now**; no scan starts by itself. |
 | `[server]` | Only in `config.toml`, after a restart: changing the address or port from the browser could cut off access to the page itself. The page shows the running values and which command-line options override them. |
+| `[hub]` | Only in `config.toml`, after a restart. |
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -340,6 +341,9 @@ as it is now. When changes take effect:
 | `annotations.max_text_length` | `10000` | The longest text that can be saved as a quote, in characters (about 3–4 book pages); `1`–`1000000`. |
 | `annotations.max_note_length` | `10000` | The longest note, in characters; `1`–`1000000`. Lowering a limit never changes saved quotes. |
 | `annotations.removed_book_retention_days` | `30` | Days to keep the bookmarks and quotes of a book that was removed from the library, in case it comes back (a moved folder, an unmounted drive); `0` deletes them at the next scan. |
+| `hub.url` | `""` | The [hub](#running-a-hub) for reading on phones, e.g. `"https://hub.example.org"`; empty = none. HTTPS is required (`http://` only for `127.0.0.1`, `::1` or `localhost`); certificates are checked against the computer's trust store. It is used when a profile creates or joins an account; an account stays on the hub it was made on. |
+| `hub.instance_name` | `""` | The name of this library on your other devices; empty = the library folder's name. |
+| `hub.sync_interval_minutes` | `5` | Minutes between syncs with the hub; `1`–`1440`. |
 
 ## Remote access
 
@@ -454,9 +458,9 @@ A hub keeps encrypted copies of books and of reading data (bookmarks, quotes, th
 reading position) for the phones and other devices of one or more libraries, so books
 can be read when the computer with the library is off. It never sees a title or a
 line of text: everything is encrypted before it is uploaded, and the keys stay on the
-libraries and devices of an account. *Work in progress*: the hub server is built, but
-libraries cannot connect to it and its reader app is not there yet (both come in
-0.18.0).
+libraries and devices of an account. *Work in progress*: the hub server is built and
+a library's profiles can create an account, pair devices and join from another library;
+publishing books, syncing and the reader app come in 0.18.0.
 
 ```sh
 shelfgauge hub --data /srv/shelfgauge-hub     # creates the directory and hub.toml
@@ -491,6 +495,17 @@ nginx, pass `proxy_set_header Host $host;` as for a library). Settings in `hub.t
   `public_requests_per_hour` (60) for registering, pairing and recovering per client
   address;
 - `[accounts]`: `registration`, `max_accounts`, `invite_days`.
+
+**Connecting a library**: set `url` in the `[hub]` section of the library's
+`config.toml` and restart. Then each profile opens **My profile → Phone and other
+devices**: **Create account** (with the invite code) shows a **recovery code** (text
+and QR code) to keep somewhere safe: with it another library joins the same account
+(**Join your account**), and without it and without a paired device the synced data is
+lost with the library. **Pair a device** shows a one-time QR code (valid 10 minutes)
+that carries the account key in the part of the link no server sees; the device list
+shows every library and device of the account and removes one. **Leave the hub
+account** makes the library forget the account (its local bookmarks stay); it is
+offered once the recovery code is saved.
 
 Behind a proxy on the same machine all clients share one budget for registering,
 pairing and recovering; add a rate limit in the proxy for a hub on the internet. The

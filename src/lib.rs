@@ -12,6 +12,7 @@ pub mod container;
 pub mod error;
 pub mod format;
 pub mod hub;
+pub mod hub_client;
 pub mod library;
 pub mod logging;
 pub mod profiles;

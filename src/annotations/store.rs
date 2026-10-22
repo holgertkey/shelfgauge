@@ -28,7 +28,7 @@ use crate::storage::{StorageError, migrations, open_wal};
 
 /// Schema migrations of the user-data database; index `i` upgrades version `i` to
 /// `i + 1`. Append only: user data cannot be rebuilt.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5];
 
 /// Version 1: annotations and reading positions.
 ///
@@ -186,6 +186,93 @@ ALTER TABLE profiles ADD COLUMN password_hash TEXT;
 ALTER TABLE profiles ADD COLUMN password_changed_at INTEGER;
 ALTER TABLE profile_sessions ADD COLUMN level INTEGER NOT NULL DEFAULT 0 CHECK (level IN (0, 1));
 ALTER TABLE profile_sessions ADD COLUMN remote INTEGER NOT NULL DEFAULT 0 CHECK (remote IN (0, 1));
+"#;
+
+/// Version 5: the hub (see [`crate::hub_client`]).
+///
+/// - `hub_accounts`: a profile's hub account (at most one): the hub it was made on,
+///   the public account id (16 bytes), the account key (32 bytes) and its id, this
+///   instance's device id and token, the recovery code until the person confirms they
+///   saved it, and the sync state (`last_seq` pulled, last success and error).
+/// - `hub_shelf`: the books on the profile's shelf, from this instance or pulled from
+///   the account's other instances. `book_key` is the content key; `publication_id`
+///   and `cipher_key` (the publication's book key) are set once it is published;
+///   `own` = published by this instance; `state`: `uploading`, `published`, `expired`
+///   or `removing` (the hub's copy is still to be deleted); `updated_at` orders
+///   changes of the shelf item.
+/// - `hub_outbox`: changes still to push, by kind and key (an annotation id as text,
+///   a content key as blob). Triggers add annotations and positions of shelf books;
+///   `book_removed` deletions are not pushed (the book may come back).
+const V5: &str = r#"
+CREATE TABLE hub_accounts (
+    profile_id    INTEGER PRIMARY KEY REFERENCES profiles (id) ON DELETE CASCADE,
+    hub_url       TEXT    NOT NULL,
+    account_id    BLOB    NOT NULL,
+    account_key   BLOB    NOT NULL,
+    key_id        INTEGER NOT NULL DEFAULT 1,
+    device_id     INTEGER NOT NULL,
+    device_token  TEXT    NOT NULL,
+    recovery_code TEXT,
+    created_at    INTEGER NOT NULL,
+    last_seq      INTEGER NOT NULL DEFAULT 0,
+    synced_at     INTEGER,
+    sync_error    TEXT
+);
+
+CREATE TABLE hub_shelf (
+    profile_id     INTEGER NOT NULL REFERENCES hub_accounts (profile_id) ON DELETE CASCADE,
+    book_key       BLOB    NOT NULL,
+    publication_id BLOB,
+    cipher_key     BLOB,
+    own            INTEGER NOT NULL DEFAULT 0 CHECK (own IN (0, 1)),
+    kind           TEXT    NOT NULL DEFAULT 'upload' CHECK (kind IN ('upload', 'file')),
+    state          TEXT    NOT NULL CHECK (state IN ('uploading', 'published', 'expired', 'removing')),
+    instance       TEXT    NOT NULL,
+    title          TEXT    NOT NULL,
+    authors        TEXT    NOT NULL,
+    published_at   INTEGER,
+    updated_at     INTEGER NOT NULL,
+    PRIMARY KEY (profile_id, book_key)
+);
+
+CREATE TABLE hub_outbox (
+    profile_id INTEGER NOT NULL REFERENCES hub_accounts (profile_id) ON DELETE CASCADE,
+    kind       TEXT    NOT NULL CHECK (kind IN ('shelf_item', 'annotation', 'position')),
+    key        ANY     NOT NULL,
+    PRIMARY KEY (profile_id, kind, key)
+) STRICT;
+
+CREATE TRIGGER hub_outbox_annotation_insert AFTER INSERT ON annotations
+WHEN NEW.deleted_reason IS NOT 'book_removed' AND EXISTS (
+    SELECT 1 FROM hub_shelf s
+     WHERE s.profile_id = NEW.profile_id AND s.book_key = NEW.book_key AND s.state <> 'removing')
+BEGIN
+    INSERT OR IGNORE INTO hub_outbox (profile_id, kind, key) VALUES (NEW.profile_id, 'annotation', NEW.id);
+END;
+
+CREATE TRIGGER hub_outbox_annotation_update AFTER UPDATE ON annotations
+WHEN NEW.deleted_reason IS NOT 'book_removed' AND EXISTS (
+    SELECT 1 FROM hub_shelf s
+     WHERE s.profile_id = NEW.profile_id AND s.book_key = NEW.book_key AND s.state <> 'removing')
+BEGIN
+    INSERT OR IGNORE INTO hub_outbox (profile_id, kind, key) VALUES (NEW.profile_id, 'annotation', NEW.id);
+END;
+
+CREATE TRIGGER hub_outbox_position_insert AFTER INSERT ON reading_positions
+WHEN NEW.deleted_at IS NULL AND EXISTS (
+    SELECT 1 FROM hub_shelf s
+     WHERE s.profile_id = NEW.profile_id AND s.book_key = NEW.book_key AND s.state <> 'removing')
+BEGIN
+    INSERT OR IGNORE INTO hub_outbox (profile_id, kind, key) VALUES (NEW.profile_id, 'position', NEW.book_key);
+END;
+
+CREATE TRIGGER hub_outbox_position_update AFTER UPDATE ON reading_positions
+WHEN NEW.deleted_at IS NULL AND EXISTS (
+    SELECT 1 FROM hub_shelf s
+     WHERE s.profile_id = NEW.profile_id AND s.book_key = NEW.book_key AND s.state <> 'removing')
+BEGIN
+    INSERT OR IGNORE INTO hub_outbox (profile_id, kind, key) VALUES (NEW.profile_id, 'position', NEW.book_key);
+END;
 "#;
 
 /// The schema version this build creates and understands.

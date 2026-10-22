@@ -52,6 +52,7 @@ pub(crate) mod assets;
 mod error;
 mod layout;
 mod profile;
+mod qr;
 mod routes;
 pub mod security;
 mod sidebar;
@@ -625,6 +626,8 @@ pub fn router(state: AppState) -> Router {
         )
         .route(&urls.path("/sidebar/folder"), get(routes::sidebar::folder))
         .route(&urls.my_profile(), get(routes::profiles::my_profile))
+        .route(&urls.profile_hub(), get(routes::hub::page))
+        .route(&urls.profile_hub_recovery(), get(routes::hub::recovery))
         .route_layer(profile())
         .route_layer(auth());
     let admin = admin_routes(urls)
@@ -665,6 +668,7 @@ pub fn router(state: AppState) -> Router {
         .route(&urls.leave_profile(), post(routes::profiles::leave))
         .route(&urls.logout(), post(routes::profiles::leave))
         .route(&urls.my_profile(), post(routes::profiles::save_my_profile))
+        .route(&urls.profile_hub(), post(routes::hub::save))
         .route(
             &urls.profile_settings(),
             post(routes::profiles::save_settings),

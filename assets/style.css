@@ -1814,6 +1814,46 @@ button.small.primary {
   font-size: 0.9rem;
 }
 
+/* Phone and other devices: QR codes keep their white quiet zone in every theme. */
+.qr-code {
+  margin: 1rem 0;
+}
+
+svg.qr {
+  display: block;
+  width: min(16rem, 100%);
+  height: auto;
+  border-radius: 4px;
+}
+
+.secret-text code {
+  display: block;
+  max-width: 44rem;
+  padding: 0.5rem 0.75rem;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.device-list {
+  margin: 0 0 1rem;
+  padding: 0;
+  list-style: none;
+}
+
+.device-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  align-items: baseline;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.device-list li .hint {
+  flex: 1 1 12rem;
+  margin: 0;
+}
+
 .field {
   margin: 0 0 1rem;
 }

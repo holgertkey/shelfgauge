@@ -522,6 +522,7 @@ struct MyProfilePage {
     action: String,
     leave_action: String,
     logout_action: String,
+    hub_action: String,
 }
 
 impl MyProfilePage {
@@ -604,6 +605,7 @@ fn my_profile_page(
         action: urls.my_profile(),
         leave_action: urls.leave_profile(),
         logout_action: urls.logout(),
+        hub_action: urls.profile_hub(),
     })
 }
 

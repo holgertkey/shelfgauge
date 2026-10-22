@@ -30,8 +30,8 @@ pub const DEFAULT_CONFIG_TOML: &str = r#"# shelfgauge library configuration.
 #
 # Created with default values on first run. Missing keys use their defaults.
 # Command-line flags (--port, --bind) override the values in this file.
-# All sections but [server] can also be changed on the Settings page (the gear in
-# the top bar); comments in this file are kept.
+# All sections but [server] and [hub] can also be changed on the Settings page (the
+# gear in the top bar); comments in this file are kept.
 
 [server]
 # Address to listen on.
@@ -89,6 +89,17 @@ max_note_length = 10000
 # Days to keep the marks of a book that was removed from the library, in case it
 # comes back (a moved folder, an unmounted drive); 0 = delete at once.
 removed_book_retention_days = 30
+
+[hub]
+# The hub for reading on phones and other devices (shelfgauge hub), e.g.
+# "https://hub.example.org"; empty = not used. HTTPS is required (http only for
+# 127.0.0.1, ::1 or localhost). Each profile registers its own account on it under
+# My profile → Phone and other devices; an account keeps the hub it was made on.
+url = ""
+# The name of this library on your other devices; empty = the library folder's name.
+instance_name = ""
+# Minutes between syncs with the hub (also after each change).
+sync_interval_minutes = 5
 "#;
 
 /// The largest accepted value of `annotations.max_text_length` and
@@ -109,6 +120,8 @@ pub struct Config {
     pub reader: ReaderConfig,
     /// The `[annotations]` section.
     pub annotations: AnnotationsConfig,
+    /// The `[hub]` section.
+    pub hub: HubConfig,
 }
 
 /// The `[server]` section: where and how the web server listens.
@@ -242,6 +255,32 @@ impl Default for AnnotationsConfig {
         }
     }
 }
+
+/// The `[hub]` section: the hub that profiles of this library sync with.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HubConfig {
+    /// The hub's URL for new accounts; empty = no hub. Validated by
+    /// [`HubUrl::parse`](crate::hub_client::HubUrl::parse) and normalized to its form.
+    pub url: String,
+    /// The library's name on the other devices; empty = the library folder's name.
+    pub instance_name: String,
+    /// Minutes between syncs.
+    pub sync_interval_minutes: u32,
+}
+
+impl Default for HubConfig {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            instance_name: String::new(),
+            sync_interval_minutes: 5,
+        }
+    }
+}
+
+/// The longest `hub.instance_name`, in characters.
+pub const MAX_INSTANCE_NAME: usize = 64;
 
 /// Values given on the command line that override the config file.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -487,6 +526,30 @@ impl Config {
                     format_args!("must be between 1 and {MAX_ANNOTATION_LENGTH}"),
                 ));
             }
+        }
+        if !self.hub.url.trim().is_empty() {
+            self.hub.url = crate::hub_client::HubUrl::parse(&self.hub.url)
+                .map_err(|e| ConfigError::new("hub.url", e))?
+                .to_string();
+        } else {
+            self.hub.url = String::new();
+        }
+        self.hub.instance_name = self.hub.instance_name.trim().to_owned();
+        if self.hub.instance_name.chars().count() > MAX_INSTANCE_NAME
+            || self.hub.instance_name.chars().any(char::is_control)
+        {
+            return Err(ConfigError::new(
+                "hub.instance_name",
+                format_args!(
+                    "must be at most {MAX_INSTANCE_NAME} characters, without control characters"
+                ),
+            ));
+        }
+        if !(1..=1440).contains(&self.hub.sync_interval_minutes) {
+            return Err(ConfigError::new(
+                "hub.sync_interval_minutes",
+                "must be between 1 and 1440",
+            ));
         }
         Ok(())
     }

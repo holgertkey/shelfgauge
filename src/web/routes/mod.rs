@@ -19,6 +19,7 @@ pub(crate) mod annotations;
 pub(crate) mod book;
 pub(crate) mod figures;
 pub(crate) mod find;
+pub(crate) mod hub;
 pub(crate) mod library;
 pub(crate) mod login;
 pub(crate) mod profiles;

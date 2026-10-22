@@ -1,0 +1,42 @@
+{
+  "account_key": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f",
+  "content_key": "101112131415161718191a1b1c1d1e1f",
+  "description": "AES-256-GCM records under the account key: record = version u16 BE || nonce || ciphertext || tag; associated data = 'sg-record' || version u16 BE || kind (UTF-8) || 0x00 || record id (UTF-8); device names use kind 'device' and an empty id. Record ids: position = base64url (no padding) of HMAC-SHA256(account key, 'position' || content key), shelf_item = the same with 'shelf'",
+  "position_id": "5pNctF9zwQjS8LF5tguCHNRnHz74xOlYWRc8sq1ptyA",
+  "record_version": 1,
+  "records": [
+    {
+      "associated_data": "73672d7265636f72640001616e6e6f746174696f6e0030663866616435622d643963622d343639662d613136352d373038363737323839353065",
+      "id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+      "kind": "annotation",
+      "nonce": "303132333435363738393a3b",
+      "plaintext_utf8": "{\"text\":\"Глава\",\"note\":null}",
+      "record": "0001303132333435363738393a3b6ed86d2fe3fbaabd09e1a1fe72d71569e5e85c8ba50408b3ae5575f71deae6b50090963c6041a1cc296c3b1a263a475b50"
+    },
+    {
+      "associated_data": "73672d7265636f72640001706f736974696f6e0035704e637446397a77516a53384c463574677543484e526e487a3734784f6c595752633873713170747941",
+      "id": "5pNctF9zwQjS8LF5tguCHNRnHz74xOlYWRc8sq1ptyA",
+      "kind": "position",
+      "nonce": "404142434445464748494a4b",
+      "plaintext_utf8": "{\"block\":12}",
+      "record": "0001404142434445464748494a4ba2e8632a5c86d54842c0e304637c2195851a3908c218f6fcd9bb80e3"
+    },
+    {
+      "associated_data": "73672d7265636f726400017368656c665f6974656d005262754663706230634e726a3639304149612d68446c4a552d675f474b5655657265704b6f316c4e6f4c45",
+      "id": "RbuFcpb0cNrj690AIa-hDlJU-g_GKVUerepKo1lNoLE",
+      "kind": "shelf_item",
+      "nonce": "505152535455565758595a5b",
+      "plaintext_utf8": "{\"title\":\"Книга\"}",
+      "record": "0001505152535455565758595a5bc9a7e22c531564c45479dbb15f23002796c7c4771e5a485c9fb2507ea804306298a906bf930c"
+    },
+    {
+      "associated_data": "73672d7265636f7264000164657669636500",
+      "id": "",
+      "kind": "device",
+      "nonce": "606162636465666768696a6b",
+      "plaintext_utf8": "Home library",
+      "record": "0001606162636465666768696a6bd5b9320a14476cce04a9089e50c8d529f083095a26b593d6f95d6a96"
+    }
+  ],
+  "shelf_id": "RbuFcpb0cNrj690AIa-hDlJU-g_GKVUerepKo1lNoLE"
+}

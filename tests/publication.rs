@@ -712,3 +712,67 @@ fn timing_on_real_books() {
         });
     }
 }
+
+#[test]
+fn records_vector_is_stable() {
+    // Sync records and device names under the account key (Phase 25), and the HMAC
+    // record ids: what the reader app's WebCrypto code must reproduce. The plaintexts
+    // are examples; the crypto does not depend on their shape.
+    use shelfgauge::hub_client::keys::{
+        self, AccountKey, encrypt_record, open_record, position_id, record_associated_data,
+        shelf_id,
+    };
+
+    let key = AccountKey::new(std::array::from_fn(|i| 0x80 + i as u8));
+    let content_key: Vec<u8> = (0..16).map(|i| 0x10 + i).collect();
+    let examples = [
+        (
+            "annotation",
+            "0f8fad5b-d9cb-469f-a165-70867728950e".to_owned(),
+            r#"{"text":"Глава","note":null}"#,
+        ),
+        (
+            "position",
+            position_id(&key, &content_key),
+            r#"{"block":12}"#,
+        ),
+        (
+            "shelf_item",
+            shelf_id(&key, &content_key),
+            r#"{"title":"Книга"}"#,
+        ),
+        (keys::DEVICE_NAME_KIND, String::new(), "Home library"),
+    ];
+    let records: Vec<serde_json::Value> = examples
+        .iter()
+        .enumerate()
+        .map(|(n, (kind, id, plain))| {
+            let nonce: [u8; 12] = std::array::from_fn(|i| (0x30 + n * 16 + i) as u8);
+            let sealed = encrypt_record(&key, kind, id, plain.as_bytes(), nonce);
+            assert_eq!(
+                open_record(&key, kind, id, &sealed).unwrap(),
+                plain.as_bytes()
+            );
+            serde_json::json!({
+                "kind": kind,
+                "id": id,
+                "nonce": hex(&nonce),
+                "associated_data": hex(&record_associated_data(1, kind, id)),
+                "plaintext_utf8": plain,
+                "record": hex(&sealed),
+            })
+        })
+        .collect();
+    check_vector(
+        "records.json",
+        &serde_json::json!({
+            "description": "AES-256-GCM records under the account key: record = version u16 BE || nonce || ciphertext || tag; associated data = 'sg-record' || version u16 BE || kind (UTF-8) || 0x00 || record id (UTF-8); device names use kind 'device' and an empty id. Record ids: position = base64url (no padding) of HMAC-SHA256(account key, 'position' || content key), shelf_item = the same with 'shelf'",
+            "account_key": hex(key.as_bytes()),
+            "record_version": 1,
+            "content_key": hex(&content_key),
+            "position_id": position_id(&key, &content_key),
+            "shelf_id": shelf_id(&key, &content_key),
+            "records": records,
+        }),
+    );
+}

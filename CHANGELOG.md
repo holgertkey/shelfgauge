@@ -17,6 +17,12 @@ Build numbers (`+NNN`) do not get their own sections.
   unopened publications and `shelfgauge hub takedown`, `shelfgauge hub accounts`. It
   stores only ciphertext and runs behind a reverse proxy with HTTPS (README, "Running
   a hub").
+- **Phone and other devices** (My profile; `[hub] url` in `config.toml`): a profile
+  creates an anonymous account on a hub (with an invite code) and gets a recovery code
+  (text and QR code) with which another library joins the same account; pairs devices
+  with a one-time QR code that carries the account key only in the part of the link
+  no server sees; lists the account's libraries and devices and removes one; leaves
+  the account. Publishing books and syncing follow.
 
 ## [0.17.0] - 2026-10-22
 

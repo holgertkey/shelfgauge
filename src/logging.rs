@@ -74,7 +74,9 @@ pub fn use_ansi(is_terminal: bool, no_color: Option<&OsStr>) -> bool {
 
 /// Builds the subscriber for `options`, writing to `writer`.
 ///
-/// Fails if the filter directives are invalid.
+/// Fails if the filter directives are invalid. The HTTP client's own log (`ureq`,
+/// `ureq_proto`) is always off, whatever the filter says: at `trace` it would show the
+/// hub request paths, which hold publication ids.
 pub fn dispatch<W>(
     options: &LogOptions,
     writer: W,
@@ -82,7 +84,10 @@ pub fn dispatch<W>(
 where
     W: for<'w> MakeWriter<'w> + Send + Sync + 'static,
 {
-    let filter = EnvFilter::try_new(&options.filter)?;
+    let mut filter = EnvFilter::try_new(&options.filter)?;
+    for directive in ["ureq=off", "ureq_proto=off"] {
+        filter = filter.add_directive(directive.parse()?);
+    }
     let span_events = if options.span_timings {
         FmtSpan::CLOSE
     } else {

@@ -3,6 +3,8 @@
 //! Each test binary includes this module with `mod common;` and uses what it needs.
 #![allow(dead_code)]
 
+pub mod hub;
+
 use std::io::Write;
 
 /// The 8-byte PNG signature plus an IHDR chunk start: enough to be sniffed as PNG.

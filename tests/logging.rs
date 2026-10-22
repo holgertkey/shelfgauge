@@ -747,3 +747,52 @@ async fn hub_secrets_and_publication_ids_are_never_logged() {
         }
     }
 }
+
+#[tokio::test]
+async fn hub_account_secrets_are_never_logged_by_the_library() {
+    use common::hub::{Lib, TestHub, pairing_link};
+    use shelfgauge::hub_client::keys::RecoveryCode;
+
+    drop(Capture::default().dispatch("off", LogFormat::Text, false));
+    for format in [LogFormat::Text, LogFormat::Json] {
+        let hub = TestHub::start().await;
+        let home = Lib::new(&hub.url, "Home library");
+        let office = Lib::new(&hub.url, "Office");
+        let invite = hub.invite();
+        let capture = Capture::default();
+        let _log = tracing::dispatcher::set_default(&capture.dispatch("trace", format, false));
+
+        let code = home.register(&invite).await;
+        home.post("/profile/hub", &[("action", "saved")]).await;
+        let pair = home.post("/profile/hub", &[("action", "pair")]).await;
+        let (pairing, key) = pairing_link(&pair.body, &hub.url);
+        let joined = office
+            .post("/profile/hub", &[("action", "join"), ("code", &code)])
+            .await;
+        assert_eq!(joined.status, StatusCode::SEE_OTHER);
+        home.get("/profile/hub").await;
+        office.post("/profile/hub", &[("action", "leave")]).await;
+
+        let account = home.account().unwrap();
+        let parsed = RecoveryCode::parse(&code).unwrap();
+        let log = capture.text();
+        assert!(log.contains("hub account registered"), "{log}");
+        assert!(log.contains("hub account joined"), "{log}");
+        let digits = code.replace('-', "");
+        for secret in [
+            code.as_str(),
+            &digits[3..40],
+            account.token.as_str(),
+            &key,
+            &pairing,
+            parsed.secret().as_str(),
+            &account.account.to_string(),
+            &invite,
+        ] {
+            assert!(
+                !log.contains(secret),
+                "{format:?} log contains a secret:\n{log}"
+            );
+        }
+    }
+}

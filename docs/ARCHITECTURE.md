@@ -679,7 +679,7 @@ person, not authentication.
   stdin, removing only the line break); `shelfgauge annotations export [--profile <name>]`. Unknown names
   are errors that list the profiles.
 
-## V2: hub — books on mobile devices (server built, clients designed)
+## V2: hub — books on mobile devices (server built, instance side in progress)
 
 Agreed 2026-10-14. A user opens a book on a phone (or any other device) in a browser and
 reads it even when the computer with the library is off, with annotations and the
@@ -856,6 +856,56 @@ Built in Phase 24; the instance side and the reader app follow.
   expiry, takedown, sync paging and tombstones, body limits, rate limits, `Host`,
   shell, base path) and `tests/logging.rs`
   (`hub_secrets_and_publication_ids_are_never_logged`).
+
+### Instance side (0.18.0, in progress)
+
+`src/hub_client/` (Phase 25; accounts, pairing and devices so far; publishing and the
+sync worker follow) and the page **My profile → Phone and other devices**
+(`web::routes::hub`).
+
+- **Config** `[hub]`: `url` (the hub for new accounts; `HubUrl` requires `https://`,
+  `http://` only for a loopback host; normalized, no query, fragment or user info),
+  `instance_name` (default: the library folder's name), `sync_interval_minutes`. Only
+  in `config.toml`. An account keeps the URL it was made on.
+- **HTTP client**: `ureq` 3 (blocking, run on a blocking thread) with rustls + `ring`
+  and the platform verifier (the OS trust store, so a hub behind a private CA works
+  once the CA is installed); no redirects (a 3xx is an error: following it would
+  carry the bearer token),
+  connect 10 s, call 60 s. `ClientError` never carries the request URL; the
+  `ureq`/`ureq_proto` log targets are always off (at `trace` they would log hub paths,
+  which hold publication ids).
+- **Data** (`userdata.sqlite` v5): `hub_accounts` (one per profile: hub URL, public
+  account id, account key, key id, device id and token, the recovery code until "I
+  saved it", sync state), `hub_shelf` (books on the profile's shelf: content key,
+  publication id, book key, own/other instance, state `uploading | published |
+  expired | removing`), `hub_outbox` (changes to push, `STRICT`, keys of mixed type)
+  filled by triggers on `annotations` and `reading_positions` for shelf books
+  (`book_removed` deletions are not pushed). Deleting a profile deletes its hub rows.
+- **Keys and records** (`hub_client::keys`): the account key (32 random bytes) never
+  leaves the instance except inside the pairing link's fragment
+  (`<hub>/pair#<pairing secret>.<account key, base64url>`). Records are
+  `[version u16 BE][nonce 12][AES-256-GCM ciphertext + tag]` with associated data
+  `"sg-record" ‖ version ‖ kind ‖ 0x00 ‖ id`, so the hub cannot move a ciphertext to
+  another record; plaintext is JSON. Record ids: `annotation` = the UUID, `position` =
+  base64url HMAC-SHA256(account key, `"position"` ‖ content key), `shelf_item` = the
+  same with `"shelf"` (one shelf item per book per account). Device names are sealed
+  the same way (kind `device`, empty id). Interop vectors for the reader app:
+  `tests/fixtures/publication/records.json` (`SHELFGAUGE_WRITE_VECTORS=1`).
+- **Recovery code**: `SG1-` and Crockford base32 in groups of four (account id,
+  account key, recovery secret, 2 checksum bytes: 132 digits); case, dashes, spaces
+  and `O`/`I`/`L` tolerated. The hub gets only SHA-256 of the secret's text. The
+  instance keeps the code only until the person confirms it is saved.
+- **Page**: create an account (with the invite code when the hub's `/api/info` says
+  `invite`), then the recovery code (text and inline SVG QR code, `qrcode` with only
+  its `svg` feature); join with a recovery code; pair a device (a one-time link shown
+  once, `no-store`, never in a URL the instance serves); the device list (names opened
+  with the account key; another device can be removed); leave (revokes this library's
+  token on the hub, best effort, and forgets the account locally; refused while the
+  recovery code waits for "I saved it", since the stored code is its only copy). Pages
+  showing a secret are `no-store`; form bodies are never logged, only profile ids.
+- **Tests**: `tests/hub_client.rs` (a real hub on a loopback port, helpers in
+  `tests/common/hub.rs`) and `tests/logging.rs`
+  (`hub_account_secrets_are_never_logged_by_the_library`).
 
 **DRM** (implemented for EPUB in 0.8.0): DRM-free books,
 including purchased ones with a watermark, are ordinary books and watermarks are never

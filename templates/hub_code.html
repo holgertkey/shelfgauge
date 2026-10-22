@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block main %}
+{%- if mode == "recovery" %}
+<h1>Your recovery code</h1>
+<p>Keep it somewhere safe, away from this computer: print it, or save the text in a password manager. With it another library joins your hub account; without it and without a paired device, your synced marks are lost if this library is.</p>
+<p class="muted">Anyone with this code can read your marks and books on the hub. This library keeps it only until you confirm.</p>
+{%- else %}
+<h1>Pair a device</h1>
+<p>Scan the QR code with the phone’s camera, or open the link in the other device’s browser. The link works once{% if let Some(expires) = expires %}, until {{ expires }}{% endif %}.</p>
+<p class="muted">The link holds the key to your hub account: do not send it to anyone else.</p>
+{%- endif %}
+<figure class="qr-code">
+  {{ qr|safe }}
+</figure>
+<p class="secret-text"><code>{{ code }}</code></p>
+<div class="form-actions">
+  {%- if mode == "recovery" %}
+  <form action="{{ action }}" method="post">
+    <input type="hidden" name="action" value="saved">
+    <button type="submit" class="primary">I saved it</button>
+  </form>
+  <a class="button" href="{{ back }}">Later</a>
+  {%- else %}
+  <a class="button primary" href="{{ back }}">Done</a>
+  {%- endif %}
+</div>
+{%- endblock %}
