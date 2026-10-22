@@ -37,6 +37,52 @@
     <p class="family-line muted">Also reading:
       {%- for reader in family %} <span class="family-reader"><span class="avatar pc-{{ reader.color }}" aria-hidden="true">{{ reader.initials }}</span>{{ reader.name }} {{ reader.progress }}</span>{% endfor %}</p>
     {%- endif %}
+    {%- if let Some(shelf) = shelf %}
+    <section class="shelf-box" id="shelf" aria-labelledby="shelf-title">
+      <h2 id="shelf-title">On your phone</h2>
+      {%- if let Some((class, text)) = shelf_notice %}
+      <p class="notice settings-notice {{ class }}" role="status"><span>{{ text }}</span></p>
+      {%- endif %}
+      {%- match shelf.state %}
+      {%- when "protected" %}
+      <p class="muted">Books protected by DRM never leave this library.</p>
+      {%- when "none" %}
+      <p class="muted">Put the book on your shelf to read it on your paired phone and other devices, also when this computer is off. The hub keeps an encrypted copy that only your devices can open.</p>
+      <form method="post" action="{{ shelf.action }}" class="actions">
+        <input type="hidden" name="action" value="publish">
+        <button type="submit">Open on phone</button>
+      </form>
+      {%- when "published" %}
+      <p>On your shelf{% if let Some(other) = shelf.other %}, from {{ other }}{% endif %}: it shows on your paired devices, with your marks and position.</p>
+      {%- if let Some((link, svg)) = shelf.link %}
+      <details class="book-link">
+        <summary>Book link and QR code</summary>
+        <figure class="qr-code">{{ svg|safe }}</figure>
+        <p class="secret-text"><code>{{ link }}</code></p>
+        <p class="hint">Opens only on your paired devices.</p>
+      </details>
+      {%- endif %}
+      <form method="post" action="{{ shelf.action }}" class="actions">
+        <input type="hidden" name="action" value="remove">
+        <button type="submit">Remove from shelf</button>
+      </form>
+      {%- when "expired" %}
+      <p>The hub deleted its copy because it was not opened for a long time. Your marks and position stay.</p>
+      <form method="post" action="{{ shelf.action }}" class="actions">
+        <button type="submit" name="action" value="publish">Publish again</button>
+        <button type="submit" name="action" value="remove">Remove from shelf</button>
+      </form>
+      {%- when "uploading" %}
+      <p>The upload was interrupted.</p>
+      <form method="post" action="{{ shelf.action }}" class="actions">
+        <button type="submit" name="action" value="publish">Try again</button>
+        <button type="submit" name="action" value="remove">Remove from shelf</button>
+      </form>
+      {%- when _ %}
+      <p>Being taken off your shelf: the hub's copy is deleted at the next sync.</p>
+      {%- endmatch %}
+    </section>
+    {%- endif %}
     {%- if !file_present %}
     <form method="post" action="{{ layout.urls.scan() }}" class="actions">
       <button type="submit">Rescan the library</button>

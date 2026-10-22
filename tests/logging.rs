@@ -772,13 +772,35 @@ async fn hub_account_secrets_are_never_logged_by_the_library() {
         assert_eq!(joined.status, StatusCode::SEE_OTHER);
         home.get("/profile/hub").await;
         office.post("/profile/hub", &[("action", "leave")]).await;
+        let book = home.book("book.txt");
+        home.json(
+            &format!("/book/{book}/annotations"),
+            serde_json::json!({ "block": "b2" }),
+        )
+        .await;
+        assert_eq!(home.publish(book).await, "published");
+        let shelf = home.shelf();
+        let publication = shelf[0].publication.unwrap().to_string();
+        let book_key = shelf[0].book_key.clone().unwrap();
+        home.get(&format!("/book/{book}")).await;
+        assert_eq!(home.shelf_action(book, "remove").await, "removed");
 
         let account = home.account().unwrap();
         let parsed = RecoveryCode::parse(&code).unwrap();
         let log = capture.text();
         assert!(log.contains("hub account registered"), "{log}");
         assert!(log.contains("hub account joined"), "{log}");
+        assert!(log.contains("book published to the hub"), "{log}");
         let digits = code.replace('-', "");
+        let key_b64 = {
+            use base64::Engine as _;
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(book_key.as_bytes())
+        };
+        let key_hex: String = book_key
+            .as_bytes()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
         for secret in [
             code.as_str(),
             &digits[3..40],
@@ -788,6 +810,9 @@ async fn hub_account_secrets_are_never_logged_by_the_library() {
             parsed.secret().as_str(),
             &account.account.to_string(),
             &invite,
+            &publication,
+            &key_b64,
+            &key_hex,
         ] {
             assert!(
                 !log.contains(secret),

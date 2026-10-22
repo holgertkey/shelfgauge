@@ -27,6 +27,7 @@ pub(crate) mod read;
 pub(crate) mod scan;
 pub(crate) mod search;
 pub(crate) mod settings;
+pub(crate) mod shelf;
 pub(crate) mod sidebar;
 pub(crate) mod stats;
 

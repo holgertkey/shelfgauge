@@ -142,6 +142,26 @@ struct Inner {
     passwords: PinLimiter,
     /// Failed logins per directly connected client address.
     addresses: AddressLimiter,
+    /// Books being published to the hub: `(profile id, content key)`.
+    publishing: PublishingSet,
+}
+
+/// The books being published: `(profile id, content key)`.
+type PublishingSet = Arc<Mutex<std::collections::HashSet<(i64, Vec<u8>)>>>;
+
+/// A book being published (see [`AppState::begin_publishing`]); dropping it ends that.
+pub(crate) struct Publishing {
+    set: PublishingSet,
+    key: (i64, Vec<u8>),
+}
+
+impl Drop for Publishing {
+    fn drop(&mut self) {
+        self.set
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.key);
+    }
 }
 
 /// A value derived from the index, kept until a scan is recorded (see
@@ -225,6 +245,7 @@ impl AppState {
             pins: PinLimiter::new(),
             passwords: PinLimiter::new(),
             addresses: AddressLimiter::new(),
+            publishing: Arc::default(),
         }))
     }
 
@@ -330,6 +351,26 @@ impl AppState {
     /// The user-data database.
     pub fn userdata(&self) -> &UserData {
         &self.0.userdata
+    }
+
+    /// Marks a book of `profile` as being published; `None` if it already is (a
+    /// second click must not start a second upload).
+    pub(crate) fn begin_publishing(
+        &self,
+        profile: crate::profiles::ProfileId,
+        content_key: &[u8],
+    ) -> Option<Publishing> {
+        let key = (profile.0, content_key.to_vec());
+        let mut set = self.0.publishing.lock().unwrap_or_else(|e| e.into_inner());
+        set.insert(key.clone()).then(|| Publishing {
+            set: Arc::clone(&self.0.publishing),
+            key,
+        })
+    }
+
+    /// The user-data database, shared (for work on another thread).
+    pub(crate) fn userdata_handle(&self) -> Arc<UserData> {
+        Arc::clone(&self.0.userdata)
     }
 
     /// The annotation export.
@@ -669,6 +710,7 @@ pub fn router(state: AppState) -> Router {
         .route(&urls.logout(), post(routes::profiles::leave))
         .route(&urls.my_profile(), post(routes::profiles::save_my_profile))
         .route(&urls.profile_hub(), post(routes::hub::save))
+        .route(&urls.path("/book/{id}/hub"), post(routes::shelf::save))
         .route(
             &urls.profile_settings(),
             post(routes::profiles::save_settings),

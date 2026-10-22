@@ -411,6 +411,11 @@ impl Urls {
         self.path("/profile/hub")
     }
 
+    /// A book's place on the hub shelf (`POST`: publish or remove).
+    pub fn book_hub(&self, id: i64) -> String {
+        self.path(&format!("/book/{id}/hub"))
+    }
+
     /// The current profile's recovery code while it waits for "I saved it" (`GET`).
     pub fn profile_hub_recovery(&self) -> String {
         self.path("/profile/hub/recovery")

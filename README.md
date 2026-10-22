@@ -459,8 +459,8 @@ reading position) for the phones and other devices of one or more libraries, so 
 can be read when the computer with the library is off. It never sees a title or a
 line of text: everything is encrypted before it is uploaded, and the keys stay on the
 libraries and devices of an account. *Work in progress*: the hub server is built and
-a library's profiles can create an account, pair devices and join from another library;
-publishing books, syncing and the reader app come in 0.18.0.
+a library's profiles can create an account, pair devices, join from another library
+and put books on their shelf; syncing changes and the reader app come in 0.18.0.
 
 ```sh
 shelfgauge hub --data /srv/shelfgauge-hub     # creates the directory and hub.toml
@@ -506,6 +506,14 @@ that carries the account key in the part of the link no server sees; the device 
 shows every library and device of the account and removes one. **Leave the hub
 account** makes the library forget the account (its local bookmarks stay); it is
 offered once the recovery code is saved.
+
+**Putting a book on the shelf**: the book card of a profile with a hub account has
+**On your phone → Open on phone**. The library uploads an encrypted copy (DRM-protected
+books never leave the library) with the book's bookmarks, quotes and reading position;
+the card then shows the book's link and QR code, which open only on paired devices.
+**Remove from shelf** deletes the hub's copy and its marks there; the library keeps
+its own. A copy deleted by the hub's `publication_expiry_days` shows as expired with
+**Publish again**.
 
 Behind a proxy on the same machine all clients share one budget for registering,
 pairing and recovering; add a rate limit in the proxy for a hub on the internet. The

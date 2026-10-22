@@ -2623,3 +2623,23 @@ button.danger,
     }
   }
 }
+
+/* The book card's hub shelf. */
+.shelf-box {
+  margin: 1.5rem 0 0;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.shelf-box h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.05rem;
+}
+
+.shelf-box .book-link summary {
+  cursor: pointer;
+}
+
+.shelf-box .book-link {
+  margin: 0 0 0.75rem;
+}

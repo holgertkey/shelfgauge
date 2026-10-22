@@ -103,7 +103,7 @@ fn done_text(done: Option<&str>) -> Option<String> {
 }
 
 /// The name of this library on the account's devices.
-fn instance_name(state: &AppState) -> String {
+pub(super) fn instance_name(state: &AppState) -> String {
     let configured = state.config().hub.instance_name.clone();
     if !configured.is_empty() {
         return configured;
@@ -122,12 +122,15 @@ fn configured_hub(state: &AppState) -> Option<HubUrl> {
     HubUrl::parse(&state.config().hub.url).ok()
 }
 
-async fn hub_account(state: &AppState, profile: ProfileId) -> Result<Option<HubAccount>, AppError> {
+pub(super) async fn hub_account(
+    state: &AppState,
+    profile: ProfileId,
+) -> Result<Option<HubAccount>, AppError> {
     super::profiles::user(state, move |_, conn| Ok(store::account(conn, profile)?)).await
 }
 
 /// Runs a hub call on a blocking thread.
-async fn call<T: Send + 'static>(
+pub(super) async fn call<T: Send + 'static>(
     url: HubUrl,
     f: impl FnOnce(&HubClient) -> Result<T, ClientError> + Send + 'static,
 ) -> Result<Result<T, ClientError>, AppError> {
@@ -172,7 +175,15 @@ async fn page_response(
         Some(account) => {
             let token = account.token.clone();
             let key = account.key.clone();
-            match call(account.hub_url.clone(), move |c| c.devices(&token)).await? {
+            let (userdata, checked) = (state.userdata_handle(), account.clone());
+            let devices_call = call(account.hub_url.clone(), move |c| {
+                // The page is a natural moment to notice expired publications.
+                if let Err(e) = super::shelf::check_expired(&userdata, &checked, c) {
+                    tracing::info!(error = %e, "cannot check the hub's publications");
+                }
+                c.devices(&token)
+            });
+            match devices_call.await? {
                 Ok(list) => {
                     devices = list
                         .into_iter()

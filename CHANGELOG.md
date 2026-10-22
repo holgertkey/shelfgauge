@@ -22,7 +22,13 @@ Build numbers (`+NNN`) do not get their own sections.
   (text and QR code) with which another library joins the same account; pairs devices
   with a one-time QR code that carries the account key only in the part of the link
   no server sees; lists the account's libraries and devices and removes one; leaves
-  the account. Publishing books and syncing follow.
+  the account.
+- **Open on phone** on the book card (with a hub account): the book goes on your hub
+  shelf as an encrypted copy, with its bookmarks, quotes and reading position, and a
+  link and QR code that open only on your paired devices. **Remove from shelf**
+  deletes the hub's copy and its marks there (those in the library stay); a copy the
+  hub deleted after a long time unopened can be published again. Books protected by
+  DRM never leave the library. Syncing changes in both directions follows.
 
 ## [0.17.0] - 2026-10-22
 

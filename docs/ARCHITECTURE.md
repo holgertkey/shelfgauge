@@ -903,6 +903,35 @@ sync worker follow) and the page **My profile → Phone and other devices**
   token on the hub, best effort, and forgets the account locally; refused while the
   recovery code waits for "I saved it", since the stored code is its only copy). Pages
   showing a secret are `no-store`; form bodies are never logged, only profile ids.
+- **Shelf** (book card, "On your phone"; `web::routes::shelf`): **Open on phone**
+  builds the publication (DRM refused), checks the hub's format range and
+  `max_blob_bytes`, seals it under a fresh book key and publication id, puts the book
+  on the shelf (`uploading`), uploads the blobs with the manifest last (a device never
+  sees a publication with missing parts), then marks it `published` and queues the
+  shelf item, the book's annotations and its position. A failed upload deletes the
+  partial copy and restores the shelf entry. **Remove from shelf** marks it
+  `removing`, deletes the publication, pushes deletions of its records (a book off the
+  shelf pushes `data: null` for its shelf item, annotations and position) and forgets
+  the entry; if the hub is unreachable it stays `removing` for the next sync.
+  Publications this library made that the hub no longer lists become `expired`
+  (checked when the hub page loads, and by the sync worker); **Publish again** uses a
+  new id and book key and deletes the old copy. The book link `<hub>/r/<id>` (with a
+  QR code) opens only on paired devices.
+- **Records** (`hub_client::records`, JSON with sorted keys): `shelf_item`
+  (publication id, book key, content key, title, authors, instance, kind,
+  format version, `updated_at`), `annotation` (the §10 row without the local book id
+  hint and `anchor_lost`; `deleted_at` for a deletion by the person), `position` (block, offset, suffix, progress per mille,
+  `updated_at`). Binary values are base64url.
+- **Push** (`hub_client::sync::push`): batches of 200 outbox entries; the user-data
+  lock is never held during a hub call; an entry leaves the outbox only if its record
+  reads the same after the push (a change made meanwhile stays queued). Records sealed
+  larger than 1 MiB stay local (logged as a count). For a book on the shelf, a missing
+  annotation or position (its book removed from the library, a purged row) is never
+  pushed as a deletion, so a rescan with a drive unmounted keeps the marks on the
+  devices; for a book off the shelf every queued record is a deletion. A second
+  **Open on phone** while the book uploads (or on a published book) changes nothing
+  (an in-memory set of books being published). The JSON shapes are pinned by
+  `tests/fixtures/publication/record_plaintexts.json`.
 - **Tests**: `tests/hub_client.rs` (a real hub on a loopback port, helpers in
   `tests/common/hub.rs`) and `tests/logging.rs`
   (`hub_account_secrets_are_never_logged_by_the_library`).

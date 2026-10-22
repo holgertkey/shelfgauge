@@ -12,6 +12,8 @@ use super::HubUrl;
 use super::keys::AccountKey;
 use crate::hub::{AccountId, Secret};
 use crate::profiles::ProfileId;
+use crate::publication::BookKey;
+use crate::publication::format::PublicationId;
 use crate::storage::StorageError;
 
 /// A profile's hub account as this instance holds it. `Debug` hides the secrets.
@@ -172,6 +174,215 @@ pub fn forget_account(conn: &Connection, profile: ProfileId) -> Result<bool, Sto
         "DELETE FROM hub_accounts WHERE profile_id = ?1",
         [profile.0],
     )? == 1)
+}
+
+/// Where a book on the shelf stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShelfState {
+    /// Its blobs are being uploaded (or an upload was interrupted).
+    Uploading,
+    /// On the hub.
+    Published,
+    /// Deleted by the hub after `publication_expiry_days` without opening.
+    Expired,
+    /// Taken off the shelf; the hub's copy and records are still to be deleted.
+    Removing,
+}
+
+impl ShelfState {
+    /// The stored name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Uploading => "uploading",
+            Self::Published => "published",
+            Self::Expired => "expired",
+            Self::Removing => "removing",
+        }
+    }
+
+    fn parse(text: &str) -> Option<Self> {
+        Some(match text {
+            "uploading" => Self::Uploading,
+            "published" => Self::Published,
+            "expired" => Self::Expired,
+            "removing" => Self::Removing,
+            _ => return None,
+        })
+    }
+}
+
+/// A book on a profile's shelf. `Debug` hides the publication id and book key.
+#[derive(Clone)]
+pub struct ShelfEntry {
+    /// The book's content key.
+    pub content_key: Vec<u8>,
+    /// The publication, once one is made.
+    pub publication: Option<PublicationId>,
+    /// The publication's book key.
+    pub book_key: Option<BookKey>,
+    /// Whether this instance published it.
+    pub own: bool,
+    /// Where it stands.
+    pub state: ShelfState,
+    /// The name of the library that published it.
+    pub instance: String,
+    /// The title.
+    pub title: String,
+    /// The authors joined with `, `.
+    pub authors: String,
+    /// When it was published (Unix seconds).
+    pub published_at: Option<i64>,
+    /// The last change of the shelf item (Unix seconds).
+    pub updated_at: i64,
+}
+
+impl fmt::Debug for ShelfEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ShelfEntry")
+            .field("own", &self.own)
+            .field("state", &self.state)
+            .field("updated_at", &self.updated_at)
+            .finish_non_exhaustive()
+    }
+}
+
+fn shelf_row(row: &Row<'_>) -> rusqlite::Result<ShelfEntry> {
+    let publication: Option<Vec<u8>> = row.get("publication_id")?;
+    let key: Option<Vec<u8>> = row.get("cipher_key")?;
+    let state: String = row.get("state")?;
+    Ok(ShelfEntry {
+        content_key: row.get("book_key")?,
+        publication: publication
+            .map(|p| p.try_into().map(PublicationId::new))
+            .transpose()
+            .map_err(|_| corrupt("publication_id"))?,
+        book_key: key
+            .map(|k| k.try_into().map(BookKey::new))
+            .transpose()
+            .map_err(|_| corrupt("cipher_key"))?,
+        own: row.get("own")?,
+        state: ShelfState::parse(&state).ok_or_else(|| corrupt("state"))?,
+        instance: row.get("instance")?,
+        title: row.get("title")?,
+        authors: row.get("authors")?,
+        published_at: row.get("published_at")?,
+        updated_at: row.get("updated_at")?,
+    })
+}
+
+/// The shelf entry of the book with `content_key`, if it is on `profile`'s shelf.
+pub fn shelf_entry(
+    conn: &Connection,
+    profile: ProfileId,
+    content_key: &[u8],
+) -> Result<Option<ShelfEntry>, StorageError> {
+    Ok(conn
+        .query_row(
+            "SELECT * FROM hub_shelf WHERE profile_id = ?1 AND book_key = ?2",
+            params![profile.0, content_key],
+            shelf_row,
+        )
+        .optional()?)
+}
+
+/// The books on `profile`'s shelf, oldest change first.
+pub fn shelf(conn: &Connection, profile: ProfileId) -> Result<Vec<ShelfEntry>, StorageError> {
+    let mut stmt =
+        conn.prepare("SELECT * FROM hub_shelf WHERE profile_id = ?1 ORDER BY updated_at, rowid")?;
+    let rows = stmt.query_map([profile.0], shelf_row)?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// Puts a book this instance is publishing on the shelf (state `uploading`), replacing
+/// an earlier entry of the same book. Call [`enqueue_book`] once it is published.
+pub fn begin_publish(
+    conn: &Connection,
+    profile: ProfileId,
+    entry: &ShelfEntry,
+) -> Result<(), StorageError> {
+    conn.execute(
+        "INSERT OR REPLACE INTO hub_shelf
+             (profile_id, book_key, publication_id, cipher_key, own, kind, state, instance,
+              title, authors, published_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, 1, 'upload', 'uploading', ?5, ?6, ?7, ?8, ?9)",
+        params![
+            profile.0,
+            entry.content_key,
+            entry.publication.map(|p| p.as_bytes().to_vec()),
+            entry.book_key.as_ref().map(|k| k.as_bytes().to_vec()),
+            entry.instance,
+            entry.title,
+            entry.authors,
+            entry.published_at,
+            entry.updated_at,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Sets the state of a shelf entry (and its `updated_at` when `now` is given).
+pub fn set_state(
+    conn: &Connection,
+    profile: ProfileId,
+    content_key: &[u8],
+    state: ShelfState,
+    now: Option<i64>,
+) -> Result<(), StorageError> {
+    conn.execute(
+        "UPDATE hub_shelf SET state = ?3, updated_at = coalesce(?4, updated_at)
+          WHERE profile_id = ?1 AND book_key = ?2",
+        params![profile.0, content_key, state.as_str(), now],
+    )?;
+    Ok(())
+}
+
+/// Deletes a shelf entry (its records are pushed as deletions from the outbox).
+pub fn delete_entry(
+    conn: &Connection,
+    profile: ProfileId,
+    content_key: &[u8],
+) -> Result<(), StorageError> {
+    conn.execute(
+        "DELETE FROM hub_shelf WHERE profile_id = ?1 AND book_key = ?2",
+        params![profile.0, content_key],
+    )?;
+    Ok(())
+}
+
+/// Queues the shelf item of a book with all its annotations and its reading position:
+/// after publishing (rows of a book removed from the library are then skipped by the
+/// push) or taking it off the shelf (all of them become deletions).
+pub fn enqueue_book(
+    conn: &Connection,
+    profile: ProfileId,
+    content_key: &[u8],
+) -> Result<(), StorageError> {
+    conn.execute(
+        "INSERT OR IGNORE INTO hub_outbox (profile_id, kind, key) VALUES (?1, 'shelf_item', ?2)",
+        params![profile.0, content_key],
+    )?;
+    conn.execute(
+        "INSERT OR IGNORE INTO hub_outbox (profile_id, kind, key)
+         SELECT profile_id, 'annotation', id FROM annotations
+          WHERE profile_id = ?1 AND book_key = ?2",
+        params![profile.0, content_key],
+    )?;
+    conn.execute(
+        "INSERT OR IGNORE INTO hub_outbox (profile_id, kind, key)
+         SELECT profile_id, 'position', book_key FROM reading_positions
+          WHERE profile_id = ?1 AND book_key = ?2",
+        params![profile.0, content_key],
+    )?;
+    Ok(())
+}
+
+/// The number of changes waiting to be pushed for `profile`.
+pub fn outbox_len(conn: &Connection, profile: ProfileId) -> Result<i64, StorageError> {
+    Ok(conn.query_row(
+        "SELECT count(*) FROM hub_outbox WHERE profile_id = ?1",
+        [profile.0],
+        |row| row.get(0),
+    )?)
 }
 
 #[cfg(test)]

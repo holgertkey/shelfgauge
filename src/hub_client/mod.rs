@@ -11,7 +11,9 @@
 //! never carry the request URL).
 
 pub mod keys;
+pub mod records;
 pub mod store;
+pub mod sync;
 
 use std::fmt;
 use std::time::Duration;
@@ -23,7 +25,7 @@ use serde::de::DeserializeOwned;
 use serde_json::json;
 
 use crate::hub::{AccountId, Secret};
-use crate::publication::format::VersionRange;
+use crate::publication::format::{BlobPath, PublicationId, VersionRange};
 use keys::AccountKey;
 
 /// A hub's base URL: `https://host[:port][/path]`, or `http://` for a loopback host;
@@ -117,6 +119,11 @@ impl HubUrl {
     /// The URL of the API route `route` (without `/api/`).
     pub fn api(&self, route: &str) -> String {
         format!("{}/api/{route}", self.0)
+    }
+
+    /// The link of a publication: it opens only on the account's paired devices.
+    pub fn book_link(&self, id: &PublicationId) -> String {
+        format!("{}/r/{id}", self.0)
     }
 
     /// The pairing link of a device: the secret and the account key travel in the
@@ -321,6 +328,9 @@ struct ErrorBody {
 /// The time limit of one ordinary call.
 const CALL_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// The time limit of uploading one blob.
+const BLOB_TIMEOUT: Duration = Duration::from_secs(600);
+
 /// The time limit of connecting.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -478,6 +488,109 @@ impl HubClient {
             .map_err(transport)?;
         empty(response)
     }
+}
+
+impl HubClient {
+    /// `PUT /api/pub/{id}/{path}`: uploads a sealed blob (the first one creates the
+    /// publication).
+    pub fn put_blob(
+        &self,
+        token: &Secret,
+        id: &PublicationId,
+        path: BlobPath,
+        blob: &[u8],
+    ) -> Result<(), ClientError> {
+        let response = self
+            .agent
+            .put(self.url.api(&format!("pub/{id}/{path}")))
+            .config()
+            .timeout_global(Some(BLOB_TIMEOUT))
+            .build()
+            .header("Authorization", bearer(token))
+            .content_type("application/octet-stream")
+            .send(blob)
+            .map_err(transport)?;
+        empty(response)
+    }
+
+    /// `DELETE /api/pub/{id}`; a publication the hub no longer has counts as deleted.
+    pub fn delete_publication(
+        &self,
+        token: &Secret,
+        id: &PublicationId,
+    ) -> Result<(), ClientError> {
+        let response = self
+            .agent
+            .delete(self.url.api(&format!("pub/{id}")))
+            .header("Authorization", bearer(token))
+            .call()
+            .map_err(transport)?;
+        match empty(response) {
+            Err(ClientError::Hub { status: 404, .. }) => Ok(()),
+            other => other,
+        }
+    }
+
+    /// `GET /api/pub`: the ids of the account's publications on the hub.
+    pub fn publications(&self, token: &Secret) -> Result<Vec<PublicationId>, ClientError> {
+        #[derive(Deserialize)]
+        struct Item {
+            id: String,
+        }
+        #[derive(Deserialize)]
+        struct Body {
+            publications: Vec<Item>,
+        }
+        let response = self
+            .agent
+            .get(self.url.api("pub"))
+            .header("Authorization", bearer(token))
+            .call()
+            .map_err(transport)?;
+        let body: Body = answer(response)?;
+        body.publications
+            .into_iter()
+            .map(|p| p.id.parse().map_err(|_| ClientError::BadAnswer))
+            .collect()
+    }
+
+    /// `POST /api/sync`: pushes records (`data: None` deletes one); answers the
+    /// account's newest `seq`.
+    pub fn push(&self, token: &Secret, records: &[OutRecord]) -> Result<i64, ClientError> {
+        #[derive(Deserialize)]
+        struct Body {
+            seq: i64,
+        }
+        let records: Vec<_> = records
+            .iter()
+            .map(|r| {
+                json!({
+                    "kind": r.kind,
+                    "id": r.id,
+                    "data": r.data.as_deref().map(|d| URL_SAFE_NO_PAD.encode(d)),
+                })
+            })
+            .collect();
+        let response = self
+            .agent
+            .post(self.url.api("sync"))
+            .header("Authorization", bearer(token))
+            .send_json(json!({ "records": records }))
+            .map_err(transport)?;
+        let body: Body = answer(response)?;
+        Ok(body.seq)
+    }
+}
+
+/// A record to push.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutRecord {
+    /// `shelf_item`, `annotation` or `position`.
+    pub kind: &'static str,
+    /// The record id.
+    pub id: String,
+    /// The sealed record; `None` deletes it.
+    pub data: Option<Vec<u8>>,
 }
 
 fn bearer(token: &Secret) -> String {

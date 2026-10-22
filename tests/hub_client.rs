@@ -329,3 +329,374 @@ async fn each_profile_has_its_own_hub_account() {
     assert_ne!(mine.key, hers.key);
     assert_eq!(hub.state.hub().accounts().unwrap().len(), 2);
 }
+
+/// The JSON plaintext of a pushed record.
+fn opened(key: &AccountKey, kind: &str, id: &str, data: &Option<Vec<u8>>) -> serde_json::Value {
+    let data = data.as_ref().expect("a record, not a deletion");
+    serde_json::from_slice(&keys::open_record(key, kind, id, data).unwrap()).unwrap()
+}
+
+#[tokio::test]
+async fn open_on_phone_publishes_the_book_with_its_marks() {
+    use shelfgauge::hub_client::store::ShelfState;
+    use shelfgauge::publication::format::{BlobPath, Manifest};
+
+    let hub = TestHub::start().await;
+    let lib = Lib::registered(&hub).await;
+    let book = lib.book("book.txt");
+    let mark = lib
+        .json(
+            &format!("/book/{book}/annotations"),
+            serde_json::json!({ "block": "b2" }),
+        )
+        .await;
+    assert_eq!(mark.status, StatusCode::CREATED, "{}", mark.body);
+    let mark: serde_json::Value = serde_json::from_str(&mark.body).unwrap();
+    let mark = mark["id"].as_str().unwrap().to_owned();
+    let position = lib
+        .json(
+            &format!("/book/{book}/position"),
+            serde_json::json!({ "block": "b3" }),
+        )
+        .await;
+    assert_eq!(position.status, StatusCode::NO_CONTENT);
+    // Not on the shelf yet: nothing is queued.
+    assert_eq!(lib.outbox(), 0);
+    let card = lib.get(&format!("/book/{book}")).await;
+    assert!(card.body.contains("Open on phone"), "{}", card.body);
+
+    assert_eq!(lib.publish(book).await, "published");
+    let shelf = lib.shelf();
+    assert_eq!(shelf.len(), 1);
+    let entry = &shelf[0];
+    assert_eq!(entry.state, ShelfState::Published);
+    assert!(entry.own);
+    assert_eq!(entry.instance, "Home library");
+    let id = entry.publication.unwrap();
+    let book_key = entry.book_key.clone().unwrap();
+    assert_eq!(lib.outbox(), 0, "everything was pushed");
+
+    let card = lib.get(&format!("/book/{book}?hub=published")).await;
+    assert!(card.body.contains("The book is on your shelf"));
+    assert!(card.body.contains("Remove from shelf"));
+    assert!(card.body.contains(&format!("{}/r/{id}", hub.url)));
+
+    // A device opens the manifest with the book key from the shelf item.
+    let account = lib.account().unwrap();
+    let token = account.token.as_str();
+    let (status, blob) = hub.blob(token, &id.to_string(), "manifest").await;
+    assert_eq!(status, StatusCode::OK);
+    let plain =
+        shelfgauge::publication::open(&id, &book_key, BlobPath::Manifest, &blob, 1 << 26).unwrap();
+    let manifest = Manifest::decode(&plain).unwrap();
+    assert_eq!(manifest.content_key, entry.content_key);
+    for n in 0..manifest.parts.len() {
+        let (status, _) = hub.blob(token, &id.to_string(), &format!("p/{n}")).await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    let records = hub.records(token).await;
+    let kinds: Vec<&str> = records.iter().map(|(k, _, _)| k.as_str()).collect();
+    assert_eq!(kinds.len(), 3, "{kinds:?}");
+    for (kind, record_id, data) in &records {
+        let value = opened(&account.key, kind, record_id, data);
+        match kind.as_str() {
+            "shelf_item" => {
+                assert_eq!(value["publication"], id.to_string());
+                assert_eq!(
+                    value["book_key"],
+                    URL_SAFE_NO_PAD.encode(book_key.as_bytes())
+                );
+                assert_eq!(value["instance"], "Home library");
+                assert_eq!(value["format_version"], 1);
+            }
+            "annotation" => {
+                assert_eq!(record_id, &mark);
+                assert_eq!(value["start_block"], 2);
+                assert_eq!(value["deleted_at"], serde_json::Value::Null);
+            }
+            "position" => assert_eq!(value["block"], 3),
+            other => panic!("{other}"),
+        }
+        assert!(value["content_key"].as_str().is_some(), "{kind}: {value}");
+    }
+}
+
+#[tokio::test]
+async fn changes_of_shelf_books_are_queued_and_pushed() {
+    use shelfgauge::hub_client::{HubClient, HubUrl, sync};
+
+    let hub = TestHub::start().await;
+    let lib = Lib::registered(&hub).await;
+    let book = lib.book("book.txt");
+    assert_eq!(lib.publish(book).await, "published");
+    let mark = lib
+        .json(
+            &format!("/book/{book}/annotations"),
+            serde_json::json!({ "block": "b4" }),
+        )
+        .await;
+    let mark: serde_json::Value = serde_json::from_str(&mark.body).unwrap();
+    let mark = mark["id"].as_str().unwrap().to_owned();
+    assert_eq!(lib.outbox(), 1);
+
+    let account = lib.account().unwrap();
+    let userdata = std::sync::Arc::clone(&lib.userdata);
+    let url = HubUrl::parse(&hub.url).unwrap();
+    let pushed = tokio::task::spawn_blocking({
+        let account = account.clone();
+        move || sync::push(&userdata, &account, &HubClient::new(url))
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(pushed, 1);
+    assert_eq!(lib.outbox(), 0);
+    let records = hub.records(account.token.as_str()).await;
+    assert!(
+        records
+            .iter()
+            .any(|(k, id, d)| k == "annotation" && *id == mark && d.is_some())
+    );
+}
+
+#[tokio::test]
+async fn removing_from_the_shelf_deletes_the_copy_and_the_records() {
+    let hub = TestHub::start().await;
+    let lib = Lib::registered(&hub).await;
+    let book = lib.book("book.txt");
+    lib.json(
+        &format!("/book/{book}/annotations"),
+        serde_json::json!({ "block": "b2" }),
+    )
+    .await;
+    assert_eq!(lib.publish(book).await, "published");
+    let id = lib.shelf()[0].publication.unwrap().to_string();
+    let token = lib.account().unwrap().token;
+
+    assert_eq!(lib.shelf_action(book, "remove").await, "removed");
+    assert!(lib.shelf().is_empty());
+    assert_eq!(lib.outbox(), 0);
+    let (status, _) = hub.blob(token.as_str(), &id, "manifest").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let records = hub.records(token.as_str()).await;
+    assert_eq!(records.len(), 2, "shelf item and annotation");
+    assert!(
+        records.iter().all(|(_, _, data)| data.is_none()),
+        "all deleted"
+    );
+
+    // The bookmark stays in this library; the book can go on the shelf again.
+    let card = lib.get(&format!("/book/{book}?hub=removed")).await;
+    assert!(card.body.contains("Bookmarks (1)"), "{}", card.body);
+    assert!(card.body.contains("Open on phone"));
+    assert!(card.body.contains("The book is off your shelf"));
+}
+
+#[tokio::test]
+async fn removing_while_the_hub_is_down_waits_for_the_next_sync() {
+    use shelfgauge::hub_client::store::ShelfState;
+
+    let hub = TestHub::start().await;
+    let lib = Lib::registered(&hub).await;
+    let book = lib.book("book.txt");
+    assert_eq!(lib.publish(book).await, "published");
+    hub.stop().await;
+
+    assert_eq!(lib.shelf_action(book, "remove").await, "removing");
+    let shelf = lib.shelf();
+    assert_eq!(shelf[0].state, ShelfState::Removing);
+    assert_eq!(lib.outbox(), 1, "the shelf item's deletion waits");
+    let card = lib.get(&format!("/book/{book}?hub=removing")).await;
+    assert!(card.body.contains("Being taken off your shelf"));
+    assert!(card.body.contains("could not be reached"));
+    assert_eq!(lib.publish(book).await, "unreachable");
+}
+
+#[tokio::test]
+async fn expired_publications_can_be_published_again() {
+    use shelfgauge::hub_client::store::ShelfState;
+
+    let hub = TestHub::start().await;
+    let lib = Lib::registered(&hub).await;
+    let book = lib.book("book.txt");
+    assert_eq!(lib.publish(book).await, "published");
+    let old = lib.shelf()[0].clone();
+    let token = lib.account().unwrap().token;
+    // As the hub's expiry does.
+    let id = old.publication.unwrap().to_string();
+    let (status, _) = hub
+        .api(
+            Method::DELETE,
+            &format!("pub/{id}"),
+            Some(token.as_str()),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    lib.get("/profile/hub").await;
+    assert_eq!(lib.shelf()[0].state, ShelfState::Expired);
+    let card = lib.get(&format!("/book/{book}")).await;
+    assert!(card.body.contains("Publish again"), "{}", card.body);
+
+    assert_eq!(lib.publish(book).await, "published");
+    let new = lib.shelf()[0].clone();
+    assert_eq!(new.state, ShelfState::Published);
+    assert_ne!(new.publication, old.publication);
+    assert_ne!(new.book_key, old.book_key, "a book key is never reused");
+    let (_, list) = hub
+        .api(Method::GET, "pub", Some(token.as_str()), None)
+        .await;
+    assert_eq!(list["publications"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn drm_books_never_go_on_the_shelf() {
+    let hub = TestHub::start().await;
+    let lib = Lib::registered(&hub).await;
+    let book = lib.book("locked.epub");
+    let card = lib.get(&format!("/book/{book}")).await;
+    assert!(
+        card.body.contains("never leave this library"),
+        "{}",
+        card.body
+    );
+    assert!(!card.body.contains("Open on phone"));
+    assert_eq!(lib.publish(book).await, "protected");
+    assert!(lib.shelf().is_empty());
+    let token = lib.account().unwrap().token;
+    let (_, list) = hub
+        .api(Method::GET, "pub", Some(token.as_str()), None)
+        .await;
+    assert!(list["publications"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_refused_upload_leaves_nothing_behind() {
+    let hub = TestHub::start_with(|config| config.quotas.max_bytes = 1000).await;
+    let lib = Lib::registered(&hub).await;
+    let book = lib.book("book.txt");
+    assert_eq!(lib.publish(book).await, "quota");
+    assert!(lib.shelf().is_empty());
+    let token = lib.account().unwrap().token;
+    let (_, list) = hub
+        .api(Method::GET, "pub", Some(token.as_str()), None)
+        .await;
+    assert!(list["publications"].as_array().unwrap().is_empty());
+    let card = lib.get(&format!("/book/{book}?hub=quota")).await;
+    assert!(card.body.contains("quota is used up"));
+}
+
+#[tokio::test]
+async fn without_a_hub_account_the_card_has_no_shelf() {
+    let lib = Lib::new("", "Home");
+    let book = lib.book("book.txt");
+    let card = lib.get(&format!("/book/{book}")).await;
+    assert!(!card.body.contains("On your phone"));
+    let reply = lib
+        .post(&format!("/book/{book}/hub"), &[("action", "publish")])
+        .await;
+    assert_eq!(reply.status, StatusCode::BAD_REQUEST);
+}
+
+/// Regression: a book removed from the library (a rescan with its drive unmounted)
+/// must not delete its marks on the devices, even when changes were still queued.
+#[tokio::test]
+async fn a_book_removed_from_the_library_keeps_its_records_on_the_hub() {
+    use shelfgauge::hub_client::{HubClient, HubUrl, sync};
+
+    let hub = TestHub::start().await;
+    let lib = Lib::registered(&hub).await;
+    let book = lib.book("book.txt");
+    let mark = lib
+        .json(
+            &format!("/book/{book}/annotations"),
+            serde_json::json!({ "block": "b2" }),
+        )
+        .await;
+    let mark: serde_json::Value = serde_json::from_str(&mark.body).unwrap();
+    let mark = mark["id"].as_str().unwrap().to_owned();
+    lib.json(
+        &format!("/book/{book}/position"),
+        serde_json::json!({ "block": "b3" }),
+    )
+    .await;
+    assert_eq!(lib.publish(book).await, "published");
+
+    // Changes queued, not pushed yet.
+    let note = lib
+        .json(
+            &format!("/annotation/{mark}/note"),
+            serde_json::json!({ "note": "queued" }),
+        )
+        .await;
+    assert_eq!(note.status, StatusCode::OK, "{}", note.body);
+    lib.json(
+        &format!("/book/{book}/position"),
+        serde_json::json!({ "block": "b4" }),
+    )
+    .await;
+    assert_eq!(lib.outbox(), 2);
+    {
+        let conn = lib.userdata.lock();
+        conn.execute(
+            "UPDATE annotations SET deleted_at = 1, deleted_reason = 'book_removed'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE reading_positions SET deleted_at = 1, deleted_reason = 'book_removed'",
+            [],
+        )
+        .unwrap();
+    }
+
+    let account = lib.account().unwrap();
+    let push = |account: shelfgauge::hub_client::store::HubAccount| {
+        let userdata = std::sync::Arc::clone(&lib.userdata);
+        let url = HubUrl::parse(&hub.url).unwrap();
+        tokio::task::spawn_blocking(move || {
+            sync::push(&userdata, &account, &HubClient::new(url)).unwrap()
+        })
+    };
+    assert_eq!(push(account.clone()).await.unwrap(), 0, "nothing to push");
+    assert_eq!(lib.outbox(), 0);
+    let records = hub.records(account.token.as_str()).await;
+    assert_eq!(records.len(), 3);
+    assert!(
+        records.iter().all(|(_, _, data)| data.is_some()),
+        "{records:?}"
+    );
+
+    // Taking the book off the shelf deletes them all, also those of the removed book.
+    assert_eq!(lib.shelf_action(book, "remove").await, "removed");
+    let records = hub.records(account.token.as_str()).await;
+    assert!(
+        records.iter().all(|(_, _, data)| data.is_none()),
+        "{records:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_double_click_on_open_on_phone_uploads_once() {
+    let hub = TestHub::start().await;
+    let lib = Lib::registered(&hub).await;
+    let book = lib.book("book.txt");
+    let (a, b) = tokio::join!(lib.publish(book), lib.publish(book));
+    let mut codes = [a, b];
+    codes.sort();
+    assert!(
+        codes == ["busy", "published"] || codes == ["published", "published"],
+        "{codes:?}"
+    );
+    let token = lib.account().unwrap().token;
+    let (_, list) = hub
+        .api(Method::GET, "pub", Some(token.as_str()), None)
+        .await;
+    assert_eq!(list["publications"].as_array().unwrap().len(), 1);
+    // Publishing a published book again keeps its copy.
+    let before = lib.shelf()[0].publication;
+    assert_eq!(lib.publish(book).await, "published");
+    assert_eq!(lib.shelf()[0].publication, before);
+}

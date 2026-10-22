@@ -1,7 +1,8 @@
 //! The book card and covers.
 
 use askama::Template;
-use axum::extract::{Path, RawQuery, State};
+use axum::extract::rejection::QueryRejection;
+use axum::extract::{Path, Query, RawQuery, State};
 use axum::http::HeaderMap;
 use axum::response::{Html, Response};
 
@@ -45,6 +46,16 @@ struct BookPage {
     lists: Option<Lists>,
     /// The other sharing profiles reading this book.
     family: Vec<super::annotations::FamilyReader>,
+    /// The book on the profile's hub shelf (`None` without a hub account).
+    shelf: Option<super::shelf::ShelfView>,
+    /// What the last shelf action did: `(class, text)`.
+    shelf_notice: Option<(&'static str, &'static str)>,
+}
+
+/// The query of the book card: what a shelf action did.
+#[derive(Debug, Default, serde::Deserialize)]
+pub(crate) struct CardQuery {
+    hub: Option<String>,
 }
 
 /// `GET /book/{id}`: the book card.
@@ -53,12 +64,17 @@ pub(crate) async fn card(
     current: CurrentProfile,
     Path(id): Path<String>,
     headers: HeaderMap,
+    query: Result<Query<CardQuery>, QueryRejection>,
 ) -> Result<Html<String>, AppError> {
     let id = parse_id(&id)?;
+    let shelf_notice = query
+        .ok()
+        .and_then(|Query(q)| q.hub)
+        .and_then(|code| super::shelf::notice(&code));
     let mode = SidebarMode::from_headers(&headers);
     let profile = current.id();
     let several = current.several();
-    let (book, file_present, sidebar, annotations, family) = state
+    let (book, file_present, sidebar, annotations, family, shelf) = state
         .user_db(move |s, conn| {
             let book = book_by_id(conn, id)?.ok_or(AppError::NotFound)?;
             let file_present = book.status != BookStatus::Removed
@@ -81,7 +97,9 @@ pub(crate) async fn card(
                 }
                 _ => Vec::new(),
             };
-            Ok((book, file_present, sidebar, annotations, family))
+            let readable = book.status == BookStatus::Ok && file_present;
+            let shelf = super::shelf::view(s, profile, &book, readable)?;
+            Ok((book, file_present, sidebar, annotations, family, shelf))
         })
         .await?;
 
@@ -147,6 +165,8 @@ pub(crate) async fn card(
         continue_href: position.map(|p| urls.read_at(book.id, p.block)),
         progress: position.map(|p| progress_label(p.progress)),
         family,
+        shelf,
+        shelf_notice,
         lists,
         layout: Layout::new(&state, &current, book.title.clone(), sidebar),
         cover,

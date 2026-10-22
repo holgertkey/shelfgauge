@@ -776,3 +776,90 @@ fn records_vector_is_stable() {
         }),
     );
 }
+
+#[test]
+fn record_plaintexts_are_stable() {
+    // The JSON the reader app parses (Phase 26): fixed rows through the record
+    // builders. A renamed or added field is a change of the sync protocol.
+    use shelfgauge::annotations::store::UserData;
+    use shelfgauge::hub::{AccountId, Secret};
+    use shelfgauge::hub_client::keys::AccountKey;
+    use shelfgauge::hub_client::store::{self, NewHubAccount, ShelfEntry, ShelfState};
+    use shelfgauge::hub_client::{HubUrl, records};
+    use shelfgauge::profiles::ProfileId;
+
+    let userdata = UserData::open_in_memory().unwrap();
+    let conn = userdata.lock();
+    let owner = ProfileId::OWNER;
+    let url = HubUrl::parse("https://hub.example.org").unwrap();
+    let key = AccountKey::new([1; 32]);
+    let token = Secret::from_text("token");
+    let account = NewHubAccount {
+        hub_url: &url,
+        account: AccountId::new([2; 16]),
+        key: &key,
+        device_id: 1,
+        token: &token,
+        recovery_code: None,
+    };
+    store::save_account(&conn, owner, &account, 0).unwrap();
+    let content_key: Vec<u8> = (0..16).collect();
+    let entry = ShelfEntry {
+        content_key: content_key.clone(),
+        publication: Some("00112233445566778899aabbccddeeff".parse().unwrap()),
+        book_key: Some(BookKey::new([3; 32])),
+        own: true,
+        state: ShelfState::Uploading,
+        instance: "Home library".into(),
+        title: "Война и мир".into(),
+        authors: "Лев Толстой".into(),
+        published_at: Some(1_800_000_000),
+        updated_at: 1_800_000_001,
+    };
+    store::begin_publish(&conn, owner, &entry).unwrap();
+    store::set_state(&conn, owner, &content_key, ShelfState::Published, None).unwrap();
+    conn.execute(
+        "INSERT INTO annotations (id, profile_id, book_key, book_id, start_block, start_offset,
+             end_block, end_offset, text, prefix, suffix, section_title, book_title,
+             book_authors, note, created_at, updated_at)
+         VALUES ('0f8fad5b-d9cb-469f-a165-70867728950e', 1, ?1, 7, 12, 3, 12, 9, 'quoted',
+             'before ', ' after', 'Том 1', 'Война и мир', 'Лев Толстой', 'a note',
+             1_800_000_002, 1_800_000_003)",
+        [&content_key],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO reading_positions (profile_id, book_key, book_id, block, offset, suffix,
+             progress, book_title, book_authors, updated_at)
+         VALUES (1, ?1, 7, 40, 5, 'Глава', 379, 'Война и мир', 'Лев Толстой', 1_800_000_004)",
+        [&content_key],
+    )
+    .unwrap();
+
+    let text = |bytes: Vec<u8>| String::from_utf8(bytes).unwrap();
+    let shelf_item = text(
+        records::shelf_item(&conn, owner, &content_key)
+            .unwrap()
+            .unwrap(),
+    );
+    let annotation = text(
+        records::annotation(&conn, owner, "0f8fad5b-d9cb-469f-a165-70867728950e")
+            .unwrap()
+            .unwrap()
+            .plain,
+    );
+    let position = text(
+        records::position(&conn, owner, &content_key)
+            .unwrap()
+            .unwrap(),
+    );
+    check_vector(
+        "record_plaintexts.json",
+        &serde_json::json!({
+            "description": "the JSON plaintexts of sync records (UTF-8, keys sorted); binary values base64url without padding, times Unix seconds, progress per mille",
+            "shelf_item": shelf_item,
+            "annotation": annotation,
+            "position": position,
+        }),
+    );
+}
