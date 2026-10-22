@@ -413,6 +413,7 @@ fn serve(
         .with_config(live, overrides.clone())
         .with_annotations(userdata, exporter);
     let url = web::display_url(&config.server, state.urls());
+    let sync_state = state.clone();
     let router = web::router(state);
 
     // Handlers may parse books on blocking threads, which need the parser stack.
@@ -427,9 +428,10 @@ fn serve(
         if scan {
             background.start(shelfgauge::scanner::ScanTrigger::Startup);
         }
-        web::serve(listener, router, shutdown)
-            .await
-            .context("the web server failed")
+        let sync = web::hub_sync::start(sync_state);
+        let served = web::serve(listener, router, shutdown).await;
+        sync.abort();
+        served.context("the web server failed")
     });
     // The writer commits what it has received before the scan thread ends.
     if background.is_running() {

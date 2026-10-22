@@ -28,7 +28,13 @@ Build numbers (`+NNN`) do not get their own sections.
   link and QR code that open only on your paired devices. **Remove from shelf**
   deletes the hub's copy and its marks there (those in the library stay); a copy the
   hub deleted after a long time unopened can be published again. Books protected by
-  DRM never leave the library. Syncing changes in both directions follows.
+  DRM never leave the library.
+- **Sync with the hub**: bookmarks, quotes, notes and reading positions of the books on
+  your shelf sync in both directions between the libraries and devices of your
+  account, in the background (every few minutes and soon after a change; **Sync now**
+  on the hub page). The newest change wins, also a deletion; marks of books a library
+  does not have are kept while the book is on the shelf, and attach when it appears.
+  The library's Markdown export follows.
 
 ## [0.17.0] - 2026-10-22
 

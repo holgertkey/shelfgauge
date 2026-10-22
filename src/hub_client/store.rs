@@ -385,6 +385,55 @@ pub fn outbox_len(conn: &Connection, profile: ProfileId) -> Result<i64, StorageE
     )?)
 }
 
+/// The last record `seq` pulled for `profile`.
+pub fn last_seq(conn: &Connection, profile: ProfileId) -> Result<i64, StorageError> {
+    Ok(conn
+        .query_row(
+            "SELECT last_seq FROM hub_accounts WHERE profile_id = ?1",
+            [profile.0],
+            |row| row.get(0),
+        )
+        .optional()?
+        .unwrap_or(0))
+}
+
+/// Stores the pull cursor of `profile`.
+pub fn set_last_seq(conn: &Connection, profile: ProfileId, seq: i64) -> Result<(), StorageError> {
+    conn.execute(
+        "UPDATE hub_accounts SET last_seq = max(last_seq, ?2) WHERE profile_id = ?1",
+        params![profile.0, seq],
+    )?;
+    Ok(())
+}
+
+/// Records the outcome of a sync: `Ok(time)` of a success, or the error's text.
+pub fn record_sync(
+    conn: &Connection,
+    profile: ProfileId,
+    outcome: Result<i64, String>,
+) -> Result<(), StorageError> {
+    match outcome {
+        Ok(at) => conn.execute(
+            "UPDATE hub_accounts SET synced_at = ?2, sync_error = NULL WHERE profile_id = ?1",
+            params![profile.0, at],
+        )?,
+        Err(error) => conn.execute(
+            "UPDATE hub_accounts SET sync_error = ?2 WHERE profile_id = ?1",
+            params![profile.0, error],
+        )?,
+    };
+    Ok(())
+}
+
+/// The content keys on any profile's hub shelf (not being removed): their marks are
+/// kept even while this library lacks the book.
+pub fn shelved_keys(conn: &Connection) -> Result<std::collections::HashSet<Vec<u8>>, StorageError> {
+    let mut stmt =
+        conn.prepare("SELECT DISTINCT book_key FROM hub_shelf WHERE state <> 'removing'")?;
+    let rows = stmt.query_map([], |row| row.get(0))?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -11,6 +11,7 @@
 //! never carry the request URL).
 
 pub mod keys;
+pub mod merge;
 pub mod records;
 pub mod store;
 pub mod sync;
@@ -580,6 +581,77 @@ impl HubClient {
         let body: Body = answer(response)?;
         Ok(body.seq)
     }
+}
+
+impl HubClient {
+    /// `GET /api/sync?since=N`: one page of records changed after `since`.
+    pub fn pull(&self, token: &Secret, since: i64) -> Result<Pulled, ClientError> {
+        #[derive(Deserialize)]
+        struct Item {
+            kind: String,
+            id: String,
+            data: Option<String>,
+            updated_at: i64,
+        }
+        #[derive(Deserialize)]
+        struct Body {
+            records: Vec<Item>,
+            seq: i64,
+            more: bool,
+        }
+        let response = self
+            .agent
+            .get(self.url.api(&format!("sync?since={since}&limit=500")))
+            .header("Authorization", bearer(token))
+            .call()
+            .map_err(transport)?;
+        let body: Body = answer(response)?;
+        let records = body
+            .records
+            .into_iter()
+            .map(|r| {
+                Ok(InRecord {
+                    kind: r.kind,
+                    id: r.id,
+                    data: r
+                        .data
+                        .map(|d| URL_SAFE_NO_PAD.decode(d))
+                        .transpose()
+                        .map_err(|_| ClientError::BadAnswer)?,
+                    updated_at: r.updated_at,
+                })
+            })
+            .collect::<Result<_, ClientError>>()?;
+        Ok(Pulled {
+            records,
+            seq: body.seq,
+            more: body.more,
+        })
+    }
+}
+
+/// A page of pulled records.
+#[derive(Debug, Clone)]
+pub struct Pulled {
+    /// The records in `seq` order.
+    pub records: Vec<InRecord>,
+    /// The cursor for the next pull.
+    pub seq: i64,
+    /// Whether more records follow.
+    pub more: bool,
+}
+
+/// A pulled record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InRecord {
+    /// The kind.
+    pub kind: String,
+    /// The record id.
+    pub id: String,
+    /// The sealed record; `None` when it was deleted.
+    pub data: Option<Vec<u8>>,
+    /// When the hub stored this state (the hub's clock, Unix seconds).
+    pub updated_at: i64,
 }
 
 /// A record to push.

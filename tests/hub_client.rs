@@ -700,3 +700,331 @@ async fn a_double_click_on_open_on_phone_uploads_once() {
     assert_eq!(lib.publish(book).await, "published");
     assert_eq!(lib.shelf()[0].publication, before);
 }
+
+/// Two libraries on one account with the same book, `home` has it on the shelf with a
+/// bookmark and `office` has pulled it: `(hub, home, office, book id, bookmark id)`.
+async fn shared() -> (TestHub, Lib, Lib, i64, String) {
+    let hub = TestHub::start().await;
+    let home = Lib::new(&hub.url, "Home library");
+    let code = home.register(&hub.invite()).await;
+    home.post("/profile/hub", &[("action", "saved")]).await;
+    let book = home.book("book.txt");
+    let mark = home.bookmark(book, "b2").await;
+    assert_eq!(home.publish(book).await, "published");
+    let office = Lib::new(&hub.url, "Office");
+    office.join(&code).await;
+    office.sync().await;
+    let office_book = office.book("book.txt");
+    assert_eq!(office_book, book, "same library layout");
+    (hub, home, office, book, mark)
+}
+
+#[tokio::test]
+async fn two_libraries_share_the_shelf_and_the_marks() {
+    let (_hub, home, office, book, mark) = shared().await;
+    let shelf = office.shelf();
+    assert_eq!(shelf.len(), 1);
+    assert!(!shelf[0].own);
+    assert_eq!(shelf[0].instance, "Home library");
+    assert_eq!(shelf[0].publication, home.shelf()[0].publication);
+    let card = office.get(&format!("/book/{book}")).await;
+    assert!(card.body.contains("from Home library"), "{}", card.body);
+    assert!(card.body.contains("Bookmarks (1)"));
+    let pulled: i64 = office.value(&format!(
+        "SELECT count(*) FROM annotations WHERE id = '{mark}' AND book_id = {book}"
+    ));
+    assert_eq!(pulled, 1, "attached to the office's own copy of the book");
+    assert_eq!(office.outbox(), 0, "a merge is not pushed back");
+    let exported = std::fs::read_dir(office.library.annotations_dir())
+        .map(|d| d.count())
+        .unwrap_or(0);
+    assert!(exported > 0, "the export follows the merge");
+
+    // The office's bookmark and position reach home.
+    office.bookmark(book, "b4").await;
+    let reply = office
+        .json(
+            &format!("/book/{book}/position"),
+            serde_json::json!({ "block": "b5" }),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::NO_CONTENT);
+    assert_eq!(office.outbox(), 2);
+    office.sync().await;
+    assert_eq!(office.outbox(), 0);
+    home.sync().await;
+    let card = home.get(&format!("/book/{book}")).await;
+    assert!(card.body.contains("Bookmarks (2)"), "{}", card.body);
+    assert!(card.body.contains("read?at=b5"), "{}", card.body);
+    assert_eq!(home.outbox(), 0);
+}
+
+#[tokio::test]
+async fn a_newer_edit_beats_a_deletion_and_a_newer_deletion_beats_an_edit() {
+    let (_hub, home, office, _book, mark) = shared().await;
+    let t = shelfgauge::annotations::now();
+
+    // Office deletes at t, home edits the note at t + 10: the edit wins everywhere.
+    office.sql(&format!(
+        "UPDATE annotations SET deleted_at = {t}, deleted_reason = 'user', updated_at = {t}
+          WHERE id = '{mark}'"
+    ));
+    home.sql(&format!(
+        "UPDATE annotations SET note = 'kept', updated_at = {} WHERE id = '{mark}'",
+        t + 10
+    ));
+    office.sync().await;
+    home.sync().await;
+    office.sync().await;
+    for lib in [&home, &office] {
+        let (note, deleted): (String, Option<i64>) = lib
+            .userdata
+            .lock()
+            .query_row(
+                &format!("SELECT note, deleted_at FROM annotations WHERE id = '{mark}'"),
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((note.as_str(), deleted), ("kept", None));
+    }
+
+    // Now the deletion is newer: it wins everywhere.
+    office.sql(&format!(
+        "UPDATE annotations SET deleted_at = {0}, deleted_reason = 'user', updated_at = {0}
+          WHERE id = '{mark}'",
+        t + 30
+    ));
+    home.sql(&format!(
+        "UPDATE annotations SET note = 'lost', updated_at = {} WHERE id = '{mark}'",
+        t + 20
+    ));
+    home.sync().await;
+    office.sync().await;
+    home.sync().await;
+    for lib in [&home, &office] {
+        let reason: String = lib.value(&format!(
+            "SELECT deleted_reason FROM annotations WHERE id = '{mark}'"
+        ));
+        assert_eq!(reason, "user");
+        assert_eq!(lib.outbox(), 0);
+    }
+}
+
+#[tokio::test]
+async fn edits_at_the_same_second_end_the_same_everywhere() {
+    let (_hub, home, office, _book, mark) = shared().await;
+    let t = shelfgauge::annotations::now() + 5;
+    home.sql(&format!(
+        "UPDATE annotations SET note = 'from home', updated_at = {t} WHERE id = '{mark}'"
+    ));
+    office.sql(&format!(
+        "UPDATE annotations SET note = 'from office', updated_at = {t} WHERE id = '{mark}'"
+    ));
+    home.sync().await;
+    office.sync().await;
+    home.sync().await;
+    let query = format!("SELECT note FROM annotations WHERE id = '{mark}'");
+    let (a, b): (String, String) = (home.value(&query), office.value(&query));
+    assert_eq!(a, b, "both libraries agree");
+    // The bytewise larger plaintext wins: "from office" > "from home".
+    assert_eq!(a, "from office");
+}
+
+#[tokio::test]
+async fn removing_on_one_library_takes_the_book_off_the_others() {
+    let (_hub, home, office, book, mark) = shared().await;
+    assert_eq!(home.shelf_action(book, "remove").await, "removed");
+    office.sync().await;
+    assert!(office.shelf().is_empty());
+    let kept: i64 = office.value(&format!(
+        "SELECT count(*) FROM annotations WHERE id = '{mark}' AND deleted_at IS NULL"
+    ));
+    assert_eq!(kept, 1, "local marks stay");
+    let card = office.get(&format!("/book/{book}")).await;
+    assert!(card.body.contains("Open on phone"));
+}
+
+#[tokio::test]
+async fn records_of_a_book_this_library_lacks_are_kept_for_later() {
+    let hub = TestHub::start().await;
+    let home = Lib::new(&hub.url, "Home library");
+    let code = home.register(&hub.invite()).await;
+    let book = home.book("book.txt");
+    let mark = home.bookmark(book, "b2").await;
+    assert_eq!(home.publish(book).await, "published");
+
+    let empty = Lib::with_books(&hub.url, "Laptop", &[]);
+    empty.join(&code).await;
+    empty.sync().await;
+    assert_eq!(
+        empty.shelf().len(),
+        1,
+        "the shelf lists the book from Home library"
+    );
+    let orphan: i64 = empty.value(&format!(
+        "SELECT book_id FROM annotations WHERE id = '{mark}' AND deleted_at IS NULL"
+    ));
+    assert_eq!(orphan, 0, "no book here yet");
+    assert_eq!(empty.outbox(), 0);
+
+    // A scan's cleanup keeps them while the book is on the shelf, even with no
+    // retention (regression: they were marked removed and purged).
+    let exporter = shelfgauge::annotations::export::Exporter::new(
+        empty.library.annotations_dir(),
+        "http://127.0.0.1:8742/",
+    );
+    shelfgauge::annotations::attach::cleanup_library(&empty.library, &empty.userdata, &exporter, 0)
+        .unwrap();
+    let kept: i64 = empty.value(&format!(
+        "SELECT count(*) FROM annotations WHERE id = '{mark}' AND deleted_at IS NULL"
+    ));
+    assert_eq!(kept, 1);
+}
+
+#[tokio::test]
+async fn a_sync_notices_expired_publications_and_reports_errors() {
+    use shelfgauge::hub_client::store::ShelfState;
+
+    let hub = TestHub::start().await;
+    let lib = Lib::registered(&hub).await;
+    let book = lib.book("book.txt");
+    assert_eq!(lib.publish(book).await, "published");
+    let token = lib.account().unwrap().token;
+    let id = lib.shelf()[0].publication.unwrap().to_string();
+    hub.api(
+        Method::DELETE,
+        &format!("pub/{id}"),
+        Some(token.as_str()),
+        None,
+    )
+    .await;
+    lib.sync().await;
+    assert_eq!(lib.shelf()[0].state, ShelfState::Expired);
+    let account = lib.account().unwrap();
+    assert!(account.synced_at.is_some());
+    assert!(account.last_seq > 0);
+
+    hub.stop().await;
+    let reply = lib.post("/profile/hub", &[("action", "sync")]).await;
+    assert_eq!(reply.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(reply.body.contains("cannot be reached"));
+    let account = lib.account().unwrap();
+    assert!(account.sync_error.unwrap().contains("cannot be reached"));
+}
+
+#[tokio::test]
+async fn the_worker_syncs_at_start() {
+    let hub = TestHub::start().await;
+    let home = Lib::new(&hub.url, "Home library");
+    let code = home.register(&hub.invite()).await;
+    let book = home.book("book.txt");
+    assert_eq!(home.publish(book).await, "published");
+    let office = Lib::new(&hub.url, "Office");
+    office.join(&code).await;
+
+    let worker = shelfgauge::web::hub_sync::start(office.state.clone());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while office.shelf().is_empty() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the worker did not sync"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    worker.abort();
+    assert!(office.account().unwrap().synced_at.is_some());
+}
+
+#[tokio::test]
+async fn marks_at_places_the_book_does_not_have_do_not_break_its_pages() {
+    // A buggy device could push them; the hub cannot forge them (AEAD).
+    let (_hub, home, office, book, _mark) = shared().await;
+    let t = shelfgauge::annotations::now() + 5;
+    home.sql(&format!(
+        "INSERT INTO annotations (id, profile_id, book_key, book_id, start_block, start_offset,
+             end_block, end_offset, text, prefix, suffix, book_title, book_authors, note,
+             created_at, updated_at)
+         SELECT 'far-away', 1, book_key, book_id, 99999, 0, 99999, 4, 'gone', '', '', 'T', 'A',
+                'far', {t}, {t} FROM annotations LIMIT 1;
+         INSERT INTO annotations (id, profile_id, book_key, book_id, start_block, start_offset,
+             end_block, end_offset, text, prefix, suffix, book_title, book_authors, note,
+             created_at, updated_at)
+         SELECT 'backwards', 1, book_key, book_id, 2, 10, 2, 3, 'odd', '', '', 'T', 'A',
+                'odd', {t}, {t} FROM annotations LIMIT 1;"
+    ));
+    home.sync().await;
+    office.sync().await;
+    let merged: i64 =
+        office.value("SELECT count(*) FROM annotations WHERE id IN ('far-away', 'backwards')");
+    assert_eq!(merged, 2);
+    for uri in [
+        format!("/book/{book}"),
+        format!("/book/{book}/annotations"),
+        format!("/book/{book}/read"),
+        format!("/book/{book}/read?part=2"),
+    ] {
+        let reply = office.get(&uri).await;
+        assert_eq!(reply.status, StatusCode::OK, "{uri}: {}", reply.body);
+    }
+}
+
+#[tokio::test]
+async fn two_profiles_sync_with_separate_accounts() {
+    use shelfgauge::profiles::session::{self, Level};
+    use shelfgauge::profiles::{ProfileId, Role, store as profiles};
+
+    let hub = TestHub::start().await;
+    let lib = Lib::new(&hub.url, "Home library");
+    let (anna, owner_session, anna_session) = {
+        let conn = lib.userdata.lock();
+        let anna = profiles::create(&conn, "Anna", 1, Role::Reader, 0)
+            .unwrap()
+            .id;
+        (
+            anna,
+            session::create(&conn, ProfileId::OWNER, Level::Local, false, 0).unwrap(),
+            session::create(&conn, anna, Level::Local, false, 0).unwrap(),
+        )
+    };
+    let book = lib.book("book.txt");
+    let mut marks = Vec::new();
+    for session in [&owner_session, &anna_session] {
+        lib.act_as(Some(session.as_str()));
+        lib.register(&hub.invite()).await;
+        lib.post("/profile/hub", &[("action", "saved")]).await;
+        marks.push(lib.bookmark(book, "b2").await);
+        assert_eq!(lib.publish(book).await, "published");
+        lib.sync().await;
+    }
+    for session in [&owner_session, &anna_session] {
+        lib.act_as(Some(session.as_str()));
+        lib.sync().await;
+    }
+    for (profile, mark) in [(ProfileId::OWNER, &marks[0]), (anna, &marks[1])] {
+        let ids: Vec<String> = {
+            let conn = lib.userdata.lock();
+            let mut stmt = conn
+                .prepare("SELECT id FROM annotations WHERE profile_id = ?1")
+                .unwrap();
+            stmt.query_map([profile.0], |r| r.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert_eq!(ids, std::slice::from_ref(mark), "{profile:?}");
+        let shelf = shelfgauge::hub_client::store::shelf(&lib.userdata.lock(), profile).unwrap();
+        assert_eq!(shelf.len(), 1);
+        assert!(shelf[0].own);
+    }
+    let (owner_account, anna_account) = (lib.account().unwrap(), lib.account_of(anna).unwrap());
+    assert_ne!(owner_account.account, anna_account.account);
+    // Each account's hub holds only its own records.
+    let records = hub.records(anna_account.token.as_str()).await;
+    assert!(
+        records
+            .iter()
+            .any(|(k, id, _)| k == "annotation" && *id == marks[1])
+    );
+    assert!(!records.iter().any(|(_, id, _)| *id == marks[0]));
+}

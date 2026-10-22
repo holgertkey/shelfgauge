@@ -364,8 +364,9 @@ pub struct CleanupSummary {
 }
 
 /// The cleanup after a complete, uncancelled scan (never call it after a cancelled
-/// one): soft-deletes the groups of removed books, restores those whose book came
-/// back, and purges removed groups older than `retention_days` (0: at once).
+/// one): soft-deletes the groups of removed books (except books on a hub shelf),
+/// restores those whose book came back, and purges removed groups older than
+/// `retention_days` (0: at once).
 pub fn cleanup_after_scan(
     index: &Connection,
     user: &Connection,
@@ -374,6 +375,9 @@ pub fn cleanup_after_scan(
     now: i64,
 ) -> Result<CleanupSummary, AttachError> {
     let mut summary = CleanupSummary::default();
+    // Books on a hub shelf keep their marks while this library lacks them: the marks
+    // came from another library or device and attach when the book appears.
+    let shelved = crate::hub_client::store::shelved_keys(user)?;
     for group in store::groups(user)? {
         let hint_live = book_by_id(index, group.book_id)?
             .is_some_and(|book| book.status != BookStatus::Removed);
@@ -386,6 +390,7 @@ pub fn cleanup_after_scan(
                 export_key(index, user, exporter, &group.key)?;
                 summary.restored += 1;
             }
+            (false, false) if shelved.contains(&group.key) => {}
             (false, false) => {
                 store::remove_group(user, &group.key, now)?;
                 remove_exports(user, exporter, &group.key)?;

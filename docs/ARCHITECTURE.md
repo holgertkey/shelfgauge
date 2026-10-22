@@ -679,7 +679,7 @@ person, not authentication.
   stdin, removing only the line break); `shelfgauge annotations export [--profile <name>]`. Unknown names
   are errors that list the profiles.
 
-## V2: hub — books on mobile devices (server built, instance side in progress)
+## V2: hub — books on mobile devices (server and instance side built, reader app designed)
 
 Agreed 2026-10-14. A user opens a book on a phone (or any other device) in a browser and
 reads it even when the computer with the library is off, with annotations and the
@@ -857,10 +857,10 @@ Built in Phase 24; the instance side and the reader app follow.
   shell, base path) and `tests/logging.rs`
   (`hub_secrets_and_publication_ids_are_never_logged`).
 
-### Instance side (0.18.0, in progress)
+### Instance side (0.18.0)
 
-`src/hub_client/` (Phase 25; accounts, pairing and devices so far; publishing and the
-sync worker follow) and the page **My profile → Phone and other devices**
+`src/hub_client/` (Phase 25), the page **My profile → Phone and other devices**, the book
+card's shelf section and the sync worker
 (`web::routes::hub`).
 
 - **Config** `[hub]`: `url` (the hub for new accounts; `HubUrl` requires `https://`,
@@ -932,6 +932,30 @@ sync worker follow) and the page **My profile → Phone and other devices**
   **Open on phone** while the book uploads (or on a published book) changes nothing
   (an in-memory set of books being published). The JSON shapes are pinned by
   `tests/fixtures/publication/record_plaintexts.json`.
+- **Pull and merge** (`hub_client::merge`): records after the profile's `last_seq`,
+  500 per page, each page merged in one transaction with the cursor. Per record the
+  newer `updated_at` wins (a tombstone, `deleted_at`, like any change); on equal times
+  the bytewise larger plaintext wins, so all clients converge (the reader app must use
+  the same rule). A winning record is written and its outbox entry dropped (no echo);
+  the echo of the library's own push changes nothing. Records are checked before use:
+  sealed under the account key at their place, ids matching (`shelf_id`,
+  `position_id`, the annotation's own id), another profile's annotation id is never
+  written. A `null` annotation or position on the hub (the book left the shelf) never
+  touches local data; a `null` shelf item not older than the local entry takes the
+  book off this library's shelf. Records of books this library lacks are stored with
+  book id 0 and attach when the book appears (§10); the cleanup after a scan never
+  marks the marks of a book on a hub shelf as removed, so they wait as long as the
+  book is on the shelf. Ties compare the plaintext bytes as pushed or stored, never a
+  re-serialization: the reader app must keep the bytes it received and produce the
+  instance's form (`record_plaintexts.json`). A pulled shelf item of another
+  instance is an entry with `own = 0` ("from <instance>" on the card).
+- **Worker** (`web::hub_sync`, started by `serve`): one task; every 30 s it pushes
+  profiles with queued changes; every `sync_interval_minutes` (and at start) a full
+  sync (`sync::sync_once`: push, finish `removing` entries, pull and merge, expiry),
+  recorded in `hub_accounts.synced_at` / `sync_error`; failures back off doubling up to
+  an hour (an unauthorized token: an hour). Pulled annotations rewrite the books'
+  Markdown export. **Sync now** on the hub page runs the same full sync. Logs counts
+  and profile ids only.
 - **Tests**: `tests/hub_client.rs` (a real hub on a loopback port, helpers in
   `tests/common/hub.rs`) and `tests/logging.rs`
   (`hub_account_secrets_are_never_logged_by_the_library`).

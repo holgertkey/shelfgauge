@@ -91,6 +91,7 @@ fn done_text(done: Option<&str>) -> Option<String> {
         match done? {
             "joined" => "This library joined your hub account.",
             "saved" => "The recovery code is saved; this library no longer keeps it.",
+            "synced" => "Synced with the hub.",
             "revoked" => "The device was removed from your hub account.",
             "left" => {
                 "This library left the hub account. Your marks and positions here are \
@@ -178,7 +179,7 @@ async fn page_response(
             let (userdata, checked) = (state.userdata_handle(), account.clone());
             let devices_call = call(account.hub_url.clone(), move |c| {
                 // The page is a natural moment to notice expired publications.
-                if let Err(e) = super::shelf::check_expired(&userdata, &checked, c) {
+                if let Err(e) = crate::hub_client::sync::check_expired(&userdata, &checked, c) {
                     tracing::info!(error = %e, "cannot check the hub's publications");
                 }
                 c.devices(&token)
@@ -338,6 +339,12 @@ pub(crate) async fn save(
         ("register" | "join", Some(_)) => {
             Outcome::Refused("This profile already has a hub account; leave it first.".to_owned())
         }
+        ("sync", Some(account)) => match crate::web::hub_sync::sync_account(&state, account).await?
+        {
+            Ok(_) => Outcome::Done("synced"),
+            Err(crate::hub_client::sync::SyncError::Client(e)) => Outcome::Refused(e.user_text()),
+            Err(e) => return Err(AppError::Internal(e.to_string())),
+        },
         ("saved", Some(_)) => {
             super::profiles::user(&state, move |_, conn| {
                 Ok(store::confirm_recovery_code(conn, id)?)
@@ -407,7 +414,7 @@ pub(crate) async fn save(
             tracing::info!(profile = id.0, "hub account left");
             Outcome::Done("left")
         }
-        ("saved" | "pair" | "revoke" | "leave", None) => {
+        ("saved" | "pair" | "revoke" | "leave" | "sync", None) => {
             Outcome::Refused("This profile has no hub account.".to_owned())
         }
         _ => return Err(AppError::BadRequest("unknown action".to_owned())),

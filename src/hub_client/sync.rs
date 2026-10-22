@@ -9,7 +9,7 @@ use rusqlite::{Connection, params};
 
 use super::keys::{self, AccountKey};
 use super::records;
-use super::store::HubAccount;
+use super::store::{self, HubAccount, ShelfEntry, ShelfState};
 use super::{ClientError, HubClient, OutRecord};
 use crate::annotations::store::UserData;
 use crate::profiles::ProfileId;
@@ -232,4 +232,154 @@ pub fn push(
         tracing::debug!(profile = profile.0, count = pushed, "records pushed");
     }
     Ok(pushed)
+}
+
+/// Deletes the publication of a book being removed from the shelf, pushes the
+/// deletions and forgets the entry; `false` when the hub could not be reached (the
+/// entry stays `removing` for the next sync). Runs blocking HTTP.
+pub fn take_down(
+    userdata: &UserData,
+    account: &HubAccount,
+    client: &HubClient,
+    entry: &ShelfEntry,
+) -> bool {
+    if let Some(id) = &entry.publication
+        && let Err(e) = client.delete_publication(&account.token, id)
+    {
+        tracing::info!(error = %e, "the hub did not delete a publication");
+        return false;
+    }
+    if let Err(e) = push(userdata, account, client) {
+        tracing::info!(error = %e, "push after removing failed");
+        return false;
+    }
+    let conn = userdata.lock();
+    // Unless it was published again meanwhile.
+    match store::shelf_entry(&conn, account.profile, &entry.content_key) {
+        Ok(Some(now)) if now.state == ShelfState::Removing => {
+            if let Err(e) = store::delete_entry(&conn, account.profile, &entry.content_key) {
+                tracing::error!(error = %e, "cannot write the hub shelf");
+            }
+        }
+        Ok(_) => {}
+        Err(e) => tracing::error!(error = %e, "cannot read the hub shelf"),
+    }
+    true
+}
+
+/// Marks this library's publications that the hub no longer has as expired. Runs
+/// blocking HTTP.
+pub fn check_expired(
+    userdata: &UserData,
+    account: &HubAccount,
+    client: &HubClient,
+) -> Result<usize, SyncError> {
+    let on_hub = client.publications(&account.token)?;
+    let conn = userdata.lock();
+    let mut expired = 0;
+    for entry in store::shelf(&conn, account.profile)? {
+        if entry.own
+            && entry.state == ShelfState::Published
+            && entry.publication.is_some_and(|id| !on_hub.contains(&id))
+        {
+            store::set_state(
+                &conn,
+                account.profile,
+                &entry.content_key,
+                ShelfState::Expired,
+                None,
+            )?;
+            expired += 1;
+        }
+    }
+    if expired > 0 {
+        tracing::info!(
+            profile = account.profile.0,
+            count = expired,
+            "publications expired on the hub"
+        );
+    }
+    Ok(expired)
+}
+
+/// What [`sync_once`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Report {
+    /// Records pushed.
+    pub pushed: usize,
+    /// Records pulled.
+    pub pulled: usize,
+    /// Records that changed this library.
+    pub merged: usize,
+    /// Content keys of the books whose annotations changed (for the Markdown export).
+    pub annotated: std::collections::BTreeSet<Vec<u8>>,
+}
+
+/// Pulls everything after `account`'s last `seq` and merges it; `book_id` finds the
+/// library's book with a content key. Runs blocking HTTP.
+pub fn pull(
+    userdata: &UserData,
+    account: &HubAccount,
+    client: &HubClient,
+    book_id: &dyn Fn(&[u8]) -> Option<i64>,
+    report: &mut Report,
+) -> Result<(), SyncError> {
+    let profile = account.profile;
+    let mut since = store::last_seq(&userdata.lock(), profile)?;
+    loop {
+        let page = client.pull(&account.token, since)?;
+        let conn = userdata.lock();
+        let tx = conn.unchecked_transaction()?;
+        for record in &page.records {
+            report.pulled += 1;
+            match super::merge::apply(&tx, profile, &account.key, record, book_id)? {
+                super::merge::Applied::Kept => {}
+                super::merge::Applied::Annotation(content) => {
+                    report.merged += 1;
+                    report.annotated.insert(content);
+                }
+                _ => report.merged += 1,
+            }
+        }
+        store::set_last_seq(&tx, profile, page.seq)?;
+        tx.commit()?;
+        if !page.more || page.seq <= since {
+            break;
+        }
+        since = page.seq;
+    }
+    Ok(())
+}
+
+/// One full sync of `account`: push the outbox, finish removals, pull and merge,
+/// notice expired publications; records the outcome on the account. Runs blocking
+/// HTTP.
+pub fn sync_once(
+    userdata: &UserData,
+    account: &HubAccount,
+    client: &HubClient,
+    book_id: &dyn Fn(&[u8]) -> Option<i64>,
+    now: i64,
+) -> Result<Report, SyncError> {
+    let mut report = Report::default();
+    let result = (|| {
+        report.pushed += push(userdata, account, client)?;
+        let removing: Vec<ShelfEntry> = store::shelf(&userdata.lock(), account.profile)?
+            .into_iter()
+            .filter(|e| e.state == ShelfState::Removing)
+            .collect();
+        for entry in &removing {
+            take_down(userdata, account, client, entry);
+        }
+        pull(userdata, account, client, book_id, &mut report)?;
+        check_expired(userdata, account, client)?;
+        Ok(())
+    })();
+    let outcome = match &result {
+        Ok(()) => Ok(now),
+        Err(SyncError::Client(e)) => Err(e.user_text()),
+        Err(e) => Err(e.to_string()),
+    };
+    store::record_sync(&userdata.lock(), account.profile, outcome)?;
+    result.map(|()| report)
 }

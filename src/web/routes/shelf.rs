@@ -364,7 +364,7 @@ async fn remove(state: &AppState, account: HubAccount, id: i64) -> Result<&'stat
     };
     let userdata = state.userdata_handle();
     let done = call(account.hub_url.clone(), move |client| {
-        Ok(take_down(&userdata, &account, client, &entry))
+        Ok(sync::take_down(&userdata, &account, client, &entry))
     })
     .await?
     .unwrap_or(false);
@@ -375,72 +375,4 @@ async fn remove(state: &AppState, account: HubAccount, id: i64) -> Result<&'stat
         "book taken off the hub shelf"
     );
     Ok(if done { "removed" } else { "removing" })
-}
-
-/// Deletes the publication of a book being removed from the shelf, pushes the
-/// deletions and forgets the entry; `false` when the hub could not be reached (the
-/// entry stays `removing` for the next sync). Runs blocking HTTP.
-pub(crate) fn take_down(
-    userdata: &crate::annotations::store::UserData,
-    account: &HubAccount,
-    client: &HubClient,
-    entry: &ShelfEntry,
-) -> bool {
-    if let Some(id) = &entry.publication
-        && let Err(e) = client.delete_publication(&account.token, id)
-    {
-        tracing::info!(error = %e, "the hub did not delete a publication");
-        return false;
-    }
-    if let Err(e) = sync::push(userdata, account, client) {
-        tracing::info!(error = %e, "push after removing failed");
-        return false;
-    }
-    let conn = userdata.lock();
-    // Unless it was published again meanwhile.
-    match store::shelf_entry(&conn, account.profile, &entry.content_key) {
-        Ok(Some(now)) if now.state == ShelfState::Removing => {
-            if let Err(e) = store::delete_entry(&conn, account.profile, &entry.content_key) {
-                tracing::error!(error = %e, "cannot write the hub shelf");
-            }
-        }
-        Ok(_) => {}
-        Err(e) => tracing::error!(error = %e, "cannot read the hub shelf"),
-    }
-    true
-}
-
-/// Marks this library's publications that the hub no longer has as expired. Runs
-/// blocking HTTP.
-pub(crate) fn check_expired(
-    userdata: &crate::annotations::store::UserData,
-    account: &HubAccount,
-    client: &HubClient,
-) -> Result<usize, sync::SyncError> {
-    let on_hub = client.publications(&account.token)?;
-    let conn = userdata.lock();
-    let mut expired = 0;
-    for entry in store::shelf(&conn, account.profile)? {
-        if entry.own
-            && entry.state == ShelfState::Published
-            && entry.publication.is_some_and(|id| !on_hub.contains(&id))
-        {
-            store::set_state(
-                &conn,
-                account.profile,
-                &entry.content_key,
-                ShelfState::Expired,
-                None,
-            )?;
-            expired += 1;
-        }
-    }
-    if expired > 0 {
-        tracing::info!(
-            profile = account.profile.0,
-            count = expired,
-            "publications expired on the hub"
-        );
-    }
-    Ok(expired)
 }

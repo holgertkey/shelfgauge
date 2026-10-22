@@ -182,6 +182,7 @@ pub struct Lib {
     pub library: Library,
     pub userdata: Arc<UserData>,
     pub router: Router,
+    pub state: AppState,
     pub scan: Arc<BackgroundScan>,
     /// The session token sent with requests ([`Lib::act_as`]).
     pub session: std::sync::Mutex<Option<String>>,
@@ -207,10 +208,23 @@ impl Reply {
 
 impl Lib {
     pub fn new(hub_url: &str, name: &str) -> Self {
+        Self::with_books(
+            hub_url,
+            name,
+            &[
+                ("book.txt", super::txt_gutenberg().into_bytes()),
+                ("locked.epub", super::epub3_drm()),
+            ],
+        )
+    }
+
+    /// A library with these files.
+    pub fn with_books(hub_url: &str, name: &str, files: &[(&str, Vec<u8>)]) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let library = Library::open(dir.path()).unwrap();
-        std::fs::write(dir.path().join("book.txt"), super::txt_gutenberg()).unwrap();
-        std::fs::write(dir.path().join("locked.epub"), super::epub3_drm()).unwrap();
+        for (file, data) in files {
+            std::fs::write(dir.path().join(file), data).unwrap();
+        }
         let mut conn = open_writer(&library.db_path()).unwrap();
         Scanner {
             library: &library,
@@ -238,7 +252,8 @@ impl Lib {
             _dir: dir,
             library: library.clone(),
             userdata,
-            router: super::local(web::router(state)),
+            router: super::local(web::router(state.clone())),
+            state,
             scan,
             session: std::sync::Mutex::new(None),
         }
@@ -340,6 +355,47 @@ impl Lib {
         lib.register(&hub.invite()).await;
         lib.post("/profile/hub", &[("action", "saved")]).await;
         lib
+    }
+
+    /// Joins the account of `code` (a second library).
+    pub async fn join(&self, code: &str) {
+        let reply = self
+            .post("/profile/hub", &[("action", "join"), ("code", code)])
+            .await;
+        assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.body);
+    }
+
+    /// Syncs now (push, pull, merge).
+    pub async fn sync(&self) {
+        let reply = self.post("/profile/hub", &[("action", "sync")]).await;
+        assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.body);
+        assert_eq!(reply.location(), "/profile/hub?done=synced");
+    }
+
+    /// Creates a bookmark at `block` of book `id`; its id.
+    pub async fn bookmark(&self, id: i64, block: &str) -> String {
+        let reply = self
+            .json(
+                &format!("/book/{id}/annotations"),
+                serde_json::json!({ "block": block }),
+            )
+            .await;
+        assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+        let value: serde_json::Value = serde_json::from_str(&reply.body).unwrap();
+        value["id"].as_str().unwrap().to_owned()
+    }
+
+    /// Runs `sql` on the user-data database.
+    pub fn sql(&self, sql: &str) {
+        self.userdata.lock().execute_batch(sql).unwrap();
+    }
+
+    /// One value of a query on the user-data database.
+    pub fn value<T: rusqlite::types::FromSql>(&self, sql: &str) -> T {
+        self.userdata
+            .lock()
+            .query_row(sql, [], |row| row.get(0))
+            .unwrap()
     }
 
     /// The owner's shelf.

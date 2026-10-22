@@ -50,6 +50,7 @@ use crate::storage::stats::{DuplicateSummary, LibraryStats, identical_summary, l
 
 pub(crate) mod assets;
 mod error;
+pub mod hub_sync;
 mod layout;
 mod profile;
 mod qr;

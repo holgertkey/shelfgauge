@@ -783,6 +783,8 @@ async fn hub_account_secrets_are_never_logged_by_the_library() {
         let publication = shelf[0].publication.unwrap().to_string();
         let book_key = shelf[0].book_key.clone().unwrap();
         home.get(&format!("/book/{book}")).await;
+        home.bookmark(book, "b3").await;
+        home.sync().await;
         assert_eq!(home.shelf_action(book, "remove").await, "removed");
 
         let account = home.account().unwrap();
@@ -791,6 +793,7 @@ async fn hub_account_secrets_are_never_logged_by_the_library() {
         assert!(log.contains("hub account registered"), "{log}");
         assert!(log.contains("hub account joined"), "{log}");
         assert!(log.contains("book published to the hub"), "{log}");
+        assert!(log.contains("synced with the hub"), "{log}");
         let digits = code.replace('-', "");
         let key_b64 = {
             use base64::Engine as _;

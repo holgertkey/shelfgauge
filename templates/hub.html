@@ -23,6 +23,11 @@
   {%- if let Some(sync_error) = account.sync_error %}
   <p class="hint">The last sync failed: {{ sync_error }}</p>
   {%- endif %}
+  <p class="hint">This library syncs your marks and positions of the books on your shelf every few minutes and soon after each change.</p>
+  <form action="{{ action }}" method="post">
+    <input type="hidden" name="action" value="sync">
+    <button type="submit">Sync now</button>
+  </form>
 </section>
 
 <section class="settings-section" id="hub-pair">
