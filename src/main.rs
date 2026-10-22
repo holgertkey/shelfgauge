@@ -20,7 +20,7 @@ use shelfgauge::profiles::{Profile, Role, password, session, store as profile_st
 use shelfgauge::scanner::{BackgroundScan, ScanPhase, ScanProgress, Scanner};
 use shelfgauge::web;
 
-use cli::{Cli, Mode, ProfilesAction};
+use cli::{Cli, HubAction, Mode, ProfilesAction};
 
 /// Read connections for the web handlers.
 const READ_POOL_SIZE: u32 = 4;
@@ -29,6 +29,9 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     cli::init_logging(cli.log_level(), cli.log_format.into());
     let invocation = cli.invocation();
+    if let Mode::Hub(action) = invocation.mode {
+        return hub(&invocation.path, invocation.explicit_path, action);
+    }
 
     let library = if invocation.explicit_path {
         Library::open(&invocation.path)?
@@ -67,7 +70,89 @@ fn main() -> anyhow::Result<()> {
         }
         Mode::Profiles(action) => profiles(&library, action),
         Mode::Errors => errors(&library),
+        Mode::Hub(_) => unreachable!("handled before the library is opened"),
     }
+}
+
+/// `shelfgauge hub …`: serves or manages the hub in `data` (created only if
+/// `explicit`, when serving).
+fn hub(data: &std::path::Path, explicit: bool, action: HubAction) -> anyhow::Result<()> {
+    use shelfgauge::hub::{self, Hub, HubState};
+
+    let create = explicit && action == HubAction::Serve;
+    let opened = Hub::open(data, create)?;
+    let config_path = data.join(hub::CONFIG_FILE);
+    if opened.created {
+        tracing::info!(config = ?config_path, "created a new hub");
+    }
+    for key in &opened.unknown_keys {
+        tracing::warn!(key = ?key, config = ?config_path, "unknown config key is ignored");
+    }
+    let hub = opened.hub;
+    let now = shelfgauge::annotations::now();
+    match action {
+        HubAction::Serve => {
+            let listener = hub::bind(hub.config())?;
+            let state = HubState::new(hub);
+            let url = state.display_url();
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .context("cannot start the async runtime")?;
+            runtime.block_on(async {
+                let shutdown = shutdown_signal().context("cannot listen for Ctrl+C")?;
+                println!("Hub serving {url}  (Ctrl+C to stop)");
+                hub::serve(listener, state, shutdown)
+                    .await
+                    .context("the hub server failed")
+            })?;
+            runtime.shutdown_timeout(Duration::from_secs(1));
+        }
+        HubAction::Takedown { id } => {
+            let id: shelfgauge::publication::format::PublicationId = id
+                .trim()
+                .to_ascii_lowercase()
+                .parse()
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            if hub.takedown(&id, now)? {
+                println!("Took the publication down; its id is refused from now on.");
+            } else {
+                println!("There is no such publication; its id is refused from now on.");
+            }
+        }
+        HubAction::Accounts => {
+            let accounts = hub.accounts()?;
+            for a in &accounts {
+                let days = |t: i64| (now - t).max(0) / 86_400;
+                println!(
+                    "{:>5}  created {} days ago  last seen {}  {} devices  {} publications  \
+                     {} records  {} bytes",
+                    a.id,
+                    days(a.created_at),
+                    a.last_seen_at
+                        .map_or("never".to_owned(), |t| format!("{} days ago", days(t))),
+                    a.usage.devices,
+                    a.usage.publications,
+                    a.usage.records,
+                    a.usage.bytes
+                );
+            }
+            match accounts.len() {
+                1 => println!("1 account."),
+                n => println!("{n} accounts."),
+            }
+        }
+        HubAction::Invite => {
+            let (code, _) = hub.invite(now)?;
+            println!("{}", code.as_str());
+            eprintln!(
+                "A one-time invite code, valid for {} days: enter it when registering a \
+                 library on this hub.",
+                hub.config().accounts.invite_days
+            );
+        }
+    }
+    Ok(())
 }
 
 /// The exporter of a library's annotations, linking to the configured server address.

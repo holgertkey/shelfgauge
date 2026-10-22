@@ -118,6 +118,38 @@ pub enum Command {
     /// `remove`, `reset-pin`, `set-password`, `remove-password`).
     #[command(subcommand)]
     Profiles(ProfilesCommand),
+    /// Run a hub: encrypted books and reading data for the phones and other devices of
+    /// shelfgauge libraries (`hub takedown`, `accounts`, `invite` manage it).
+    Hub(HubArgs),
+}
+
+/// `shelfgauge hub` arguments.
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+#[command(args_conflicts_with_subcommands = false)]
+pub struct HubArgs {
+    /// What to do; serve the hub when omitted.
+    #[command(subcommand)]
+    pub command: Option<HubCommand>,
+
+    /// The hub's data directory (default: the current directory). A new hub is created
+    /// only in a directory given here.
+    #[arg(long, global = true, value_name = "DIR")]
+    pub data: Option<PathBuf>,
+}
+
+/// `shelfgauge hub` subcommands.
+#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
+pub enum HubCommand {
+    /// Delete a publication, whichever account it belongs to, and refuse its id from
+    /// now on.
+    Takedown {
+        /// The publication id (32 hex digits, from its /r/<id> link).
+        id: String,
+    },
+    /// List the accounts: internal id, age, usage (no secrets).
+    Accounts,
+    /// Create a one-time invite code for registering an account.
+    Invite,
 }
 
 /// `shelfgauge profiles` subcommands.
@@ -207,6 +239,24 @@ pub enum Mode {
     Profiles(ProfilesAction),
     /// List the books that could not be parsed and exit.
     Errors,
+    /// Run or manage a hub (the path is its data directory).
+    Hub(HubAction),
+}
+
+/// What `shelfgauge hub` does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HubAction {
+    /// Serve the hub.
+    Serve,
+    /// Take a publication down.
+    Takedown {
+        /// The publication id as given.
+        id: String,
+    },
+    /// List the accounts.
+    Accounts,
+    /// Create an invite code.
+    Invite,
 }
 
 /// What `shelfgauge profiles` does.
@@ -306,6 +356,20 @@ impl Cli {
                     mode: Mode::Profiles(action),
                     explicit_path: false,
                     path: path.unwrap_or_else(current_dir),
+                    overrides: ConfigOverrides::default(),
+                }
+            }
+            Some(Command::Hub(args)) => {
+                let action = match args.command {
+                    None => HubAction::Serve,
+                    Some(HubCommand::Takedown { id }) => HubAction::Takedown { id },
+                    Some(HubCommand::Accounts) => HubAction::Accounts,
+                    Some(HubCommand::Invite) => HubAction::Invite,
+                };
+                Invocation {
+                    mode: Mode::Hub(action),
+                    explicit_path: args.data.is_some(),
+                    path: args.data.unwrap_or_else(current_dir),
                     overrides: ConfigOverrides::default(),
                 }
             }
@@ -505,6 +569,38 @@ mod tests {
             Mode::Profiles(ProfilesAction::RemovePassword { name: "Me".into() })
         );
         assert!(parse(&["profiles", "add"]).is_err());
+    }
+
+    #[test]
+    fn hub_subcommands_take_the_data_directory() {
+        let inv = parse(&["hub", "--data", "/srv/hub"]).unwrap();
+        assert_eq!(inv.mode, Mode::Hub(HubAction::Serve));
+        assert_eq!(inv.path, PathBuf::from("/srv/hub"));
+        assert!(inv.explicit_path);
+        let inv = parse(&["hub"]).unwrap();
+        assert_eq!(inv.path, PathBuf::from("."));
+        assert!(!inv.explicit_path, "only an existing hub is served");
+        let inv = parse(&["hub", "takedown", "ab12", "--data", "d"]).unwrap();
+        assert_eq!(
+            inv.mode,
+            Mode::Hub(HubAction::Takedown { id: "ab12".into() })
+        );
+        assert_eq!(inv.path, PathBuf::from("d"));
+        assert_eq!(
+            parse(&["hub", "--data", "d", "accounts"]).unwrap().mode,
+            Mode::Hub(HubAction::Accounts)
+        );
+        assert_eq!(
+            parse(&["hub", "invite"]).unwrap().mode,
+            Mode::Hub(HubAction::Invite)
+        );
+        assert!(parse(&["hub", "takedown"]).is_err());
+        assert_eq!(
+            Cli::try_parse_from(["shelfgauge", "hub", "--log-format", "json"])
+                .unwrap()
+                .log_format,
+            LogFormatArg::Json
+        );
     }
 
     #[test]

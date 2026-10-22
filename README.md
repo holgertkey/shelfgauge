@@ -47,6 +47,7 @@ shelfgauge profiles list [PATH]                # the profiles: id, name, role, P
 shelfgauge profiles add NAME [PATH] [--admin]  # add a profile (a reader unless --admin)
 shelfgauge profiles remove NAME [PATH] [--yes] # delete a profile with its reading data
 shelfgauge profiles reset-pin NAME [PATH]      # remove a forgotten PIN
+shelfgauge hub [--data DIR]                    # run a hub (see Running a hub)
 ```
 
 Options: `--port <PORT>`, `--bind <ADDR>`, `--no-scan` (serve without scanning first),
@@ -446,6 +447,55 @@ reverse proxy.
 
 Note: making a library reachable by others makes its books available to them; whether
 that is allowed depends on the books' licenses and is the operator's responsibility.
+
+## Running a hub
+
+A hub keeps encrypted copies of books and of reading data (bookmarks, quotes, the
+reading position) for the phones and other devices of one or more libraries, so books
+can be read when the computer with the library is off. It never sees a title or a
+line of text: everything is encrypted before it is uploaded, and the keys stay on the
+libraries and devices of an account. *Work in progress*: the hub server is built, but
+libraries cannot connect to it and its reader app is not there yet (both come in
+0.18.0).
+
+```sh
+shelfgauge hub --data /srv/shelfgauge-hub     # creates the directory and hub.toml
+shelfgauge hub invite --data /srv/shelfgauge-hub
+```
+
+The data directory holds `hub.toml` (settings, restart after editing), `hub.sqlite`
+and `blobs/`. Without `--data`, the current directory must already be a hub. Accounts
+are anonymous (no e-mail); a library registers one with a one-time **invite code**
+from `shelfgauge hub invite` (valid 7 days), unless `[accounts] registration = "open"`.
+Other commands: `shelfgauge hub accounts` lists accounts by internal number with their
+usage (no secrets), `shelfgauge hub takedown <publication-id>` deletes a publication
+(the id from its `/r/<id>` link) and refuses that id from now on.
+
+The hub listens on `127.0.0.1:8743` and has no TLS of its own: **put it behind a
+reverse proxy with HTTPS**, which phones also need for offline reading. With Caddy:
+
+```
+hub.example.org {
+	reverse_proxy 127.0.0.1:8743
+}
+```
+
+and `allowed_hosts = ["hub.example.org"]` in the `[server]` section of `hub.toml` (with
+nginx, pass `proxy_set_header Host $host;` as for a library). Settings in `hub.toml`:
+
+- `[quotas]` per account: `max_bytes`, `max_publications`, `max_devices` (0 = no
+  limit, the default);
+- `[limits]`: `max_blob_bytes` (one part or image of a book, 64 MiB),
+  `publication_expiry_days` (a book not opened for that many days is deleted; 0 =
+  never, the default), `requests_per_minute` per device (600) and
+  `public_requests_per_hour` (60) for registering, pairing and recovering per client
+  address;
+- `[accounts]`: `registration`, `max_accounts`, `invite_days`.
+
+Behind a proxy on the same machine all clients share one budget for registering,
+pairing and recovering; add a rate limit in the proxy for a hub on the internet. The
+hub logs no tokens, secrets, account or publication ids; `--log-format json` suits a
+log collector.
 
 ## Changelog
 

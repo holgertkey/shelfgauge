@@ -263,7 +263,7 @@ pub struct ConfigError {
 }
 
 impl ConfigError {
-    fn new(key: &'static str, message: impl fmt::Display) -> Self {
+    pub(crate) fn new(key: &'static str, message: impl fmt::Display) -> Self {
         Self {
             key,
             message: message.to_string(),
@@ -500,7 +500,7 @@ impl Config {
 /// Normalizes a URL prefix to `/` or `/a/b`: adds the leading slash, drops trailing and
 /// duplicate slashes, and rejects `.`/`..` segments and characters other than ASCII
 /// letters, digits, `-`, `.`, `_` and `~`.
-fn normalize_base_path(path: &str) -> Result<String, String> {
+pub(crate) fn normalize_base_path(path: &str) -> Result<String, String> {
     // Only unreserved URL characters: the prefix is used verbatim in generated URLs and
     // in router paths, where `{`, `}` and `*` would be parameters.
     if let Some(c) = path

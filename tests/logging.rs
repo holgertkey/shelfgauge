@@ -562,3 +562,188 @@ fn publication_keys_and_ids_are_never_logged() {
     assert!(!log.contains("Secret Title"), "{log}");
     assert!(!log.contains("[107, 107"), "key bytes in {log}");
 }
+
+/// The hub never logs device tokens, pairing secrets, invite codes, recovery secrets
+/// or their hashes, public account ids, publication ids or bodies (blobs, records,
+/// device names), also not when requests fail; accounts appear as `account=N` and
+/// routes as templates.
+#[tokio::test]
+async fn hub_secrets_and_publication_ids_are_never_logged() {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use shelfgauge::hub::config::HubConfig;
+    use shelfgauge::hub::{Hub, HubState, Secret};
+
+    drop(Capture::default().dispatch("off", LogFormat::Text, false));
+    let dir = tempfile::tempdir().unwrap();
+    for format in [LogFormat::Text, LogFormat::Json] {
+        let data = tempfile::tempdir_in(dir.path()).unwrap();
+        let hub = Hub::with_config(data.path(), HubConfig::default()).unwrap();
+        let (invite, _) = hub.invite(shelfgauge::annotations::now()).unwrap();
+        let state = HubState::new(hub);
+        let app = common::local(shelfgauge::hub::router(state.clone()));
+        let capture = Capture::default();
+        let _log = tracing::dispatcher::set_default(&capture.dispatch("trace", format, false));
+        let send = |method: Method, uri: String, token: Option<String>, body: Body| {
+            let app = app.clone();
+            async move {
+                let mut request = Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header(header::HOST, "localhost:8743")
+                    .header(header::CONTENT_TYPE, "application/json");
+                if let Some(token) = token {
+                    request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
+                }
+                let response = app.oneshot(request.body(body).unwrap()).await.unwrap();
+                let status = response.status();
+                let body = response.into_body().collect().await.unwrap().to_bytes();
+                (
+                    status,
+                    serde_json::from_slice::<serde_json::Value>(&body).ok(),
+                )
+            }
+        };
+        let json = |value: serde_json::Value| Body::from(value.to_string());
+        let recovery = Secret::from_text("Recovery-Secret-Wombat");
+        let recovery_hash = URL_SAFE_NO_PAD.encode(recovery.hash());
+        let name = URL_SAFE_NO_PAD.encode(b"Device-Name-Ciphertext");
+        let (status, created) = send(
+            Method::POST,
+            "/api/account".into(),
+            None,
+            json(serde_json::json!({
+                "invite": invite.as_str(),
+                "recovery_hash": recovery_hash,
+                "device_name": name,
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let created = created.unwrap();
+        let token = created["token"].as_str().unwrap().to_owned();
+        let account = created["account"].as_str().unwrap().to_owned();
+        let (_, pairing) = send(
+            Method::POST,
+            "/api/pairings".into(),
+            Some(token.clone()),
+            Body::empty(),
+        )
+        .await;
+        let pairing = pairing.unwrap()["secret"].as_str().unwrap().to_owned();
+        let (_, paired) = send(
+            Method::POST,
+            "/api/pair".into(),
+            None,
+            json(serde_json::json!({ "secret": pairing })),
+        )
+        .await;
+        let phone = paired.unwrap()["token"].as_str().unwrap().to_owned();
+        let (status, _) = send(
+            Method::POST,
+            "/api/recover".into(),
+            None,
+            json(serde_json::json!({ "account": account, "secret": recovery.as_str() })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let id = "5e".repeat(16);
+        let mut blob = vec![0, 1];
+        blob.extend_from_slice(&[0; 12]);
+        blob.extend_from_slice(b"Blob-Body-Ciphertext");
+        for path in ["manifest", "p/0"] {
+            let (status, _) = send(
+                Method::PUT,
+                format!("/api/pub/{id}/{path}"),
+                Some(token.clone()),
+                Body::from(blob.clone()),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CREATED);
+        }
+        send(
+            Method::GET,
+            format!("/api/pub/{id}/manifest"),
+            Some(phone.clone()),
+            Body::empty(),
+        )
+        .await;
+        let record = URL_SAFE_NO_PAD.encode(b"Record-Ciphertext");
+        send(
+            Method::POST,
+            "/api/sync".into(),
+            Some(phone.clone()),
+            json(serde_json::json!({
+                "records": [{ "kind": "annotation", "id": "Record-Id-Okapi", "data": record }]
+            })),
+        )
+        .await;
+        send(
+            Method::GET,
+            "/api/sync?since=0".into(),
+            Some(token.clone()),
+            Body::empty(),
+        )
+        .await;
+        // Failures: a wrong token, a reused pairing secret, a missing publication.
+        send(
+            Method::GET,
+            "/api/pub".into(),
+            Some("Wrong-Token-Numbat".into()),
+            Body::empty(),
+        )
+        .await;
+        send(
+            Method::POST,
+            "/api/pair".into(),
+            None,
+            json(serde_json::json!({ "secret": pairing })),
+        )
+        .await;
+        send(
+            Method::GET,
+            format!("/api/pub/{}/p/9", "7a".repeat(16)),
+            Some(token.clone()),
+            Body::empty(),
+        )
+        .await;
+        send(Method::GET, format!("/r/{id}"), None, Body::empty()).await;
+        send(
+            Method::DELETE,
+            format!("/api/pub/{id}"),
+            Some(token.clone()),
+            Body::empty(),
+        )
+        .await;
+
+        let log = capture.text();
+        assert!(log.contains("account created"), "{log}");
+        assert!(log.contains("device paired"), "{log}");
+        assert!(log.contains("publication deleted"), "{log}");
+        assert!(
+            log.contains("/api/pub/{id}/{*blob}"),
+            "route templates: {log}"
+        );
+        assert!(log.contains("account"), "{log}");
+        let blob_text = String::from_utf8_lossy(&blob).into_owned();
+        for secret in [
+            token.as_str(),
+            phone.as_str(),
+            invite.as_str(),
+            pairing.as_str(),
+            account.as_str(),
+            recovery.as_str(),
+            recovery_hash.as_str(),
+            name.as_str(),
+            id.as_str(),
+            "7a7a7a7a",
+            "Wrong-Token-Numbat",
+            "Blob-Body-Ciphertext",
+            record.as_str(),
+            "Record-Id-Okapi",
+            blob_text.as_str(),
+        ] {
+            assert!(!log.contains(secret), "{secret:?} in {log}");
+        }
+    }
+}

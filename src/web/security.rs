@@ -285,19 +285,23 @@ fn forbidden(message: &'static str) -> Response {
     (StatusCode::FORBIDDEN, message).into_response()
 }
 
-/// Middleware: rejects requests whose `Host` is not on the allowlist.
-///
-/// HTTP/2 requests may carry the host only in the URI authority, which is used when
-/// there is no `Host` header.
+/// The host a request is addressed to: its `Host` header, or for HTTP/2 requests that
+/// carry it only there, the URI authority.
+pub(crate) fn request_host(req: &Request) -> Option<&str> {
+    match req.headers().get(header::HOST) {
+        Some(value) => value.to_str().ok(),
+        None => req.uri().authority().map(|a| a.as_str()),
+    }
+}
+
+/// Middleware: rejects requests whose `Host` (see [`request_host`]) is not on the
+/// allowlist.
 pub(crate) async fn check_host(
     State(state): State<AppState>,
     req: Request,
     next: Next,
 ) -> Response {
-    let host = match req.headers().get(header::HOST) {
-        Some(value) => value.to_str().ok(),
-        None => req.uri().authority().map(|a| a.as_str()),
-    };
+    let host = request_host(&req);
     match host {
         Some(host) if state.hosts().allows(host) => next.run(req).await,
         _ => {
@@ -338,7 +342,7 @@ pub(crate) async fn check_origin(
 
 /// The TCP peer of a request: the server's connection info, or the mock of the
 /// tests.
-fn peer_addr(req: &Request) -> Option<SocketAddr> {
+pub(crate) fn peer_addr(req: &Request) -> Option<SocketAddr> {
     let extensions = req.extensions();
     extensions
         .get::<ConnectInfo<SocketAddr>>()
@@ -358,10 +362,7 @@ pub(crate) async fn classify_reach(
     mut req: Request,
     next: Next,
 ) -> Response {
-    let host = match req.headers().get(header::HOST) {
-        Some(value) => value.to_str().ok(),
-        None => req.uri().authority().map(|a| a.as_str()),
-    };
+    let host = request_host(&req);
     let proxied = host.is_some_and(|h| state.hosts().is_configured_host(h))
         || PROXY_HEADERS
             .iter()
@@ -441,23 +442,33 @@ pub(crate) async fn require_auth(
 /// Middleware: hardening headers on every response.
 pub(crate) async fn security_headers(req: Request, next: Next) -> Response {
     let mut response = next.run(req).await;
-    let headers = response.headers_mut();
+    // Not `no-referrer`: with it, browsers send `Origin: null` on form posts, which
+    // `check_origin` rejects.
+    set_hardening_headers(
+        response.headers_mut(),
+        CONTENT_SECURITY_POLICY,
+        "same-origin",
+    );
+    response
+}
+
+/// Sets the hardening headers: `csp` as the `Content-Security-Policy`, `referrer` as
+/// the `Referrer-Policy`, no MIME sniffing, no framing. Existing values are replaced.
+pub(crate) fn set_hardening_headers(
+    headers: &mut axum::http::HeaderMap,
+    csp: &'static str,
+    referrer: &'static str,
+) {
     headers.insert(
         header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static(CONTENT_SECURITY_POLICY),
+        HeaderValue::from_static(csp),
     );
     headers.insert(
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
     );
     headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
-    // Not `no-referrer`: with it, browsers send `Origin: null` on form posts, which
-    // `check_origin` rejects.
-    headers.insert(
-        header::REFERRER_POLICY,
-        HeaderValue::from_static("same-origin"),
-    );
-    response
+    headers.insert(header::REFERRER_POLICY, HeaderValue::from_static(referrer));
 }
 
 #[cfg(test)]

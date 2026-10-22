@@ -3,9 +3,10 @@
 > Status: v1 implemented (scanner, storage, web server, library and reading mode,
 > hardening), annotations (0.6.0), reader settings (0.7.0), EPUB (0.8.0), plain text
 > and `.fbz` (0.9.0), HTML (0.10.0, opt-in), search within the book (0.11.0), library
-> statistics (0.12.0), the settings page (0.13.0). The V2 hub below is designed, not
-> built; the core crate it needs and the publication format exist (see "Crates" and
-> "Publication format").
+> statistics (0.12.0), the settings page (0.13.0). Of the V2 hub below, the core crate,
+> the publication format (0.17.0) and the hub server (for 0.18.0) are built; the
+> instance side and the reader app are not yet (see "Crates", "Publication format" and
+> "Hub server").
 
 `shelfgauge` is a single-binary Rust app that indexes a directory tree of ebook files (FB2
 (also `.fbz`), EPUB, TXT and opt-in HTML, plain files and `.zip` archives with any number of books inside) into a local SQLite DB
@@ -571,9 +572,11 @@ daemon logs to journald or the container log), no metrics endpoint.
   `profile deleted`); client addresses are not logged either (`remote = true` on the
   span says a request came from another device); `Profile` and the session `Token`
   have redacted `Debug` output; in V2 device
-  tokens, pairing secrets, recovery codes, keys of any kind and publication ids
-  (`BookKey` and `PublicationId` have redacted `Debug` output; checked for building
-  and sealing a publication since 0.17.0). Books
+  tokens, pairing secrets, invite codes, recovery codes and their hashes, keys of any
+  kind, public account ids and publication ids (`BookKey`, `PublicationId`, the hub's
+  `Secret` and `AccountId` have redacted `Debug` output; checked for building and
+  sealing a publication since 0.17.0 and for every hub route since Phase 24: the hub
+  logs route templates, accounts as `account = N`, and no bodies). Books
   are named by id or library-relative path, never by absolute path at `info` and
   above. Untrusted values (`Host`/`Origin` headers, paths from archives, parser
   messages) are logged with `?` (Debug escapes newlines and control characters) or as
@@ -676,7 +679,7 @@ person, not authentication.
   stdin, removing only the line break); `shelfgauge annotations export [--profile <name>]`. Unknown names
   are errors that list the profiles.
 
-## V2: hub — books on mobile devices (designed, not built)
+## V2: hub — books on mobile devices (server built, clients designed)
 
 Agreed 2026-10-14. A user opens a book on a phone (or any other device) in a browser and
 reads it even when the computer with the library is off, with annotations and the
@@ -792,6 +795,67 @@ and sealing in the app (`src/publication/`).
   server's; interop vectors for the browser side are in `tests/fixtures/publication/`
   (encryption from a fixed key, nonce and padded plaintext; a raw deflate stream; a
   whole sealed publication; regenerate with `SHELFGAUGE_WRITE_VECTORS=1`).
+
+### Hub server (0.18.0, in progress)
+
+`src/hub/` in the app crate, `shelfgauge hub` in the same binary (no feature flag).
+Built in Phase 24; the instance side and the reader app follow.
+
+- **Data directory**: `hub.toml` (`hub::config`: `[server]` bind/port/allowed hosts/
+  base path, default `127.0.0.1:8743`; `[accounts]` registration `invite` | `open`,
+  `max_accounts`, `invite_days`; `[quotas]` per account bytes/publications/devices;
+  `[limits]` `max_blob_bytes` 64 MiB, `publication_expiry_days`, per-device and
+  per-address request rates), `hub.sqlite` (own `user_version` migrations: accounts,
+  devices, pairings, invites, publications, blobs, takedowns, records) and `blobs/`
+  (`<2 hex>/<publication id>/manifest|p/<n>|i/<n>`, paths built only from parsed ids,
+  written to a temp file and renamed). A new hub is created only with an explicit
+  `--data`; `main` branches to it before any library is opened.
+- **Accounts and tokens**: the public account id (128 random bits) is in the API and
+  the recovery code, the internal integer id in logs and `hub accounts`. Device
+  tokens, pairing secrets (10 minutes, single use) and invite codes (one-time,
+  `invite_days`) are 32 random bytes in base64url, stored as SHA-256 of that text; at
+  registration the instance sends `recovery_hash` = base64url (unpadded) of SHA-256
+  over the recovery secret's base64url *text* (not its raw bytes; `Secret::hash`),
+  `POST /api/recover` the secret's text.
+  Revoked devices keep their row (`revoked_at`) and lose access.
+- **API** (JSON, binary fields base64url; `Authorization: Bearer` on all but `info`,
+  `account` create, `pair`, `recover`): `GET /api/info` (format range, limits,
+  quotas, registration), `POST/GET /api/account`, `POST /api/pairings` (new pairing
+  secret), `POST /api/pair`, `POST /api/recover`, `GET /api/devices`, `DELETE
+  /api/devices/{id}`, `GET /api/pub` (the account's publications with sizes and last
+  opening), `PUT/GET /api/pub/{id}/{blob}` (raw sealed blobs; a PUT must parse as an
+  envelope of a supported format version; the first blob creates the publication),
+  `DELETE /api/pub/{id}`, `GET /api/sync?since=N&limit=M` and `POST /api/sync`.
+  Errors are `{"error": code, "message": …}` and never echo the request; another
+  account's publication answers `404` exactly like a missing one (also for `PUT`,
+  which never overwrites it), a taken-down one `410`.
+- **Sync records**: `(kind, id)` per account with `kind` in `shelf_item`,
+  `annotation`, `position` and an opaque ciphertext; every change gets the account's
+  next `seq`, a deletion keeps the row as a tombstone (`data: null`) with a new `seq`.
+  A pull answers records after `since` in `seq` order with a cursor `seq` and `more`.
+- **Limits**: body limits per route (64 KiB JSON, 16 MiB / 500 records per push, 1 MiB
+  per record, `max_blob_bytes` per blob), quotas checked inside the write transaction
+  (a refused blob is not written, a refused push stores nothing), a token bucket per
+  device and a fixed hourly window per non-loopback address for the routes without a
+  token (loopback peers, a proxy on the same machine, share one budget; forwarded
+  headers are never read). Expiry (`publication_expiry_days`, last opening = the
+  last manifest fetch, written at most hourly) runs on start and daily; `hub
+  takedown` deletes a publication and remembers its id.
+- **Layers**: the request trace (`request{id, method, route, account}`), the hardening
+  headers with the §11 CSP (`script-src 'self' 'wasm-unsafe-eval'`, `img-src 'self'
+  blob:`, no inline code) and `Referrer-Policy: no-referrer`, and the `Host` allowlist
+  are shared with the library server (`web::security`, `web::trace`); no reach
+  classification, no `Origin` check and no CORS (a bearer header is no ambient
+  credential; the instance's client sends no `Origin`). API answers are `no-store`.
+- **Reader shell**: `/`, `/pair` and `/r/{id}` serve one static page for any
+  well-formed id without a database lookup (no existence oracle), with its files under
+  `/assets/` from `assets/hub/` (excluded from the library's assets); a placeholder
+  until the reader app.
+- **Tests**: `tests/hub.rs` (router with a settable clock: invites, pairing expiry and
+  single use, recovery, revocation, blob round trip, account isolation, quotas,
+  expiry, takedown, sync paging and tombstones, body limits, rate limits, `Host`,
+  shell, base path) and `tests/logging.rs`
+  (`hub_secrets_and_publication_ids_are_never_logged`).
 
 **DRM** (implemented for EPUB in 0.8.0): DRM-free books,
 including purchased ones with a watermark, are ordinary books and watermarks are never

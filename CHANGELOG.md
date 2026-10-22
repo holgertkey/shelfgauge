@@ -8,6 +8,16 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+### Added
+
+- **Hub server** (`shelfgauge hub --data <dir>`, part of the coming hub for reading on
+  phones; libraries cannot connect to it yet): anonymous accounts registered with
+  one-time invite codes (`shelfgauge hub invite`), device tokens, pairing and recovery,
+  encrypted publications and sync records, per-account quotas, rate limits, expiry of
+  unopened publications and `shelfgauge hub takedown`, `shelfgauge hub accounts`. It
+  stores only ciphertext and runs behind a reverse proxy with HTTPS (README, "Running
+  a hub").
+
 ## [0.17.0] - 2026-10-22
 
 ### Added

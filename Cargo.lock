@@ -1361,6 +1361,7 @@ version = "8.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d84e8ba78bd384263e5922f084cbe1b081c3b7e69add59c8fb097b879ba968a"
 dependencies = [
+ "globset",
  "sha2",
  "walkdir",
 ]
@@ -1527,7 +1528,7 @@ dependencies = [
 
 [[package]]
 name = "shelfgauge"
-version = "0.17.0+001"
+version = "0.17.0+002"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -1575,7 +1576,7 @@ dependencies = [
 
 [[package]]
 name = "shelfgauge-core"
-version = "0.17.0+001"
+version = "0.17.0+002"
 dependencies = [
  "postcard",
  "serde",

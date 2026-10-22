@@ -48,14 +48,14 @@ use crate::storage::books::BookDetails;
 use crate::storage::scans::scan_generation;
 use crate::storage::stats::{DuplicateSummary, LibraryStats, identical_summary, library_stats};
 
-mod assets;
+pub(crate) mod assets;
 mod error;
 mod layout;
 mod profile;
 mod routes;
 pub mod security;
 mod sidebar;
-mod trace;
+pub(crate) mod trace;
 mod urls;
 
 use error::AppError;

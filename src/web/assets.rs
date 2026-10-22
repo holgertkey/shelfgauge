@@ -14,6 +14,8 @@ use super::AppError;
 
 #[derive(Embed)]
 #[folder = "assets/"]
+// The hub's files are served by the hub only (`crate::hub`).
+#[exclude = "hub/*"]
 struct Assets;
 
 /// `Cache-Control` for a URL with the current version.
@@ -24,12 +26,12 @@ pub(crate) fn version(name: &str) -> Option<String> {
     Assets::get(name).map(|file| hex_prefix(&file.metadata.sha256_hash()))
 }
 
-fn hex_prefix(hash: &[u8; 32]) -> String {
+pub(crate) fn hex_prefix(hash: &[u8; 32]) -> String {
     hash[..8].iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// The `Content-Type` of an asset, by extension.
-fn content_type(name: &str) -> &'static str {
+pub(crate) fn content_type(name: &str) -> &'static str {
     match name.rsplit_once('.').map(|(_, ext)| ext) {
         Some("css") => "text/css; charset=utf-8",
         Some("js") => "text/javascript; charset=utf-8",
@@ -104,6 +106,12 @@ mod tests {
         }
         assert_eq!(version("missing.css"), None);
         assert_eq!(version("../Cargo.toml"), None);
+    }
+
+    #[test]
+    fn hub_files_are_not_library_assets() {
+        assert!(Assets::get("hub/shell.html").is_none());
+        assert!(Assets::get("hub/hub.css").is_none());
     }
 
     #[test]

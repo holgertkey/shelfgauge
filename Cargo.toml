@@ -7,7 +7,7 @@ default-members = [".", "crates/*"]
 # requirement on `shelfgauge-core` below as well (publishing needs it, and Cargo refuses
 # to build while the two differ); the `+BUILD` counter is changed only here.
 [workspace.package]
-version = "0.17.0+001"
+version = "0.17.0+002"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/holgertkey/shelfgauge"
@@ -52,14 +52,14 @@ r2d2 = "0.8.10"
 r2d2_sqlite = "0.35.0"
 rayon = "1.12.0"
 roxmltree = "0.21.1"
-rust-embed = { version = "8.13.0", features = ["debug-embed"] }
+rust-embed = { version = "8.13.0", features = ["debug-embed", "include-exclude"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde.workspace = true
 serde_ignored = "0.1.14"
 tempfile = "3.27.0"
 thiserror.workspace = true
 toml = "1.1.8"
-tokio = { version = "1.53.2", features = ["rt-multi-thread", "net", "signal", "macros"] }
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "net", "signal", "macros", "time"] }
 tracing.workspace = true
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 walkdir = "2.5.0"
