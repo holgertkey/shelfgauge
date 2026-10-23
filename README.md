@@ -1,11 +1,11 @@
-# shelfgauge v0.17.0
+# shelfgauge v0.18.0
 
 A single-binary tool that indexes a folder tree of ebooks — FB2, EPUB, plain text and
 (optionally) HTML files, plain or inside `.zip` archives — into a local SQLite
 database and serves a browsable, searchable web library on `localhost`, with an
 in-browser reader.
 
-**Current version:** 0.17.0
+**Current version:** 0.18.0
 
 ## Status
 
@@ -458,10 +458,9 @@ A hub keeps encrypted copies of books and of reading data (bookmarks, quotes, th
 reading position) for the phones and other devices of one or more libraries, so books
 can be read when the computer with the library is off. It never sees a title or a
 line of text: everything is encrypted before it is uploaded, and the keys stay on the
-libraries and devices of an account. *Work in progress*: the hub server is built and
-a library's profiles can create an account, pair devices, join from another library,
-put books on their shelf and sync their marks; the reader app for phones comes in
-0.18.0.
+libraries and devices of an account. A library's profiles create an account, pair
+their devices, put books on their shelf and sync their marks; the devices read in the
+hub's reader app (see **Reading on your phone** below).
 
 ```sh
 shelfgauge hub --data /srv/shelfgauge-hub     # creates the directory and hub.toml
@@ -523,6 +522,25 @@ account share the shelf and the marks; the newest change wins, also a deletion. 
 of a book a library does not have wait there while the book is on the shelf (they are
 not cleaned up like the marks of a removed book) and attach when it appears.
 
+**Reading on your phone**: open the pairing link on the phone (scan the QR code of
+**Pair a device**); the browser is then paired and shows your shelf at the hub's
+address: the books of your account, those you are reading first, each with the
+library it comes from. Any modern browser works; the hub must be reached over HTTPS
+(the browser's encryption and offline storage need it). A book reads as in the
+library: the same text layout, contents, notes in a panel, focus mode with the status
+line, reading settings (kept on the phone), search in the book, bookmarks and quotes
+with notes; the reading position is saved. Marks and the position sync with your
+libraries; a book opened from the shelf continues where you stopped, on whichever
+device that was. A book once opened is kept on the phone (encrypted) and opens
+without a connection, also when the hub is down; marks made meanwhile sync when it is
+back. A browser that is not paired sees no content, also with a book's link.
+
+On an iPhone or iPad, **add the reader to the home screen** (Share → Add to Home
+Screen): Safari deletes the data of sites not visited for a week, which would unpair
+the browser and drop its copies, while a home screen app keeps them (your marks are
+safe in the library either way; pair again if it happens). Removing a device in the
+library, or a book from the shelf, removes it from the phone at its next connection.
+
 Behind a proxy on the same machine all clients share one budget for registering,
 pairing and recovering; add a rate limit in the proxy for a hub on the internet. The
 hub logs no tokens, secrets, account or publication ids; `--log-format json` suits a
@@ -538,4 +556,4 @@ MIT — see [LICENSE](LICENSE).
 
 ---
 
-_shelfgauge v0.17.0 — MIT License_
+_shelfgauge v0.18.0 — MIT License_

@@ -3,10 +3,10 @@
 > Status: v1 implemented (scanner, storage, web server, library and reading mode,
 > hardening), annotations (0.6.0), reader settings (0.7.0), EPUB (0.8.0), plain text
 > and `.fbz` (0.9.0), HTML (0.10.0, opt-in), search within the book (0.11.0), library
-> statistics (0.12.0), the settings page (0.13.0). Of the V2 hub below, the core crate,
-> the publication format (0.17.0) and the hub server (for 0.18.0) are built; the
-> instance side and the reader app are not yet (see "Crates", "Publication format" and
-> "Hub server").
+> statistics (0.12.0), the settings page (0.13.0), remote access (0.16.0). The V2 hub
+> below is built: the core crate and the publication format (0.17.0), the hub server,
+> the instance side and the reader app (0.18.0); `.sgbook` files and OPDS follow (see
+> "Crates", "Publication format", "Hub server", "Reader app" and "Instance side").
 
 `shelfgauge` is a single-binary Rust app that indexes a directory tree of ebook files (FB2
 (also `.fbz`), EPUB, TXT and opt-in HTML, plain files and `.zip` archives with any number of books inside) into a local SQLite DB
@@ -679,7 +679,7 @@ person, not authentication.
   stdin, removing only the line break); `shelfgauge annotations export [--profile <name>]`. Unknown names
   are errors that list the profiles.
 
-## V2: hub — books on mobile devices (server and instance side built, reader app in progress)
+## V2: hub — books on mobile devices (built, 0.18.0)
 
 Agreed 2026-10-14. A user opens a book on a phone (or any other device) in a browser and
 reads it even when the computer with the library is off, with annotations and the
@@ -799,7 +799,7 @@ and sealing in the app (`src/publication/`).
 ### Hub server (0.18.0, in progress)
 
 `src/hub/` in the app crate, `shelfgauge hub` in the same binary (no feature flag).
-Built in Phase 24; the reader app (Phase 26) and the instance side (Phase 25) are below.
+Built in Phase 24 (0.18.0); the reader app (Phase 26) and the instance side (Phase 25) are below.
 
 - **Data directory**: `hub.toml` (`hub::config`: `[server]` bind/port/allowed hosts/
   base path, default `127.0.0.1:8743`; `[accounts]` registration `invite` | `open`,
@@ -921,7 +921,10 @@ Phase 26: `assets/hub/` (`hub.js` pages, `store.js` IndexedDB and API calls,
   `/r/<id>`) are static per version and come from the versioned cache (every
   `/r/<id>` is one cached page), so pages and files are always of one version; other
   navigations (e.g. `/api/info`) pass through; the app's files are precached per
-  version (old versions' caches are deleted on activation); a publication's parts
+  version (old versions' caches are deleted on activation); after a hub upgrade the
+  new worker waits and is switched to only from the shelf page, which then reloads,
+  so a book open in that tab never mixes files of two versions (another tab loading
+  a book at that very moment might; accepted); a publication's parts
   and images never change, so they are served from the cache `shelfgauge-blobs` once
   fetched; its manifest comes from the network when it answers within 4 s (the hub's
   expiry counts manifest fetches; a `404`/`410` deletes the cached copy), else — on
@@ -1103,7 +1106,10 @@ The repository is a Cargo workspace of three crates with one version
   from a copy of the two crates (`target/wasm-stage/`) whose version has no `+BUILD`
   (the version enters symbol hashes and thus the module's layout, so a build number
   bump would otherwise change it); CI's
-  `wasm` job (same pinned toolchain) rebuilds it and fails on any difference. Natively
+  `wasm` job (same pinned toolchain) rebuilds it and fails on any difference. A new
+  `MAJOR.MINOR.PATCH` changes the module: bump the version, run `cargo build` (it
+  updates `Cargo.lock`, which the script checks), then `scripts/build-wasm.sh`, and
+  commit `assets/hub/pkg/` with the release. Natively
   it is a plain library: `tests/publication.rs` checks that it renders every part
   exactly as the server.
 

@@ -42,9 +42,32 @@ function unpairedHelp() {
   ];
 }
 
-// Offline: the Service Worker keeps the app and the books read here.
+// Offline: the Service Worker keeps the app and the books read here. A new version
+// of the app (after the hub was upgraded) is switched to on the shelf page only,
+// which then reloads; an open book keeps the version it was opened with.
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register(`${base}/sw.js`, { scope: `${base}/` }).catch((e) => console.error(e));
+  navigator.serviceWorker.register(`${base}/sw.js`, { scope: `${base}/` }).then((registration) => {
+    if (route !== "/" || !navigator.serviceWorker.controller) {
+      return;
+    }
+    navigator.serviceWorker.addEventListener("controllerchange", () => location.reload(), { once: true });
+    // Asked again while one waits (a busy old version may not let go at once).
+    const ask = () => {
+      if (registration.waiting) {
+        registration.waiting.postMessage("activate");
+        setTimeout(ask, 2000);
+      }
+    };
+    ask();
+    registration.addEventListener("updatefound", () => {
+      const worker = registration.installing;
+      worker.addEventListener("statechange", () => {
+        if (worker.state === "installed") {
+          ask();
+        }
+      });
+    });
+  }).catch((e) => console.error(e));
 }
 
 function show(...nodes) {

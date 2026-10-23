@@ -3,7 +3,8 @@
 //
 // Offline reading:
 // - the app's pages (`/`, `/pair`, `/r/<id>`): static per version, served from the
-//   cache (every /r/<id> is the same page), so pages and files are of one version;
+//   cache (every /r/<id> is the same page), so pages and files are of one version; a
+//   new version takes over only when the shelf page asks (no open book switches);
 // - the app's files: precached per version, served from the cache;
 // - publication blobs: parts and images never change (a changed book is a new
 //   publication), so they are served from the cache once fetched; the manifest comes
@@ -32,8 +33,15 @@ self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(SHELL);
     await cache.addAll([HOME, READER, ...FILES]);
-    await self.skipWaiting();
+    // A new version waits until the shelf page asks for it (hub.js): an open book
+    // keeps the version it was opened with (its later imports come from that cache).
   })());
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data === "activate") {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener("activate", (event) => {

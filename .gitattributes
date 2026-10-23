@@ -1,0 +1,4 @@
+# The templates feed the hub reader's committed WebAssembly module and the rendering
+# vectors (tests/fixtures/publication/rendered.json): their bytes must be the same on
+# every platform, so they are checked out with LF line endings also on Windows.
+templates/** text eol=lf

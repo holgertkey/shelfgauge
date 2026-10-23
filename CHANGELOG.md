@@ -8,10 +8,11 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-23
+
 ### Added
 
-- **Hub server** (`shelfgauge hub --data <dir>`, part of the coming hub for reading on
-  phones; libraries cannot connect to it yet): anonymous accounts registered with
+- **Hub server** (`shelfgauge hub --data <dir>`): anonymous accounts registered with
   one-time invite codes (`shelfgauge hub invite`), device tokens, pairing and recovery,
   encrypted publications and sync records, per-account quotas, rate limits, expiry of
   unopened publications and `shelfgauge hub takedown`, `shelfgauge hub accounts`. It
@@ -35,6 +36,15 @@ Build numbers (`+NNN`) do not get their own sections.
   on the hub page). The newest change wins, also a deletion; marks of books a library
   does not have are kept while the book is on the shelf, and attach when it appears.
   The library's Markdown export follows.
+- **Reading on your phone**: the hub's reader app, in any browser on a paired device.
+  Pairing scans the QR code from the library; the shelf lists the books of your
+  account ("Currently reading" first, with the library each comes from); a book reads
+  as in the library — the same rendering (the library's own code, compiled to
+  WebAssembly), contents, notes in a panel, the status line, reading settings, search
+  in the book — with bookmarks, quotes and notes made on the phone and the reading
+  position, synced with your libraries. Books opened once are kept on the device and
+  open offline, also when the hub is down; marks made meanwhile sync later. The app
+  can be added to the home screen. Unpaired browsers see no content.
 
 ## [0.17.0] - 2026-10-22
 
