@@ -980,8 +980,8 @@ unchanged (its golden test must not change). TXT and `.fbz` followed in 0.9.0, H
 
 ## Crates (0.17.0)
 
-The repository is a Cargo workspace of two crates with one version
-(`[workspace.package]` in the root `Cargo.toml`), published together:
+The repository is a Cargo workspace of three crates with one version
+(`[workspace.package]` in the root `Cargo.toml`); the first two are published together:
 
 - **`shelfgauge`** (the root package): the library and the binary — parsers,
   containers, scanner, storage, caches, profiles, the web server, the CLI. `cargo
@@ -995,6 +995,22 @@ The repository is a Cargo workspace of two crates with one version
   `wasm32-unknown-unknown` (checked in CI). Code that must render or count text exactly
   as the reader does belongs here; anything that touches files, SQLite, Tokio or a
   parser library does not.
+- **`shelfgauge-wasm`** (`crates/shelfgauge-wasm/`, `publish = false`, for 0.18.0): the
+  hub reader app's bindings of the core (`wasm-bindgen`, pinned exactly). It decodes a
+  publication's manifest and parts (plaintext: the app decrypts and inflates them in
+  JS) and renders parts and the contents with the core's renderer; the JS boundary
+  carries bytes, strings and JSON strings only. Rendered on the device, other parts
+  are `?part=<n>#b<id>` links of the same page, and images have no `src` but a
+  `data-image` id (`ReaderLinks::image` returning an empty URL), for the app to fill
+  in `blob:` URLs. `scripts/build-wasm.sh` builds it (profile `wasm`: `release` with
+  `opt-level = "s"`, no `wasm-opt`) and runs `wasm-bindgen --target web` into
+  `assets/hub/pkg/`, which is **committed** and embedded with the hub's assets, so
+  `cargo build` and `cargo install` need neither the `wasm32` target nor the CLI. The
+  output is reproducible: the script pins the Rust and `wasm-bindgen` versions and
+  remaps the checkout, Cargo home and sysroot paths out of panic messages; CI's
+  `wasm` job (same pinned toolchain) rebuilds it and fails on any difference. Natively
+  it is a plain library: `tests/publication.rs` checks that it renders every part
+  exactly as the server.
 
 `shelfgauge` re-exports these modules at their old paths (`shelfgauge::format::model`,
 `shelfgauge::render::{split, html, outline}`, `shelfgauge::annotations::{text, anchor, find}`,

@@ -986,6 +986,13 @@ async fn the_reader_shell_tells_nothing_about_publications() {
     let css = hub.get("/assets/hub.css", None).await;
     assert_eq!(css.status, StatusCode::OK);
     assert_eq!(css.headers[header::CONTENT_TYPE], "text/css; charset=utf-8");
+    // The reader module: WebAssembly needs its own type to compile while streaming.
+    let wasm = hub.get("/assets/pkg/shelfgauge_bg.wasm", None).await;
+    assert_eq!(wasm.status, StatusCode::OK);
+    assert_eq!(wasm.headers[header::CONTENT_TYPE], "application/wasm");
+    assert_eq!(&wasm.body[..4], b"\0asm");
+    let glue = hub.get("/assets/pkg/shelfgauge.js", None).await;
+    assert_eq!(glue.status, StatusCode::OK);
     let page = String::from_utf8(existing.body).unwrap();
     assert!(page.contains("href=\"/assets/hub.css\""), "{page}");
     assert!(

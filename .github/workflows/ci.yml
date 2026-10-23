@@ -47,11 +47,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned (as in scripts/build-wasm.sh): the committed reader module must be
+      # rebuilt byte for byte, which needs the same compiler.
+      - uses: dtolnay/rust-toolchain@1.99.0
         with:
           targets: wasm32-unknown-unknown
           components: clippy
       - uses: Swatinem/rust-cache@v2
       # The core crate also runs on the reading device: it must build for the browser.
-      - run: cargo clippy -p shelfgauge-core --target wasm32-unknown-unknown -- -D warnings
-      - run: cargo build -p shelfgauge-core --target wasm32-unknown-unknown
+      - run: cargo clippy -p shelfgauge-core -p shelfgauge-wasm --target wasm32-unknown-unknown -- -D warnings
+      - run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
+      # assets/hub/pkg/ is committed (cargo build needs no wasm toolchain); a diff here
+      # means it is out of date with the Rust sources.
+      - run: scripts/build-wasm.sh
+      - run: sha256sum assets/hub/pkg/*
+      - name: Check the reader module is up to date
+        run: git diff --exit-code --stat assets/hub/pkg && test -z "$(git status --porcelain assets/hub/pkg)"
+      # On a difference, the module CI built (to compare with a local build).
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hub-pkg
+          path: assets/hub/pkg

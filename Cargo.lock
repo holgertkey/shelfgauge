@@ -1962,7 +1962,7 @@ dependencies = [
 
 [[package]]
 name = "shelfgauge"
-version = "0.17.0+008"
+version = "0.17.0+009"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -1995,6 +1995,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "shelfgauge-core",
+ "shelfgauge-wasm",
  "tempfile",
  "thiserror",
  "tokio",
@@ -2013,13 +2014,24 @@ dependencies = [
 
 [[package]]
 name = "shelfgauge-core"
-version = "0.17.0+008"
+version = "0.17.0+009"
 dependencies = [
  "postcard",
  "serde",
  "serde_json",
  "thiserror",
  "tracing",
+]
+
+[[package]]
+name = "shelfgauge-wasm"
+version = "0.17.0+009"
+dependencies = [
+ "base64",
+ "serde",
+ "serde_json",
+ "shelfgauge-core",
+ "wasm-bindgen",
 ]
 
 [[package]]

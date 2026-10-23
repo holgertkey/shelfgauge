@@ -7,7 +7,7 @@ default-members = [".", "crates/*"]
 # requirement on `shelfgauge-core` below as well (publishing needs it, and Cargo refuses
 # to build while the two differ); the `+BUILD` counter is changed only here.
 [workspace.package]
-version = "0.17.0+008"
+version = "0.17.0+009"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/holgertkey/shelfgauge"
@@ -80,6 +80,8 @@ qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 hmac = "0.13.0"
 
 [dev-dependencies]
+# The reader app's bindings, run natively (path only: dropped when publishing).
+shelfgauge-wasm = { path = "crates/shelfgauge-wasm" }
 tokio = { version = "1.53.2", features = ["sync", "time"] }
 tower = { version = "0.5.3", features = ["util"] }
 
@@ -96,3 +98,8 @@ opt-level = 3
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
+
+# The hub's reader app (`scripts/build-wasm.sh`): small rather than fast.
+[profile.wasm]
+inherits = "release"
+opt-level = "s"

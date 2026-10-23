@@ -39,6 +39,7 @@ pub(crate) fn content_type(name: &str) -> &'static str {
         Some("png") => "image/png",
         Some("ico") => "image/x-icon",
         Some("woff2") => "font/woff2",
+        Some("wasm") => "application/wasm",
         Some("txt") => "text/plain; charset=utf-8",
         _ => "application/octet-stream",
     }
@@ -112,6 +113,9 @@ mod tests {
     fn hub_files_are_not_library_assets() {
         assert!(Assets::get("hub/shell.html").is_none());
         assert!(Assets::get("hub/hub.css").is_none());
+        // Also the nested reader module.
+        assert!(Assets::get("hub/pkg/shelfgauge.js").is_none());
+        assert!(Assets::get("hub/pkg/shelfgauge_bg.wasm").is_none());
     }
 
     #[test]
@@ -119,6 +123,8 @@ mod tests {
         assert_eq!(content_type("style.css"), "text/css; charset=utf-8");
         assert_eq!(content_type("app.js"), "text/javascript; charset=utf-8");
         assert_eq!(content_type("icon.svg"), "image/svg+xml");
+        // Without it, browsers refuse to compile the module while it streams in.
+        assert_eq!(content_type("pkg/x_bg.wasm"), "application/wasm");
         assert_eq!(content_type("README"), "application/octet-stream");
     }
 }

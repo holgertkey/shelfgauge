@@ -22,7 +22,8 @@ pub trait ReaderLinks {
     /// The URL of block `id` in part `part` (0-based). The renderer uses `#b<n>` itself
     /// for blocks in the current part.
     fn block(&self, part: usize, id: BlockId) -> String;
-    /// The URL of the image `image_id` of the book.
+    /// The URL of the image `image_id` of the book. When it is empty, the `<img>` gets
+    /// no `src` but a `data-image` attribute with the id, for a script to fill in.
     fn image(&self, image_id: &str) -> String;
 }
 
@@ -362,8 +363,14 @@ impl Renderer<'_> {
 
     fn image(&mut self, image: &ImageRef, class: &str) {
         let src = self.links.image(&image.id);
-        self.out.push_str("<img src=\"");
-        escape_into(&src, &mut self.out);
+        if src.is_empty() {
+            // No URL yet (the hub's reader fills in a `blob:` URL by the image id).
+            self.out.push_str("<img data-image=\"");
+            escape_into(&image.id, &mut self.out);
+        } else {
+            self.out.push_str("<img src=\"");
+            escape_into(&src, &mut self.out);
+        }
         self.out.push_str("\" alt=\"");
         escape_into(image.alt.as_deref().unwrap_or(""), &mut self.out);
         self.out.push('"');
@@ -671,6 +678,32 @@ mod tests {
         );
         assert!(html.contains("<figcaption>&amp;caption</figcaption>"));
         assert!(html.contains("&lt;1830&gt;"));
+    }
+
+    #[test]
+    fn an_image_without_url_carries_its_id() {
+        struct NoImages;
+        impl ReaderLinks for NoImages {
+            fn block(&self, part: usize, id: BlockId) -> String {
+                Links.block(part, id)
+            }
+            fn image(&self, _: &str) -> String {
+                String::new()
+            }
+        }
+        let image = ImageRef {
+            id: "a\"b".to_owned(),
+            alt: None,
+            title: None,
+        };
+        let content = content_with(vec![Block::new(BlockKind::Image(image))], vec![]);
+        let parts = split(&content, &ReaderConfig::default());
+        let html = render_part(&content, &parts, 0, &NoImages);
+        assert!(
+            html.contains(r#"<img data-image="a&quot;b" alt="" loading="lazy">"#),
+            "{html}"
+        );
+        assert!(!html.contains("src="), "{html}");
     }
 
     #[test]

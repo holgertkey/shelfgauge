@@ -197,6 +197,57 @@ fn decoded_publications_render_exactly_as_the_server() {
     assert!(cross_part_links > 10, "{cross_part_links}");
 }
 
+/// The links of the hub's reader (`shelfgauge_wasm`): other parts of the same page,
+/// images without a URL.
+struct HubLinks;
+
+impl ReaderLinks for HubLinks {
+    fn block(&self, part: usize, id: BlockId) -> String {
+        format!("?part={}#{id}", part + 1)
+    }
+
+    fn image(&self, _: &str) -> String {
+        String::new()
+    }
+}
+
+#[test]
+fn the_reader_app_renders_exactly_as_the_server() {
+    for (name, content, cover) in books() {
+        for config in configs() {
+            let (manifest, blobs, _) = round_trip(&content, cover.as_ref(), &config);
+            let parts = split(&content, &config);
+            let what = format!("{name}, {config:?}");
+            let mut book = shelfgauge_wasm::book::Book::open(&manifest.encode()).unwrap();
+            assert_eq!(book.part_count(), parts.len(), "{what}");
+            for (index, blob) in blobs.iter().enumerate() {
+                assert!(book.render_part(index).is_err(), "{what}: not loaded yet");
+                book.add_part(index, &blob.encode()).unwrap();
+                assert_eq!(
+                    book.render_part(index).unwrap(),
+                    render_part(&content, &parts, index, &HubLinks),
+                    "{what}, part {index}"
+                );
+                assert_eq!(
+                    book.render_toc(index),
+                    render_toc(&content, &parts, index, &HubLinks),
+                    "{what}, contents at part {index}"
+                );
+            }
+            assert!(book.add_part(parts.len(), &[]).is_err(), "{what}");
+            let summary: serde_json::Value = serde_json::from_str(&book.summary()).unwrap();
+            assert_eq!(summary["title"], "Book", "{what}");
+            assert_eq!(summary["lang"], "en-GB", "{what}");
+            assert_eq!(summary["content_key"], "BwcHBwcHBwcHBwcHBwcHBw", "{what}");
+            assert_eq!(
+                summary["parts"].as_array().unwrap().len(),
+                parts.len(),
+                "{what}"
+            );
+        }
+    }
+}
+
 /// Every block of `section` with its rendered text.
 fn collect(section: &shelfgauge::format::model::Section, out: &mut Vec<(BlockId, String)>) {
     for block in section.title.iter().chain(&section.blocks) {
@@ -598,6 +649,48 @@ fn a_whole_sealed_publication_vector_opens() {
     });
     let book = assemble(parts, BTreeMap::new(), manifest.block_count).unwrap();
     assert!(!BookText::new(&book).flat().is_empty());
+}
+
+#[test]
+fn the_reader_app_rendering_vector_is_stable() {
+    // What the WASM reader must render for `publication.json` (the browser check
+    // compares byte for byte): every part and the contents at every part.
+    let vector: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(vectors_dir().join("publication.json")).unwrap(),
+    )
+    .unwrap();
+    let key = BookKey::new([0x42; 32]);
+    let id: PublicationId = vector["publication_id"].as_str().unwrap().parse().unwrap();
+    let blob = |path: BlobPath| {
+        let sealed = unhex(vector["blobs"][path.to_string()].as_str().unwrap());
+        open(&id, &key, path, &sealed, LIMIT).unwrap()
+    };
+    let mut book = shelfgauge_wasm::book::Book::open(&blob(BlobPath::Manifest)).unwrap();
+    let mut parts = Vec::new();
+    let mut toc = Vec::new();
+    for n in 0..book.part_count() {
+        book.add_part(n, &blob(BlobPath::Part(n as u32))).unwrap();
+        parts.push(book.render_part(n).unwrap());
+        toc.push(book.render_toc(n));
+    }
+    // The same as the server renders the book with the reader app's links.
+    let content = run_with_parser_stack(|| {
+        HtmlParser
+            .parse_content(common::html_tag_soup().as_bytes())
+            .unwrap()
+    });
+    let split_parts = split(&content, &ReaderConfig::default());
+    for (n, html) in parts.iter().enumerate() {
+        assert_eq!(html, &render_part(&content, &split_parts, n, &HubLinks));
+    }
+    check_vector(
+        "rendered.json",
+        &serde_json::json!({
+            "description": "the reader app's HTML of publication.json: parts[n] = part n, toc[n] = the contents at part n",
+            "parts": parts,
+            "toc": toc,
+        }),
+    );
 }
 
 /// Times building, sealing and opening the publications of the books (any registered

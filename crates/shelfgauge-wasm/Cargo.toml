@@ -1,0 +1,22 @@
+[package]
+name = "shelfgauge-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "WebAssembly bindings of shelfgauge-core for the hub's reader app"
+# The build output is committed under `assets/hub/pkg/` and embedded in `shelfgauge`;
+# this crate itself is never published.
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+shelfgauge-core.workspace = true
+base64 = "0.23.1"
+serde.workspace = true
+serde_json.workspace = true
+# Pinned exactly: the `wasm-bindgen` CLI that generates `assets/hub/pkg/` must be the
+# same version (`scripts/build-wasm.sh`).
+wasm-bindgen = "=0.2.129"
