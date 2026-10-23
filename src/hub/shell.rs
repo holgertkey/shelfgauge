@@ -14,6 +14,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use rust_embed::Embed;
+use sha2::{Digest, Sha256};
 
 use super::{HubError, HubState};
 use crate::annotations::lists::Lists;
@@ -65,15 +66,118 @@ struct FindPanel {
 
 /// The shell routes.
 pub(super) fn routes(state: &HubState) -> Router<HubState> {
-    let root = match state.path("") {
-        base if base.is_empty() => "/".to_owned(),
-        base => base,
-    };
-    Router::new()
-        .route(&root, get(page))
+    let base = state.path("");
+    let mut router = Router::new().route(&format!("{base}/"), get(page));
+    if !base.is_empty() {
+        // `/hub` as well as `/hub/` (the app's start URL and the Service Worker's
+        // cached shell).
+        router = router.route(&base, get(page));
+    }
+    router
         .route(&state.path("/r/{id}"), get(reader))
         .route(&state.path("/pair"), get(page))
         .route(&state.path("/assets/{*path}"), get(asset))
+        .route(&state.path("/sw.js"), get(service_worker))
+        .route(&state.path("/manifest.webmanifest"), get(web_manifest))
+}
+
+/// The Service Worker (`templates/hub/sw.js`).
+#[derive(Template)]
+#[template(path = "hub/sw.js", escape = "none")]
+struct ServiceWorker<'a> {
+    base: String,
+    version: &'a str,
+    files: &'a [String],
+}
+
+/// The names of the shell's files, sorted, and their version: 16 hex digits of a
+/// SHA-256 over every file's name and hash (a new build with changed files gives the
+/// Service Worker a new cache).
+fn shell_files() -> &'static (Vec<String>, String) {
+    static FILES: std::sync::OnceLock<(Vec<String>, String)> = std::sync::OnceLock::new();
+    FILES.get_or_init(|| {
+        let mut names: Vec<String> = HubAssets::iter()
+            .chain(SharedAssets::iter())
+            .map(|name| name.into_owned())
+            .collect();
+        names.sort();
+        names.dedup();
+        let mut hasher = Sha256::new();
+        for name in &names {
+            let file = HubAssets::get(name)
+                .or_else(|| SharedAssets::get(name))
+                .expect("listed files exist");
+            hasher.update(name.as_bytes());
+            hasher.update([0]);
+            hasher.update(file.metadata.sha256_hash());
+        }
+        // Templates of the pages are part of the shell too.
+        hasher.update(
+            HomePage {
+                base: String::new(),
+            }
+            .render()
+            .unwrap_or_default(),
+        );
+        hasher.update(read_page(String::new()).render().unwrap_or_default());
+        let version = hex_prefix(&hasher.finalize().into());
+        (names, version)
+    })
+}
+
+/// `GET /sw.js`: the Service Worker, scoped to the hub's base path.
+async fn service_worker(State(state): State<HubState>) -> Response {
+    let (files, version) = shell_files();
+    let script = ServiceWorker {
+        base: state.path(""),
+        version,
+        files,
+    }
+    .render()
+    .expect("the Service Worker renders");
+    (
+        [
+            (
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("text/javascript; charset=utf-8"),
+            ),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-cache")),
+        ],
+        script,
+    )
+        .into_response()
+}
+
+/// `GET /manifest.webmanifest`: the web app manifest, so the reader can be installed
+/// (on iOS, a home screen app keeps its data longer than a Safari tab).
+async fn web_manifest(State(state): State<HubState>) -> Response {
+    let base = state.path("");
+    let manifest = serde_json::json!({
+        "name": "shelfgauge",
+        "short_name": "shelfgauge",
+        "description": "Your books from your shelfgauge library, also offline.",
+        "start_url": format!("{base}/"),
+        "scope": format!("{base}/"),
+        "display": "standalone",
+        "background_color": "#ffffff",
+        "theme_color": "#ffffff",
+        "icons": [{
+            "src": format!("{base}/assets/icon.svg"),
+            "sizes": "any",
+            "type": "image/svg+xml",
+        }],
+    });
+    (
+        [
+            (
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/manifest+json"),
+            ),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-cache")),
+        ],
+        manifest.to_string(),
+    )
+        .into_response()
 }
 
 /// A page of the shell.
@@ -100,14 +204,19 @@ async fn reader(
 ) -> Result<Response, HubError> {
     id.parse::<PublicationId>()
         .map_err(|_| HubError::NotFound)?;
+    Ok(shell(&read_page(state.path(""))))
+}
+
+/// The reading view under `base`.
+fn read_page(base: String) -> ReadPage {
     let limits = crate::config::AnnotationsConfig::default();
-    Ok(shell(&ReadPage {
-        base: state.path(""),
+    ReadPage {
+        base,
         max_text: limits.max_text_length,
         max_note: limits.max_note_length,
         lists: Lists::default(),
         find: FindPanel { results: None },
-    }))
+    }
 }
 
 /// `GET /assets/{*path}`: a file of the shell, revalidated by its `ETag`.

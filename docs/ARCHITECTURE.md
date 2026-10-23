@@ -915,11 +915,37 @@ Phase 26: `assets/hub/` (`hub.js` pages, `store.js` IndexedDB and API calls,
   outbox; a `null` record (the book left the shelf) always wins. Lists redraw when a
   pull changed records (`shelfgauge:lists` event). Opened from the shelf, a book pulls
   first (at most 3 s) and resumes at the newest position.
+- **Offline** (`templates/hub/sw.js`, served at `{base}/sw.js` with the base path,
+  the list of the shell's files and their version — a hash over every file and the
+  pages — filled in; scope = the base path): the app's pages (`/`, `/pair`,
+  `/r/<id>`) are static per version and come from the versioned cache (every
+  `/r/<id>` is one cached page), so pages and files are always of one version; other
+  navigations (e.g. `/api/info`) pass through; the app's files are precached per
+  version (old versions' caches are deleted on activation); a publication's parts
+  and images never change, so they are served from the cache `shelfgauge-blobs` once
+  fetched; its manifest comes from the network when it answers within 4 s (the hub's
+  expiry counts manifest fetches; a `404`/`410` deletes the cached copy), else — on
+  a network error, a timeout or a `5xx` from the reverse proxy in front of a hub that
+  is down — from the cache; the rest of the API is never cached (a `5xx` there is
+  "unreachable" for the app, not an error). A full storage only means no offline
+  copy: the worker still serves, and the shelf says "offline" only when every blob
+  is in the cache. IndexedDB connections close on `versionchange` (a newer app in
+  another tab upgrades the database) and the page reloads. Only ciphertext is
+  cached. After a book is opened the app fetches all its blobs once more through the
+  worker and marks it "offline" on the shelf; the shelf deletes the copies of books
+  that left it; forgetting the pairing deletes all. `manifest.webmanifest` (standalone,
+  start URL and scope = the base path) makes the reader installable — on iOS a home
+  screen app escapes Safari's 7-day eviction of unused sites; the unpaired page says
+  that cleared data means pairing again. The shell answers at the base path with and
+  without a trailing slash.
 - **Checks**: `.debug/TESTS/hub_interop.mjs` (vectors in the browser) and
   `.debug/TESTS/hub_smoke.mjs` (a real library and hub: register, publish, pair,
   shelf, read, images, notes across parts, `?progress=`, settings, the deepest
   accepted nesting rendered in WASM, marks and positions both ways, deletions,
-  resuming, search, a book leaving the shelf, a used pairing link, a revoked device).
+  resuming, search, reading with the hub down behind a proxy (502, dropped
+  connections) and marks made meanwhile, cached copies deleted on removal and
+  revocation,
+  a book leaving the shelf, a used pairing link, a revoked device).
 
 ### Instance side (0.18.0)
 

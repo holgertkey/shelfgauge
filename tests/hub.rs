@@ -1059,6 +1059,97 @@ async fn the_base_path_prefixes_every_route() {
     );
 }
 
+#[tokio::test]
+async fn the_service_worker_and_manifest_make_the_reader_installable() {
+    for (base, prefix) in [("/", ""), ("/hub", "/hub")] {
+        let hub = TestHub::new(|c| c.server.base_path = base.into());
+        let sw = hub.get(&format!("{prefix}/sw.js"), None).await;
+        assert_eq!(sw.status, StatusCode::OK);
+        assert_eq!(
+            sw.headers[header::CONTENT_TYPE],
+            "text/javascript; charset=utf-8"
+        );
+        assert_eq!(sw.headers[header::CACHE_CONTROL], "no-cache");
+        let script = String::from_utf8(sw.body).unwrap();
+        assert!(
+            script.contains(&format!(r#"const BASE = "{prefix}";"#)),
+            "{script}"
+        );
+        // Every file the shell needs offline is precached, with a version.
+        for file in [
+            "hub.js",
+            "store.js",
+            "crypto.js",
+            "reader.js",
+            "style.css",
+            "pkg/shelfgauge_bg.wasm",
+        ] {
+            assert!(
+                script.contains(&format!("`${{BASE}}/assets/{file}`")),
+                "{file}: {script}"
+            );
+        }
+        let version = script
+            .split(r#"const VERSION = ""#)
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .unwrap();
+        assert_eq!(version.len(), 16, "{version}");
+        // The same build gives the same version.
+        let again =
+            String::from_utf8(hub.get(&format!("{prefix}/sw.js"), None).await.body).unwrap();
+        assert_eq!(script, again);
+
+        // `cache.addAll` is all or nothing: every precached URL must answer.
+        let mut urls = vec![
+            format!("{prefix}/"),
+            format!("{prefix}/r/00000000000000000000000000000000"),
+        ];
+        assert!(script.contains("const HOME = `${BASE}/`;"), "{script}");
+        assert!(
+            script.contains("const READER = `${BASE}/r/00000000000000000000000000000000`;"),
+            "{script}"
+        );
+        let files = script
+            .split("const FILES = [")
+            .nth(1)
+            .and_then(|rest| rest.split("];").next())
+            .unwrap();
+        for line in files.lines().map(str::trim).filter(|l| !l.is_empty()) {
+            let file = line
+                .strip_prefix("`${BASE}/assets/")
+                .and_then(|l| l.strip_suffix("`,"))
+                .unwrap_or_else(|| panic!("{line}"));
+            urls.push(format!("{prefix}/assets/{file}"));
+        }
+        assert!(urls.len() > 10, "{urls:?}");
+        for url in &urls {
+            assert_eq!(hub.get(url, None).await.status, StatusCode::OK, "{url}");
+        }
+
+        let manifest = hub
+            .get(&format!("{prefix}/manifest.webmanifest"), None)
+            .await;
+        assert_eq!(manifest.status, StatusCode::OK);
+        assert_eq!(
+            manifest.headers[header::CONTENT_TYPE],
+            "application/manifest+json"
+        );
+        let json: serde_json::Value = serde_json::from_slice(&manifest.body).unwrap();
+        assert_eq!(json["start_url"], format!("{prefix}/"));
+        assert_eq!(json["scope"], format!("{prefix}/"));
+        assert_eq!(json["display"], "standalone");
+        assert_eq!(json["icons"][0]["src"], format!("{prefix}/assets/icon.svg"));
+        let page = String::from_utf8(hub.get(&format!("{prefix}/"), None).await.body).unwrap();
+        assert!(
+            page.contains(&format!(
+                r#"<link rel="manifest" href="{prefix}/manifest.webmanifest">"#
+            )),
+            "{page}"
+        );
+    }
+}
+
 #[test]
 fn a_hub_is_created_only_when_asked() {
     let dir = tempfile::tempdir().unwrap();

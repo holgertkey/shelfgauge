@@ -27,13 +27,24 @@ function el(tag, attrs = {}, ...children) {
   return node;
 }
 
+/** Whether `e` is only the hub being out of reach (offline, or the hub is down). */
+function unreachable(e) {
+  return !navigator.onLine || e instanceof TypeError || e instanceof store.Unreachable;
+}
+
 /** Where the reader learns how to pair this browser. */
 function unpairedHelp() {
   return [
     el("h1", {}, "This device is not paired"),
     el("p", {}, "Books on this hub open only on devices paired with their library's account."),
     el("p", {}, "On the computer with your library, open My profile → Phone and other devices, choose Pair a device, and scan the QR code with this device (or open its link here)."),
+    el("p", { class: "muted" }, "Paired before? The browser may have cleared this site's data (Safari does after a week without a visit, unless the app is on the home screen). Pair again; your marks are kept in your library."),
   ];
+}
+
+// Offline: the Service Worker keeps the app and the books read here.
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register(`${base}/sw.js`, { scope: `${base}/` }).catch((e) => console.error(e));
 }
 
 function show(...nodes) {
@@ -82,6 +93,9 @@ function bookItem(item) {
   if (meta.length) {
     li.append(el("span", { class: "muted" }, meta.join(" · ")));
   }
+  if (item.offline) {
+    li.append(el("span", { class: "muted hub-offline", title: "Saved on this device: opens without a connection" }, "offline"));
+  }
   if (item.position && Number.isFinite(item.position.progress)) {
     li.append(el("span", { class: "muted hub-progress" }, `${Math.min(Math.floor(item.position.progress / 10), 100)} %`));
   }
@@ -114,26 +128,42 @@ function renderShelf(items, status) {
   show(...nodes);
 }
 
+/** The shelf with each book's offline state. */
+async function shelfItems(p) {
+  const items = await store.shelf(p);
+  const offline = await store.offline().catch(() => new Set());
+  for (const item of items) {
+    item.offline = offline.has(item.publication);
+  }
+  return items;
+}
+
 async function shelfPage() {
   const p = await store.pairing();
   if (!p) {
     show(...unpairedHelp());
     return;
   }
-  renderShelf(await store.shelf(p), "Updating…");
+  renderShelf(await shelfItems(p), "Updating…");
   try {
     // Marks made offline go out from here too.
     await store.push(p);
     await store.pull(p);
-    renderShelf(await store.shelf(p), "");
+    // Copies of books that left the shelf (or were republished) go.
+    const items = await store.shelf(p);
+    const kept = new Set(items.map((i) => i.publication));
+    await store.dropBlobs((id) => !kept.has(id)).catch((e) => console.error(e));
+    renderShelf(await shelfItems(p), "");
   } catch (e) {
     if (e instanceof store.Unpaired) {
       await store.forget();
       show(...unpairedHelp());
       return;
     }
-    console.error(e);
-    renderShelf(await store.shelf(p), "Offline: showing the books as of the last update.");
+    if (!unreachable(e)) {
+      console.error(e);
+    }
+    renderShelf(await shelfItems(p), "Offline: showing the books as of the last update. Books marked offline open.");
   }
 }
 
@@ -195,11 +225,46 @@ class Book {
         }
         this.reader.loadText();
       })();
+      this.textReady.then(() => this.saveOffline()).catch((e) => console.error(e));
       this.textReady.catch(() => {
         this.textReady = null;
       });
     }
     return this.textReady;
+  }
+
+  /**
+   * Makes the whole book readable offline: every blob once more through the Service
+   * Worker (which keeps them; fetches from before it took over this page were not
+   * kept), then the shelf can say "offline".
+   */
+  async saveOffline() {
+    if (!("serviceWorker" in navigator)) {
+      return;
+    }
+    await navigator.serviceWorker.ready;
+    if (!navigator.serviceWorker.controller) {
+      await new Promise((resolve) => navigator.serviceWorker.addEventListener("controllerchange", resolve, { once: true }));
+    }
+    const paths = ["manifest"];
+    for (let n = 0; n < this.summary.parts.length; n++) {
+      paths.push(`p/${n}`);
+    }
+    for (let n = 0; n < this.summary.images.length; n++) {
+      paths.push(`i/${n}`);
+    }
+    for (const path of paths) {
+      if (!(await store.blob(this.p, this.id, path))) {
+        return;
+      }
+    }
+    // A full storage keeps nothing (the worker serves anyway): only then "offline".
+    for (const path of paths) {
+      if (!(await store.cached(this.id, path))) {
+        return;
+      }
+    }
+    await store.markOffline(this.id);
   }
 
   /** A `blob:` URL of image `imageId`, or null. */
@@ -410,7 +475,7 @@ class Sync {
   failed(e) {
     if (e instanceof store.Unpaired) {
       store.forget().then(() => location.reload());
-    } else if (navigator.onLine) {
+    } else if (!unreachable(e)) {
       console.error(e);
     }
   }
@@ -667,7 +732,7 @@ async function readerPage(id) {
       return;
     }
     console.error(e);
-    readerMessage("The book could not be opened", navigator.onLine ? String(e.message || e) : "This device is offline.");
+    readerMessage("The book could not be opened", unreachable(e) ? "The hub cannot be reached, and this book is not saved on this device yet." : String(e.message || e));
   }
 }
 

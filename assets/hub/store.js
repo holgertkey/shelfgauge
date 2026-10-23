@@ -42,8 +42,19 @@ function db() {
           d.createObjectStore("outbox", { keyPath: ["kind", "id"] });
         }
       };
-      open.onsuccess = () => resolve(open.result);
+      open.onsuccess = () => {
+        const d = open.result;
+        // A newer version of the app (another tab) upgrades the database: this tab
+        // lets go and reloads into the new version.
+        d.onversionchange = () => {
+          d.close();
+          location.reload();
+        };
+        resolve(d);
+      };
       open.onerror = () => reject(open.error);
+      // An older tab holds the database open and did not let go.
+      open.onblocked = () => reject(new Error("Close the other shelfgauge tabs and reload this page."));
     });
   }
   return dbPromise;
@@ -74,7 +85,8 @@ export function pairing() {
 }
 
 /** Forgets the pairing and everything synced (revoked token, or another account). */
-export function forget() {
+export async function forget() {
+  await dropBlobs(() => true);
   return tx(["state", "records", "outbox"], "readwrite", (t) => {
     t.objectStore("state").clear();
     t.objectStore("records").clear();
@@ -85,6 +97,9 @@ export function forget() {
 /** Thrown when the hub no longer accepts this device's token. */
 export class Unpaired extends Error {}
 
+/** Thrown when the hub is out of reach behind its proxy (a 5xx answer). */
+export class Unreachable extends Error {}
+
 /** A call to the hub's API with the device token. */
 export async function api(path, options = {}, token) {
   const headers = Object.assign({}, options.headers);
@@ -94,6 +109,9 @@ export async function api(path, options = {}, token) {
   const response = await fetch(`${base}/api/${path}`, Object.assign({}, options, { headers, cache: "no-store" }));
   if (response.status === 401) {
     throw new Unpaired("This device is no longer paired.");
+  }
+  if (response.status >= 500) {
+    throw new Unreachable(`The hub is not available (${response.status}).`);
   }
   return response;
 }
@@ -400,6 +418,64 @@ export async function shelf(p) {
     }
   }
   return items;
+}
+
+// The Service Worker's cache of publication blobs (sw.js).
+const BLOBS = "shelfgauge-blobs";
+
+/** The publication id of a cached blob's URL, or null. */
+function blobPublication(url) {
+  const m = new URL(url).pathname.match(/\/api\/pub\/([0-9a-f]{32})\//);
+  return m ? m[1] : null;
+}
+
+/** Deletes the cached blobs of every publication `drop(id)` says. */
+export async function dropBlobs(drop) {
+  if (!("caches" in self)) {
+    return;
+  }
+  const cache = await caches.open(BLOBS);
+  for (const request of await cache.keys()) {
+    const id = blobPublication(request.url);
+    if (id && drop(id)) {
+      await cache.delete(request);
+    }
+  }
+}
+
+/** The publications with a cached manifest and every part (readable offline). */
+export async function offline() {
+  const found = new Set();
+  if (!("caches" in self)) {
+    return found;
+  }
+  const cache = await caches.open(BLOBS);
+  for (const request of await cache.keys()) {
+    const id = blobPublication(request.url);
+    if (id) {
+      found.add(id);
+    }
+  }
+  const complete = new Set();
+  for (const id of found) {
+    if (await tx(["state"], "readonly", (t) => done(t.objectStore("state").get(`offline:${id}`)))) {
+      complete.add(id);
+    }
+  }
+  return complete;
+}
+
+/** Whether the blob at `path` of publication `id` is in the cache. */
+export async function cached(id, path) {
+  if (!("caches" in self)) {
+    return false;
+  }
+  return Boolean(await (await caches.open(BLOBS)).match(`${location.origin}${base}/api/pub/${id}/${path}`));
+}
+
+/** Notes that every blob of publication `id` is cached. */
+export function markOffline(id) {
+  return tx(["state"], "readwrite", (t) => t.objectStore("state").put(true, `offline:${id}`));
 }
 
 /** Fetches blob `path` of publication `id` (raw ciphertext); null if it is gone. */

@@ -45,6 +45,10 @@
   margin-left: auto;
 }
 
+.hub-book .hub-offline {
+  font-size: 0.85rem;
+}
+
 .hub-sync {
   font-size: 0.9rem;
 }
