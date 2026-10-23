@@ -1,10 +1,13 @@
-//! The reader app shell: `GET /r/{id}`, `GET /pair` and `GET /` serve the same static
-//! page, and `GET /assets/{*path}` its files, embedded from `assets/hub/`.
+//! The reader app shell: `GET /` (the shelf) and `GET /pair` serve the start page,
+//! `GET /r/{id}` the reading view, and `GET /assets/{*path}` their files: the app's own
+//! from `assets/hub/` and the library's reading files (`style.css`, `reader.css`,
+//! `theme.js`, `app.js`, `reader.js`, `icon.svg`) from `assets/`.
 //!
-//! The page is the same for every well-formed publication id and is served without a
-//! database lookup, so it says nothing about whether a publication exists. Until the
-//! reader app is built it is a placeholder.
+//! The pages are static (`templates/hub/`): the same for every well-formed
+//! publication id and served without a database lookup, so they say nothing about
+//! whether a publication exists. The app (`assets/hub/hub.js`) fills them in.
 
+use askama::Template;
 use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
@@ -20,6 +23,35 @@ use crate::web::assets::{content_type, hex_prefix};
 #[folder = "assets/hub/"]
 struct HubAssets;
 
+/// The library's files the reading view shares.
+#[derive(Embed)]
+#[folder = "assets/"]
+#[include = "style.css"]
+#[include = "reader.css"]
+#[include = "theme.js"]
+#[include = "app.js"]
+#[include = "reader.js"]
+#[include = "icon.svg"]
+#[exclude = "hub/*"]
+struct SharedAssets;
+
+/// `/` and `/pair`.
+#[derive(Template)]
+#[template(path = "hub/home.html")]
+struct HomePage {
+    base: String,
+}
+
+/// `/r/{id}`.
+#[derive(Template)]
+#[template(path = "hub/read.html")]
+struct ReadPage {
+    base: String,
+    /// The limits of a mark's text and note: the library's defaults.
+    max_text: u32,
+    max_note: u32,
+}
+
 /// The shell routes.
 pub(super) fn routes(state: &HubState) -> Router<HubState> {
     let root = match state.path("") {
@@ -33,10 +65,9 @@ pub(super) fn routes(state: &HubState) -> Router<HubState> {
         .route(&state.path("/assets/{*path}"), get(asset))
 }
 
-/// The shell page with the base path filled in.
-fn shell(state: &HubState) -> Response {
-    let file = HubAssets::get("shell.html").expect("the shell page is embedded");
-    let text = String::from_utf8_lossy(&file.data).replace("%BASE%", &state.path(""));
+/// A page of the shell.
+fn shell(page: &impl Template) -> Response {
+    let text = page.render().expect("the shell pages render");
     (
         [(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"))],
         Html(text),
@@ -46,22 +77,31 @@ fn shell(state: &HubState) -> Response {
 
 /// `GET /pair` and `GET /`.
 async fn page(State(state): State<HubState>) -> Response {
-    shell(&state)
+    shell(&HomePage {
+        base: state.path(""),
+    })
 }
 
-/// `GET /r/{id}`: the shell for any well-formed publication id.
+/// `GET /r/{id}`: the reading view for any well-formed publication id.
 async fn reader(
     State(state): State<HubState>,
     Path(id): Path<String>,
 ) -> Result<Response, HubError> {
     id.parse::<PublicationId>()
         .map_err(|_| HubError::NotFound)?;
-    Ok(shell(&state))
+    let limits = crate::config::AnnotationsConfig::default();
+    Ok(shell(&ReadPage {
+        base: state.path(""),
+        max_text: limits.max_text_length,
+        max_note: limits.max_note_length,
+    }))
 }
 
 /// `GET /assets/{*path}`: a file of the shell, revalidated by its `ETag`.
 async fn asset(Path(name): Path<String>, headers: HeaderMap) -> Result<Response, HubError> {
-    let file = HubAssets::get(&name).ok_or(HubError::NotFound)?;
+    let file = HubAssets::get(&name)
+        .or_else(|| SharedAssets::get(&name))
+        .ok_or(HubError::NotFound)?;
     let etag = format!("\"{}\"", hex_prefix(&file.metadata.sha256_hash()));
     let etag_value = HeaderValue::from_str(&etag).expect("hex is a valid header");
     let cache = (header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));

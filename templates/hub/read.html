@@ -1,0 +1,58 @@
+{% extends "hub/base.html" %}
+{#- `/r/{id}`: the reading view of read.html, empty until the app has opened the
+    book. #}
+{% block head %}
+<link rel="stylesheet" href="{{ base }}/assets/reader.css">
+{%- endblock %}
+{% block toggle %}
+  <button type="button" class="icon-button sidebar-toggle" aria-controls="sidebar" aria-expanded="true" title="Toggle sidebar">
+    <svg class="icon" aria-hidden="true"><use href="#i-menu"></use></svg>
+  </button>
+{%- endblock %}
+{% block topbar %}
+  <button type="button" class="icon-button focus-button" title="Focus mode (f)" aria-label="Focus mode" aria-pressed="false" hidden>
+    <svg class="icon" aria-hidden="true"><use href="#i-focus"></use></svg>
+  </button>
+  <button type="button" class="icon-button settings-button" popovertarget="reader-settings" title="Reading settings" aria-label="Reading settings" hidden>
+    <span class="aa" aria-hidden="true">Aa</span>
+  </button>
+{%- endblock %}
+{% block body %}
+<div class="layout">
+  <nav id="sidebar" class="sidebar" aria-label="Book">
+<div class="sidebar-head">
+<div class="toc-book"><a href="{{ base }}/">‹ <span class="book-title">My books</span></a>
+  <span class="tab-pager" hidden lang="en">
+    <button type="button" class="icon-button" data-page="-1" title="Page up" aria-label="Page up">‹</button>
+    <button type="button" class="icon-button" data-page="1" title="Page down" aria-label="Page down">›</button>
+  </span>
+</div>
+<nav class="reader-tabs" aria-label="Sidebar" lang="en">
+  <a href="#tab-toc" data-tab="toc" hidden>Contents</a>
+</nav>
+</div>
+<section class="tab-panel" id="tab-toc" data-tab="toc" aria-label="Contents"></section>
+  </nav>
+  <div class="sidebar-resizer" role="separator" aria-orientation="vertical" aria-controls="sidebar" aria-label="Sidebar width" tabindex="0" title="Drag to resize the sidebar (double-click: default width)"></div>
+  <main class="main">
+<article class="reader" data-max-text="{{ max_text }}" data-max-note="{{ max_note }}">
+  <header class="reader-head">
+    <a class="book-link" href="{{ base }}/"></a><span class="muted part-title"></span>
+    <a class="back-to-text" lang="en" hidden>&nbsp;Back to text</a>
+  </header>
+  <nav class="reader-nav" aria-label="Parts"></nav>
+  <div class="text"><p class="hub-status" role="status">Opening the book…</p></div>
+  <nav class="reader-nav" aria-label="Parts"></nav>
+</article>
+<div class="running-head" aria-hidden="true"><div class="bar">
+  <span class="running-title"></span>
+</div></div>
+<div class="status-line" aria-hidden="true"><div class="bar">
+  <a class="back-to-text" lang="en" tabindex="-1" hidden>&nbsp;Back to text</a>
+  <div class="track" hidden></div>
+  <span class="status-progress"></span>
+</div></div>
+{% include "partials/reader_settings.html" %}
+  </main>
+</div>
+{% endblock %}

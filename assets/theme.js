@@ -6,6 +6,8 @@
 // `data-r*` on <html>; changes are applied at once and saved to the profile with a
 // POST to `data-settings`. Settings that older versions kept in this browser are
 // adopted once, when the server asks for it with `data-adopt`.
+// The hub's reader app has no profile: with `data-local-settings` the settings are
+// kept in this browser instead.
 "use strict";
 
 // Reader settings: the allowed values of each `data-r*` attribute on <html>; the first
@@ -18,6 +20,8 @@ const shelfgaugeReader = (() => {
   const KEY = "shelfgauge-reader";
   const THEME_KEY = "shelfgauge-theme";
   const FOCUS_KEY = "shelfgauge-focus";
+  // The settings of the hub's reader app (`data-local-settings`).
+  const LOCAL_KEY = "shelfgauge-hub-reader";
   const OPTIONS = {
     font: ["sans", "serif"],
     size: ["3", "0", "1", "2", "4", "5", "6", "7"],
@@ -78,11 +82,19 @@ const shelfgaugeReader = (() => {
   function send() {
     clearTimeout(timer);
     timer = null;
+    const body = Object.assign(current(), { theme: root.dataset.theme || "" });
+    if ("localSettings" in root.dataset) {
+      try {
+        localStorage.setItem(LOCAL_KEY, JSON.stringify(body));
+      } catch (e) {
+        // Not remembered.
+      }
+      return Promise.resolve(true);
+    }
     const url = root.dataset.settings;
     if (!url) {
       return Promise.resolve(false);
     }
-    const body = Object.assign(current(), { theme: root.dataset.theme || "" });
     return fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -199,6 +211,17 @@ const shelfgaugeReader = (() => {
 
   if ("adopt" in root.dataset) {
     adopt();
+  }
+  if ("localSettings" in root.dataset) {
+    try {
+      const saved = JSON.parse(localStorage.getItem(LOCAL_KEY));
+      apply(clean(saved));
+      if (saved && THEMES.includes(saved.theme) && saved.theme) {
+        root.dataset.theme = saved.theme;
+      }
+    } catch (e) {
+      // Nothing saved, or storage unavailable: the defaults.
+    }
   }
   applyFocus();
   phone.addEventListener("change", applyFocus);

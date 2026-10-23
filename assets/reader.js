@@ -24,6 +24,17 @@
   if (!article || !text) {
     return;
   }
+  // Where pages of other parts come from: the instance's server, or the hub's reader
+  // app, which renders them on the device (assets/hub/app.js).
+  const source = window.shelfgaugeSource || {
+    async page(url) {
+      const r = await fetch(url, { credentials: "same-origin" });
+      if (!r.ok) {
+        throw new Error(r.statusText);
+      }
+      return new DOMParser().parseFromString(await r.text(), "text/html");
+    },
+  };
   const createUrl = article.dataset.annotations;
   const positionUrl = article.dataset.position;
   const maxText = Number(article.dataset.maxText) || Infinity;
@@ -1330,17 +1341,7 @@
     const page = url.pathname + url.search;
     if (page !== here()) {
       if (!notePages.has(page)) {
-        notePages.set(
-          page,
-          fetch(page, { credentials: "same-origin" })
-            .then((r) => {
-              if (!r.ok) {
-                throw new Error(r.statusText);
-              }
-              return r.text();
-            })
-            .then((html) => new DOMParser().parseFromString(html, "text/html")),
-        );
+        notePages.set(page, source.page(page));
       }
       try {
         doc = await notePages.get(page);

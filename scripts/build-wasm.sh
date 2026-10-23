@@ -40,8 +40,35 @@ remap="$remap --remap-path-prefix=$sysroot/lib/rustlib/src/rust=/rustc/$commit"
 CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS=$remap
 export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS
 
+# Every dependency as in the committed lock file (the staged build below cannot check).
+cargo metadata --locked --format-version 1 > /dev/null
+
+# The crate version goes into symbol hashes and thus into the module's layout. Build
+# from a copy of the two crates whose version has no `+BUILD`, so a build number bump
+# (a one-line edit of Cargo.toml) does not change the committed module, and a release
+# checkout (which drops it) builds the same bytes.
+stage=$root/target/wasm-stage
+rm -rf "$stage"
+mkdir -p "$stage/crates"
+cp -R "$root/crates/shelfgauge-core" "$root/crates/shelfgauge-wasm" "$stage/crates/"
+cp "$root/Cargo.lock" "$stage/"
+# The workspace manifest: only the workspace sections and the two profiles the build
+# uses (the root package's sections are left out).
+awk '
+    /^\[/ { keep = ($0 ~ /^\[(workspace|workspace\.[a-z]+|profile\.release|profile\.wasm)\]$/) }
+    /^default-members/ { next }
+    /^version = "/ && keep { sub(/\+[0-9]+"/, "\"") }
+    keep { print }
+' "$root/Cargo.toml" > "$stage/Cargo.toml"
+remap="$remap --remap-path-prefix=$stage=/shelfgauge"
+CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS=$remap
+export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS
+
+cd "$stage"
+# Not --locked: the copied lock file loses the entries of the root package; versions
+# of the remaining packages stay as locked.
+CARGO_TARGET_DIR=$root/target cargo build -p shelfgauge-wasm --target wasm32-unknown-unknown --profile wasm
 cd "$root"
-cargo build --locked -p shelfgauge-wasm --target wasm32-unknown-unknown --profile wasm
 rm -rf assets/hub/pkg
 wasm-bindgen --target web --no-typescript --out-dir assets/hub/pkg --out-name shelfgauge \
     target/wasm32-unknown-unknown/wasm/shelfgauge_wasm.wasm

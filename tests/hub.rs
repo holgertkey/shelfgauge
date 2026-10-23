@@ -995,6 +995,40 @@ async fn the_reader_shell_tells_nothing_about_publications() {
     assert_eq!(glue.status, StatusCode::OK);
     let page = String::from_utf8(existing.body).unwrap();
     assert!(page.contains("href=\"/assets/hub.css\""), "{page}");
+    // The reading view: the instance's reading page, empty until the app fills it.
+    assert!(page.contains(r#"<article class="reader""#), "{page}");
+    assert!(
+        page.contains(r#"<script type="module" src="/assets/hub.js">"#),
+        "{page}"
+    );
+    assert!(page.contains("data-local-settings"), "{page}");
+    assert!(
+        !page.contains("reader.js"),
+        "reader.js starts once the book is in"
+    );
+    let home = String::from_utf8(hub.get("/", None).await.body).unwrap();
+    assert!(home.contains(r#"id="hub-app""#), "{home}");
+    assert!(!home.contains("<article"), "{home}");
+    // The library's reading files are shared; nothing else of the library is.
+    for (name, kind) in [
+        ("style.css", "text/css; charset=utf-8"),
+        ("reader.css", "text/css; charset=utf-8"),
+        ("theme.js", "text/javascript; charset=utf-8"),
+        ("app.js", "text/javascript; charset=utf-8"),
+        ("reader.js", "text/javascript; charset=utf-8"),
+        ("icon.svg", "image/svg+xml"),
+        ("hub.js", "text/javascript; charset=utf-8"),
+        ("store.js", "text/javascript; charset=utf-8"),
+        ("crypto.js", "text/javascript; charset=utf-8"),
+    ] {
+        let file = hub.get(&format!("/assets/{name}"), None).await;
+        assert_eq!(file.status, StatusCode::OK, "{name}");
+        assert_eq!(file.headers[header::CONTENT_TYPE], kind, "{name}");
+    }
+    assert_eq!(
+        hub.get("/assets/hub/hub.js", None).await.status,
+        StatusCode::NOT_FOUND
+    );
     assert!(
         !page.contains("<script>") && !page.contains("style="),
         "no inline code"
@@ -1013,12 +1047,16 @@ async fn the_base_path_prefixes_every_route() {
         StatusCode::NOT_FOUND
     );
     let page = hub.get(&format!("/hub/r/{}", pub_id(1)), None).await;
-    assert!(
-        String::from_utf8(page.body)
-            .unwrap()
-            .contains("/hub/assets/hub.css")
-    );
+    let page = String::from_utf8(page.body).unwrap();
+    assert!(page.contains("/hub/assets/hub.css"), "{page}");
+    // The app finds the API and the assets under the base path.
+    assert!(page.contains(r#"<body data-base="/hub">"#), "{page}");
+    assert!(page.contains(r#"src="/hub/assets/hub.js""#), "{page}");
     assert_eq!(hub.get("/hub", None).await.status, StatusCode::OK);
+    assert_eq!(
+        hub.get("/hub/assets/reader.js", None).await.status,
+        StatusCode::OK
+    );
 }
 
 #[test]

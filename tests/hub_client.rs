@@ -1028,3 +1028,65 @@ async fn two_profiles_sync_with_separate_accounts() {
     );
     assert!(!records.iter().any(|(_, id, _)| *id == marks[0]));
 }
+
+#[tokio::test]
+async fn the_hub_reading_view_has_what_reader_js_needs() {
+    // templates/hub/read.html repeats read.html's markup for reader.js, which runs on
+    // both unchanged: every element it looks for must be in both pages.
+    let hub = TestHub::start().await;
+    let lib = Lib::new(&hub.url, "Home");
+    let instance = lib.get("/book/1/read").await;
+    assert_eq!(instance.status, StatusCode::OK);
+    let response = tower::ServiceExt::oneshot(
+        hub.app.clone(),
+        axum::http::Request::get(format!("/r/{}", "ab".repeat(16)))
+            .header(header::HOST, hub.url.trim_start_matches("http://"))
+            .body(axum::body::Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let hub_page = String::from_utf8(bytes.to_vec()).unwrap();
+    for needle in [
+        r#"<article class="reader""#,
+        r#"<header class="reader-head">"#,
+        r#"class="book-link""#,
+        r#"<a class="back-to-text" lang="en" hidden>"#,
+        r#"<a class="back-to-text" lang="en" tabindex="-1" hidden>"#,
+        r#"<nav class="reader-nav" aria-label="Parts">"#,
+        r#"<div class="text">"#,
+        r#"<div class="running-head" aria-hidden="true">"#,
+        r#"<span class="running-title">"#,
+        r#"<div class="status-line" aria-hidden="true">"#,
+        r#"<div class="track""#,
+        r#"<span class="status-progress">"#,
+        r#"<div class="toc-book">"#,
+        r#"<span class="tab-pager" hidden lang="en">"#,
+        r#"<nav class="reader-tabs" aria-label="Sidebar" lang="en">"#,
+        r#"data-tab="toc""#,
+        r#"id="tab-toc""#,
+        r#"id="sidebar""#,
+        r#"class="sidebar-resizer""#,
+        r#"class="icon-button sidebar-toggle""#,
+        r#"class="icon-button focus-button""#,
+        r#"class="icon-button settings-button" popovertarget="reader-settings""#,
+        r#"<div id="reader-settings" class="reader-settings" popover"#,
+        r#"<select class="theme-select""#,
+        r#"<symbol id="i-focus""#,
+        "data-max-text=",
+        "data-max-note=",
+        "/assets/theme.js",
+        "/assets/app.js",
+        "/assets/reader.css",
+    ] {
+        assert!(
+            instance.body.contains(needle),
+            "the library's page: {needle}"
+        );
+        assert!(hub_page.contains(needle), "the hub's page: {needle}");
+    }
+}

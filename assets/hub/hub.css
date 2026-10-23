@@ -1,37 +1,55 @@
-/* The hub's placeholder page; the reader app replaces it. */
-:root {
-  color-scheme: light dark;
-  --bg: #fbfaf7;
-  --fg: #1f1d1a;
-  --muted: #6b665e;
-}
+/* The hub's own pages (shelf, pairing) on top of style.css; the reading view is the
+   instance's (reader.css). */
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1b1a18;
-    --fg: #e9e6e0;
-    --muted: #a39d93;
-  }
-}
-
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--fg);
-  font: 16px/1.5 system-ui, sans-serif;
-}
-
-main {
-  max-width: 36rem;
+.hub-page {
+  max-width: 40rem;
   margin: 0 auto;
-  padding: 3rem 1rem;
+  padding: 1.5rem 16px 3rem;
 }
 
-h1 {
+.hub-page h1 {
   font-size: 1.5rem;
   margin: 0 0 1rem;
 }
 
-p {
+.hub-page h2 {
+  font-size: 1.1rem;
+  margin: 1.75rem 0 0.5rem;
+}
+
+.hub-page .error {
+  color: var(--error);
+}
+
+.hub-books {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.hub-book {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.75rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.hub-book a {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.hub-book .hub-progress {
+  margin-left: auto;
+}
+
+.hub-sync {
+  font-size: 0.9rem;
+}
+
+/* The message in place of a book's text (not paired, gone, offline). */
+.reader .text .hub-status {
   color: var(--muted);
 }

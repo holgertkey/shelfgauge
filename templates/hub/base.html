@@ -1,0 +1,40 @@
+{#- The hub's pages: static for every URL (they say nothing about publications); the
+    reader app (assets/hub/hub.js) fills them in on the device. The markup follows
+    base.html and read.html, so style.css, reader.css, app.js and reader.js work
+    unchanged. #}
+<!DOCTYPE html>
+<html lang="en" class="no-js" data-local-settings>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<title>shelfgauge</title>
+<link rel="icon" href="{{ base }}/assets/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="{{ base }}/assets/style.css">
+{%- block head %}{% endblock %}
+<link rel="stylesheet" href="{{ base }}/assets/hub.css">
+<script src="{{ base }}/assets/theme.js"></script>
+<script src="{{ base }}/assets/app.js" defer></script>
+<script type="module" src="{{ base }}/assets/hub.js"></script>
+</head>
+<body data-base="{{ base }}">
+{% include "partials/symbols.html" %}
+<header class="topbar">
+  {%- block toggle %}{% endblock %}
+  <a class="brand" href="{{ base }}/">Shelfgauge</a>
+  <a class="icon-button home-link" href="{{ base }}/" title="My books" aria-label="My books">
+    <svg class="icon" aria-hidden="true"><use href="#i-home"></use></svg>
+  </a>
+  {%- block topbar %}{% endblock %}
+  <select class="theme-select" aria-label="Theme" title="Theme (t)">
+    <option value="">Auto</option>
+    <option value="light">Light</option>
+    <option value="dark">Dark</option>
+    <option value="sepia">Sepia</option>
+    <option value="navy">Navy</option>
+    <option value="black">Black</option>
+  </select>
+</header>
+{% block body %}{% endblock %}
+</body>
+</html>

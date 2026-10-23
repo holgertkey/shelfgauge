@@ -679,7 +679,7 @@ person, not authentication.
   stdin, removing only the line break); `shelfgauge annotations export [--profile <name>]`. Unknown names
   are errors that list the profiles.
 
-## V2: hub — books on mobile devices (server and instance side built, reader app designed)
+## V2: hub — books on mobile devices (server and instance side built, reader app in progress)
 
 Agreed 2026-10-14. A user opens a book on a phone (or any other device) in a browser and
 reads it even when the computer with the library is off, with annotations and the
@@ -799,7 +799,7 @@ and sealing in the app (`src/publication/`).
 ### Hub server (0.18.0, in progress)
 
 `src/hub/` in the app crate, `shelfgauge hub` in the same binary (no feature flag).
-Built in Phase 24; the instance side and the reader app follow.
+Built in Phase 24; the reader app (Phase 26) and the instance side (Phase 25) are below.
 
 - **Data directory**: `hub.toml` (`hub::config`: `[server]` bind/port/allowed hosts/
   base path, default `127.0.0.1:8743`; `[accounts]` registration `invite` | `open`,
@@ -847,15 +847,56 @@ Built in Phase 24; the instance side and the reader app follow.
   are shared with the library server (`web::security`, `web::trace`); no reach
   classification, no `Origin` check and no CORS (a bearer header is no ambient
   credential; the instance's client sends no `Origin`). API answers are `no-store`.
-- **Reader shell**: `/`, `/pair` and `/r/{id}` serve one static page for any
-  well-formed id without a database lookup (no existence oracle), with its files under
-  `/assets/` from `assets/hub/` (excluded from the library's assets); a placeholder
-  until the reader app.
+- **Reader shell**: `/` and `/pair` (`templates/hub/home.html`) and `/r/{id}`
+  (`templates/hub/read.html`, for any well-formed id) are static pages, rendered
+  without a database lookup (no existence oracle), with their files under `/assets/`:
+  the app's own from `assets/hub/` (excluded from the library's assets) and the
+  library's reading files `style.css`, `reader.css`, `theme.js`, `app.js`,
+  `reader.js`, `icon.svg` (shared, so the reading view is the instance's). See
+  "Reader app".
 - **Tests**: `tests/hub.rs` (router with a settable clock: invites, pairing expiry and
   single use, recovery, revocation, blob round trip, account isolation, quotas,
   expiry, takedown, sync paging and tombstones, body limits, rate limits, `Host`,
   shell, base path) and `tests/logging.rs`
   (`hub_secrets_and_publication_ids_are_never_logged`).
+
+### Reader app (0.18.0)
+
+Phase 26: `assets/hub/` (`hub.js` pages, `store.js` IndexedDB and API calls,
+`crypto.js`, the WASM module `pkg/`), plain JS modules, no framework, no Node build.
+
+- **Pairing** (`/pair#<secret>.<account key>`): the fragment is removed from the
+  address and the history (`history.replaceState`) before anything else; only the
+  secret goes to `POST /api/pair`, with the device name (from the user agent, e.g.
+  "Chrome on Android") sealed with the account key. The account key becomes two
+  **non-extractable** CryptoKeys (AES-GCM, HMAC) kept in IndexedDB
+  (`shelfgauge-hub`: `state` → pairing and pull cursor; `records` → the account's
+  records as the hub has them, still encrypted); the raw bytes are dropped. Pairing
+  with another account clears the stored records. `navigator.storage.persist()` is
+  asked for. A `401` forgets the pairing and the records.
+- **Unpaired** browsers make no API call: the shelf and `/r/<id>` say "This device is
+  not paired" with instructions, never content.
+- **Shelf** (`/`): pulled records (`GET /api/sync`) are stored encrypted and opened
+  when the page is drawn; a shelf item counts only if its record id equals
+  `shelf_id` of its content key. "Currently reading" (with a position below 100 %,
+  newest first), then the other books by title, each with its library's name. Offline
+  it shows the books as of the last pull.
+- **Reading view** (`/r/<id>?part=<n>`): the shelf item gives the book key; the
+  manifest and the part are fetched, opened (`crypto.js`) and rendered by the WASM
+  module, and the page — the instance's `read.html` markup — is filled in (title,
+  part navigation, contents, running head, progress, chapter ticks); then `reader.js`
+  is loaded and runs unchanged. Pages of other parts (notes in a panel) come from
+  `window.shelfgaugeSource.page`, rendered on the device; images are fetched,
+  opened and shown through `blob:` URLs when an `<img data-image>` appears (also in
+  note panels). The track's `?progress=` picks the part by the manifest's progress
+  ranges and the block by `reader.js`'s rule. Reading settings are kept in this
+  browser (`theme.js` with `data-local-settings`). Decrypted text exists only in
+  memory and the page. A publication that is gone (expired, removed) says so with a
+  link back to the shelf.
+- **Checks**: `.debug/TESTS/hub_interop.mjs` (vectors in the browser) and
+  `.debug/TESTS/hub_smoke.mjs` (a real library and hub: register, publish, pair,
+  shelf, read, images, notes across parts, `?progress=`, settings, the deepest
+  accepted nesting rendered in WASM, a used pairing link).
 
 ### Instance side (0.18.0)
 
@@ -1006,8 +1047,11 @@ The repository is a Cargo workspace of three crates with one version
   `opt-level = "s"`, no `wasm-opt`) and runs `wasm-bindgen --target web` into
   `assets/hub/pkg/`, which is **committed** and embedded with the hub's assets, so
   `cargo build` and `cargo install` need neither the `wasm32` target nor the CLI. The
-  output is reproducible: the script pins the Rust and `wasm-bindgen` versions and
-  remaps the checkout, Cargo home and sysroot paths out of panic messages; CI's
+  output is reproducible: the script pins the Rust and `wasm-bindgen` versions,
+  remaps the checkout, Cargo home and sysroot paths out of panic messages, and builds
+  from a copy of the two crates (`target/wasm-stage/`) whose version has no `+BUILD`
+  (the version enters symbol hashes and thus the module's layout, so a build number
+  bump would otherwise change it); CI's
   `wasm` job (same pinned toolchain) rebuilds it and fails on any difference. Natively
   it is a plain library: `tests/publication.rs` checks that it renders every part
   exactly as the server.

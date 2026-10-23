@@ -565,22 +565,19 @@ fn registry_knows_epub() {
     assert_eq!(parser.format(), "epub");
 }
 
+/// The deepest accepted nesting of each kind: name, open, close, repetitions
+/// (`<ul><li>` nests two levels per repetition).
+const DEEPEST: &[(&str, &str, &str, usize)] = &[
+    ("div", "<div>", "</div>", 240),
+    ("span", "<span>", "</span>", 240),
+    ("blockquote", "<blockquote>", "</blockquote>", 240),
+    ("list", "<ul><li>", "</li></ul>", 120),
+    ("em", "<em>", "</em>", 240),
+];
+
 #[test]
 fn deepest_accepted_nesting_fits_the_parser_stack() {
-    let depth = 240;
-    for (open, close) in [
-        ("<div>", "</div>"),
-        ("<span>", "</span>"),
-        ("<blockquote>", "</blockquote>"),
-        ("<ul><li>", "</li></ul>"),
-        ("<em>", "</em>"),
-    ] {
-        // `<ul><li>` nests two levels per repetition.
-        let n = if open.starts_with("<ul>") {
-            depth / 2
-        } else {
-            depth
-        };
+    for &(_, open, close, n) in DEEPEST {
         let body = format!("<p>{}deepest{}</p>", open.repeat(n), close.repeat(n));
         let entries = common::with_entry(
             common::epub3_entries(),
@@ -617,4 +614,15 @@ fn write_samples() {
     std::fs::create_dir_all(dir).unwrap();
     std::fs::write(dir.join("synthetic-epub3.epub"), common::epub3()).unwrap();
     std::fs::write(dir.join("synthetic-epub2.epub"), common::epub2()).unwrap();
+    // The deepest nesting the parser accepts (the hub reader renders them in WASM,
+    // on the browser's stack).
+    for (name, open, close, n) in DEEPEST {
+        let body = format!("<p>{}deepest{}</p>", open.repeat(*n), close.repeat(*n));
+        let entries = common::with_entry(
+            common::epub3_entries(),
+            "OEBPS/text/ch2.xhtml",
+            Some(common::xhtml(&body)),
+        );
+        std::fs::write(dir.join(format!("deep-{name}.epub")), common::zip(&entries)).unwrap();
+    }
 }

@@ -111,7 +111,7 @@ mod tests {
 
     #[test]
     fn hub_files_are_not_library_assets() {
-        assert!(Assets::get("hub/shell.html").is_none());
+        assert!(Assets::get("hub/hub.js").is_none());
         assert!(Assets::get("hub/hub.css").is_none());
         // Also the nested reader module.
         assert!(Assets::get("hub/pkg/shelfgauge.js").is_none());
