@@ -122,6 +122,8 @@ async function shelfPage() {
   }
   renderShelf(await store.shelf(p), "Updating…");
   try {
+    // Marks made offline go out from here too.
+    await store.push(p);
     await store.pull(p);
     renderShelf(await store.shelf(p), "");
   } catch (e) {
@@ -173,6 +175,31 @@ class Book {
       this.loaded.set(n, loading);
     }
     return this.loaded.get(n);
+  }
+
+  /**
+   * Loads every part and builds the book's text in WASM (quotes, positions, lists and
+   * search need the whole book). Once per page.
+   */
+  text() {
+    if (!this.textReady) {
+      this.textReady = (async () => {
+        const count = this.summary.parts.length;
+        // A few at a time, the open part first (it is in already).
+        for (let at = 0; at < count; at += 4) {
+          const batch = [];
+          for (let n = at; n < Math.min(at + 4, count); n++) {
+            batch.push(this.part(n));
+          }
+          await Promise.all(batch);
+        }
+        this.reader.loadText();
+      })();
+      this.textReady.catch(() => {
+        this.textReady = null;
+      });
+    }
+    return this.textReady;
   }
 
   /** A `blob:` URL of image `imageId`, or null. */
@@ -300,9 +327,110 @@ function fillPage(book, index, html) {
   track.replaceChildren(...s.chapters.map((chapter) => el("i", { class: "tick chapter", "data-at": chapter.at, "data-title": chapter.title })));
 }
 
-function startReader(book) {
-  window.shelfgaugeSource = {
-    // A page of another part, rendered here (notes open in a panel from it).
+/** Unix seconds, as the instance's records use. */
+function now() {
+  return Math.floor(Date.now() / 1000);
+}
+
+/** Code points (the limits count them, as the instance does). */
+function cpLength(text) {
+  let n = 0;
+  for (const _ of text) {
+    n += 1;
+  }
+  return n;
+}
+
+/** The ordinal of a block id ("b12" → 12). */
+function ordinal(block) {
+  return Number(block.slice(1));
+}
+
+/**
+ * Sync of this page: pushes changes made here (soon after a change; a position 30 s
+ * after the last one, as on the instance), pulls on opening, when the device comes
+ * online and every few minutes while the page is visible; `onChange` runs when the
+ * pull changed records.
+ */
+class Sync {
+  constructor(p, onChange) {
+    this.p = p;
+    this.onChange = onChange;
+    this.timer = null;
+    this.running = null;
+    addEventListener("online", () => this.now());
+    setInterval(() => {
+      if (document.visibilityState === "visible") {
+        this.now();
+      }
+    }, 5 * 60 * 1000);
+    // Changes waiting for their push (a mark made just before) go out now: a hidden
+    // page may be frozen before a timer fires.
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") {
+        this.push({ keepalive: true });
+      }
+    });
+  }
+
+  /** A push in `delay` ms (a later call moves it). */
+  later(delay) {
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.push(), delay);
+  }
+
+  async push(options) {
+    clearTimeout(this.timer);
+    try {
+      await store.push(this.p, options);
+    } catch (e) {
+      this.failed(e);
+    }
+  }
+
+  /** Push, then pull; one at a time. */
+  now() {
+    if (!this.running) {
+      this.running = (async () => {
+        try {
+          await store.push(this.p);
+          if ((await store.pull(this.p)) > 0) {
+            this.onChange();
+          }
+        } catch (e) {
+          this.failed(e);
+        } finally {
+          this.running = null;
+        }
+      })();
+    }
+    return this.running;
+  }
+
+  failed(e) {
+    if (e instanceof store.Unpaired) {
+      store.forget().then(() => location.reload());
+    } else if (navigator.onLine) {
+      console.error(e);
+    }
+  }
+}
+
+/**
+ * The reader's data on this device (reader.js's `window.shelfgaugeSource`): pages of
+ * other parts, lists, search results and new annotations come from the WASM module
+ * and the records in IndexedDB.
+ */
+function deviceSource(book, item, p, sync) {
+  const contentKey = book.summary.content_key;
+  const article = document.querySelector("article.reader");
+  const maxText = Number(article.dataset.maxText) || Infinity;
+  const maxNote = Number(article.dataset.maxNote) || Infinity;
+  const annotations = async () => (await store.records(p, "annotation"))
+    .map((r) => r.value)
+    .filter((a) => a.id && a.content_key === contentKey && a.deleted_at === null);
+  const snapshot = { book_title: item.title || "", book_authors: item.authors || "" };
+  return {
     async page(url) {
       const part = Number(new URL(url, location.href).searchParams.get("part")) || 1;
       const n = Math.min(Math.max(part, 1), book.summary.parts.length) - 1;
@@ -314,7 +442,119 @@ function startReader(book) {
       doc.body.append(text);
       return doc;
     },
+    async lists() {
+      await book.text();
+      return book.reader.lists(JSON.stringify(await annotations()));
+    },
+    async create(body) {
+      await book.text();
+      let anchor;
+      let quoted;
+      if (body.block) {
+        quoted = JSON.parse(book.reader.bookmark(body.block));
+        anchor = { start_block: ordinal(body.block), start_offset: 0, end_block: ordinal(body.block), end_offset: 0 };
+      } else {
+        quoted = JSON.parse(book.reader.quote(JSON.stringify({
+          start_block: body.start_block,
+          start_offset: body.start_offset,
+          end_block: body.end_block,
+          end_offset: body.end_offset,
+        })));
+        const length = cpLength(quoted.text);
+        if (length > maxText) {
+          throw new Error(`the selection is ${length} characters long; the limit is ${maxText}`);
+        }
+        anchor = {
+          start_block: ordinal(body.start_block),
+          start_offset: body.start_offset,
+          end_block: ordinal(body.end_block),
+          end_offset: body.end_offset,
+        };
+      }
+      const note = typeof body.note === "string" && body.note.trim() ? body.note : null;
+      if (note && cpLength(note) > maxNote) {
+        throw new Error(`the note is too long; the limit is ${maxNote} characters`);
+      }
+      const t = now();
+      const id = crypto.randomUUID();
+      await store.write(p, "annotation", id, Object.assign({
+        id,
+        content_key: contentKey,
+        text: quoted.text,
+        prefix: quoted.prefix,
+        suffix: quoted.suffix,
+        section_title: quoted.section_title,
+        note,
+        created_at: t,
+        updated_at: t,
+        deleted_at: null,
+      }, anchor, snapshot));
+      sync.later(1000);
+      return { id };
+    },
+    async remove(form) {
+      const id = new URL(form.action, location.href).searchParams.get("delete");
+      const record = id && await store.get(p, "annotation", id);
+      if (!record || record.content_key !== contentKey) {
+        throw new Error("not found");
+      }
+      const t = now();
+      record.deleted_at = t;
+      record.updated_at = t;
+      await store.write(p, "annotation", id, record);
+      sync.later(1000);
+    },
+    async savePosition(body, keepalive) {
+      await book.text();
+      const position = JSON.parse(book.reader.position(body.block));
+      if (!position) {
+        return; // In the notes: not a reading position.
+      }
+      const id = await c.positionId(p.mac, c.unbase64url(contentKey));
+      await store.write(p, "position", id, Object.assign({
+        content_key: contentKey,
+        block: ordinal(body.block),
+        offset: 0,
+        suffix: position.suffix,
+        progress: position.progress,
+        updated_at: now(),
+      }, snapshot));
+      if (keepalive) {
+        // Saved as the page is hidden or left (reader.js): pushed at once, as the
+        // reader may go on reading on another device.
+        await sync.push({ keepalive: true });
+      } else {
+        sync.later(30000);
+      }
+    },
+    async find(raw) {
+      await book.text();
+      return book.reader.find(raw);
+    },
   };
+}
+
+/** Shows the results of `?find=` before reader.js starts (as the instance's page does). */
+async function showFind(book, raw, hit) {
+  await book.text();
+  const panel = document.getElementById("tab-find");
+  const template = document.createElement("template");
+  // Escaped HTML from the instance's template (WASM).
+  template.innerHTML = book.reader.find(raw, Number.isInteger(hit) && hit > 0 ? hit : undefined).trim();
+  const results = template.content.firstElementChild;
+  panel.querySelector(".find-results").replaceWith(results);
+  panel.hidden = false;
+  const tab = document.querySelector('.reader-tabs a[data-tab="find"]');
+  tab.hidden = false;
+  tab.querySelector(".tab-count").textContent = results.dataset.tabCount || "";
+  tab.title = results.dataset.tabTitle || "Search results";
+  tab.setAttribute("aria-label", tab.title);
+  document.querySelector(".find-input").value = raw;
+}
+
+function startReader(book, item, p) {
+  const sync = new Sync(p, () => document.dispatchEvent(new Event("shelfgauge:lists")));
+  window.shelfgaugeSource = deviceSource(book, item, p, sync);
   // Images in note panels and anything else added later.
   new MutationObserver((changes) => {
     for (const change of changes) {
@@ -327,6 +567,11 @@ function startReader(book) {
   }).observe(document.body, { childList: true, subtree: true });
   const script = document.createElement("script");
   script.src = `${base}/assets/reader.js`;
+  script.addEventListener("load", () => {
+    // The lists need the whole book: they appear once it is in.
+    book.text().then(() => document.dispatchEvent(new Event("shelfgauge:lists")), (e) => console.error(e));
+    sync.now();
+  });
   document.head.append(script);
 }
 
@@ -360,12 +605,33 @@ async function readerPage(id) {
     await wasm.default();
     const reader = new wasm.Reader(await c.openBlob(key, c.unhex(id), "manifest", sealed));
     const book = new Book(p, id, key, reader);
+    if (book.summary.content_key !== item.content_key) {
+      // Marks would be filed under another book.
+      readerMessage("This book could not be opened", "Its shelf entry does not match the published book. Publish it again from your library.");
+      return;
+    }
     const params = new URLSearchParams(location.search);
     const count = book.summary.parts.length;
     const share = params.has("progress") ? Number(params.get("progress")) : NaN;
     let index;
+    let resumeAt = null;
     if (Number.isFinite(share) && share >= 0 && share <= SHARE_SCALE) {
       index = partAtShare(book.summary.parts, share);
+    } else if (!params.has("part") && !params.has("find") && !location.hash) {
+      // Opened from the shelf: where the reader left off, here or elsewhere (a pull
+      // first, unless the hub is slow to answer).
+      await Promise.race([
+        store.pull(p).catch((e) => {
+          if (e instanceof store.Unpaired) {
+            throw e;
+          }
+        }),
+        new Promise((resolve) => setTimeout(resolve, 3000)),
+      ]);
+      const position = await store.get(p, "position", await c.positionId(p.mac, c.unbase64url(item.content_key)));
+      const part = position && Number.isInteger(position.block) ? reader.partOf(`b${position.block}`) : undefined;
+      index = part === undefined ? 0 : part;
+      resumeAt = part === undefined ? null : `b${position.block}`;
     } else {
       index = Math.min(Math.max(Number(params.get("part")) || 1, 1), Math.max(count, 1)) - 1;
     }
@@ -375,12 +641,19 @@ async function readerPage(id) {
       html = book.reader.renderPart(index);
     }
     fillPage(book, index, html);
+    document.querySelector(".find-form").dataset.part = index + 1;
     if (Number.isFinite(share) && count) {
       // The track's jump into another part: the block at that share, as a fragment.
       const block = blockAtShare(document.querySelector("article.reader .text"), book.summary.parts[index].progress || { start: 0, end: 0 }, share);
       history.replaceState(null, "", `?part=${index + 1}${block ? `#${block.id}` : ""}`);
+    } else if (resumeAt) {
+      history.replaceState(null, "", `?part=${index + 1}#${resumeAt}`);
     }
-    startReader(book);
+    const raw = params.get("find");
+    if (raw && raw.trim() && count) {
+      await showFind(book, raw, Number(params.get("hit")));
+    }
+    startReader(book, item, p);
     if (location.hash) {
       const target = document.getElementById(decodeURIComponent(location.hash.slice(1)));
       if (target) {

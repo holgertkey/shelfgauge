@@ -1,0 +1,4 @@
+# The library's templates: the reader's lists and search results are rendered from
+# the same partials as on the instance.
+[general]
+dirs = ["../../templates"]

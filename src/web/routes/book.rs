@@ -6,7 +6,7 @@ use axum::extract::{Path, Query, RawQuery, State};
 use axum::http::HeaderMap;
 use axum::response::{Html, Response};
 
-use super::annotations::{Lists, book_annotations, progress_label};
+use super::annotations::{Lists, annotation_lists, book_annotations, progress_label};
 use super::{date, parse_id, render};
 use crate::annotations::attach;
 use crate::cache::covers;
@@ -153,7 +153,7 @@ pub(crate) async fn card(
         .as_ref()
         .filter(|a| readable || !a.annotations.is_empty())
         .map(|a| {
-            Lists::new(
+            annotation_lists(
                 urls,
                 book.id,
                 &a.annotations,

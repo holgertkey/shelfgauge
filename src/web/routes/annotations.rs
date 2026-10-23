@@ -30,79 +30,39 @@ use crate::storage::books::{BookDetails, BookStatus, book_by_id};
 use crate::web::profile::CurrentProfile;
 use crate::web::{AppError, AppState, Urls};
 
-/// An annotation in a list.
-pub(crate) struct ListItem {
-    pub(crate) id: String,
-    pub(crate) href: String,
-    pub(crate) label: String,
-    pub(crate) note: String,
-    pub(crate) text: String,
-    pub(crate) bookmark: bool,
-    pub(crate) lost: bool,
-    pub(crate) start_block: String,
-    pub(crate) start_offset: u32,
-    pub(crate) end_block: String,
-    pub(crate) end_offset: u32,
-    pub(crate) prefix: String,
-    pub(crate) suffix: String,
-    pub(crate) note_action: String,
-    pub(crate) delete_action: String,
-    /// Where it starts, in ten-thousandths of the main text (bookmarks in the reader:
-    /// the ticks on the status line); `None` when unknown or in the notes.
-    pub(crate) progress: Option<u64>,
-}
+use crate::annotations::lists::ListItem;
+pub(crate) use crate::annotations::lists::Lists;
 
-/// A book's bookmarks and marks, in book order.
-pub(crate) struct Lists {
-    pub(crate) bookmarks: Vec<ListItem>,
-    pub(crate) marks: Vec<ListItem>,
-    /// Where the forms return to.
-    pub(crate) back: String,
-}
-
-impl Lists {
-    /// The lists; with the book's `text`, items carry their [`ListItem::progress`].
-    pub(crate) fn new(
-        urls: &Urls,
-        book_id: i64,
-        annotations: &[Annotation],
-        back: String,
-        text: Option<&BookText>,
-    ) -> Self {
-        let item = |a: &Annotation| ListItem {
-            id: a.id.clone(),
-            href: urls.read_mark(book_id, a.anchor.start_block),
-            label: a.label(),
-            note: a.note().unwrap_or("").to_owned(),
-            text: a.quote.text.clone(),
-            bookmark: a.is_bookmark(),
-            lost: a.anchor_lost,
-            start_block: a.anchor.start_block.to_string(),
-            start_offset: a.anchor.start_offset,
-            end_block: a.anchor.end_block.to_string(),
-            end_offset: a.anchor.end_offset,
-            prefix: a.quote.prefix.clone(),
-            suffix: a.quote.suffix.clone(),
-            note_action: urls.annotation_note(&a.id),
-            delete_action: urls.annotation_delete(&a.id),
-            progress: text
-                .filter(|_| !a.anchor_lost)
-                .and_then(|text| text.share_before(a.anchor.start_block, 10_000)),
-        };
-        Self {
-            bookmarks: annotations
-                .iter()
-                .filter(|a| a.is_bookmark())
-                .map(item)
-                .collect(),
-            marks: annotations
-                .iter()
-                .filter(|a| !a.is_bookmark())
-                .map(item)
-                .collect(),
-            back,
-        }
-    }
+/// A book's bookmarks and marks, in book order; with the book's `text`, items carry
+/// their [`ListItem::progress`].
+pub(crate) fn annotation_lists(
+    urls: &Urls,
+    book_id: i64,
+    annotations: &[Annotation],
+    back: String,
+    text: Option<&BookText>,
+) -> Lists {
+    let item = |a: &Annotation| ListItem {
+        id: a.id.clone(),
+        href: urls.read_mark(book_id, a.anchor.start_block),
+        label: a.label(),
+        note: a.note().unwrap_or("").to_owned(),
+        text: a.quote.text.clone(),
+        bookmark: a.is_bookmark(),
+        lost: a.anchor_lost,
+        start_block: a.anchor.start_block.to_string(),
+        start_offset: a.anchor.start_offset,
+        end_block: a.anchor.end_block.to_string(),
+        end_offset: a.anchor.end_offset,
+        prefix: a.quote.prefix.clone(),
+        suffix: a.quote.suffix.clone(),
+        note_action: urls.annotation_note(&a.id),
+        delete_action: urls.annotation_delete(&a.id),
+        progress: text
+            .filter(|_| !a.anchor_lost)
+            .and_then(|text| text.share_before(a.anchor.start_block, 10_000)),
+    };
+    Lists::new(annotations.iter().map(item), back)
 }
 
 /// The annotations and reading position of a book, for its card or reader page.
@@ -678,7 +638,7 @@ pub(crate) async fn lists(
         .await?;
     let urls = state.urls();
     let fragment = ListsFragment {
-        lists: Lists::new(urls, id, &annotations, urls.read(id, 1), text.as_deref()),
+        lists: annotation_lists(urls, id, &annotations, urls.read(id, 1), text.as_deref()),
     };
     Ok((
         [(header::CACHE_CONTROL, "no-store")],

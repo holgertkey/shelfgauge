@@ -893,10 +893,33 @@ Phase 26: `assets/hub/` (`hub.js` pages, `store.js` IndexedDB and API calls,
   browser (`theme.js` with `data-local-settings`). Decrypted text exists only in
   memory and the page. A publication that is gone (expired, removed) says so with a
   link back to the shelf.
+- **Marks and position on the device**: `reader.js` reads and writes through a data
+  source (`window.shelfgaugeSource`: `page`, `lists`, `create`, `remove`,
+  `savePosition`, `find`); the instance's source is the server as before, the hub's
+  (`hub.js`) works on the device. Once all parts are in, the WASM module builds the
+  book's text (`Reader.loadText`) and gives quotes, bookmark and position fingerprints
+  and progress exactly as the instance's routes do, and renders the sidebar's lists
+  and the search results with the instance's own templates
+  (`partials/annotation_lists.html`, `partials/find_results.html`, via askama in
+  `shelfgauge-wasm`; the builders `annotations::lists`, `annotations::results` and
+  the label rule moved to the core for both). New records are written as the instance
+  writes them (keys sorted, compact JSON; `store.canonical`, checked against
+  `record_plaintexts.json`), sealed into IndexedDB and queued in an `outbox`; the
+  delete form posts to `?delete=<id>` (a tombstone with `deleted_at`). A mark is
+  refused unless the manifest's content key is the shelf item's.
+- **Sync on the device** (`store.push`/`store.pull`, `hub.js` `Sync`): pushes soon
+  after a change (a position 30 s after the last one, as the instance), pulls when
+  the page opens, when the device comes online and every five minutes while visible,
+  pushes when the page is hidden. Pulled records merge by the instance's rule (newer
+  `updated_at`, ties by plaintext bytes); a pending local change that loses leaves the
+  outbox; a `null` record (the book left the shelf) always wins. Lists redraw when a
+  pull changed records (`shelfgauge:lists` event). Opened from the shelf, a book pulls
+  first (at most 3 s) and resumes at the newest position.
 - **Checks**: `.debug/TESTS/hub_interop.mjs` (vectors in the browser) and
   `.debug/TESTS/hub_smoke.mjs` (a real library and hub: register, publish, pair,
   shelf, read, images, notes across parts, `?progress=`, settings, the deepest
-  accepted nesting rendered in WASM, a used pairing link).
+  accepted nesting rendered in WASM, marks and positions both ways, deletions,
+  resuming, search, a book leaving the shelf, a used pairing link, a revoked device).
 
 ### Instance side (0.18.0)
 
@@ -1047,7 +1070,9 @@ The repository is a Cargo workspace of three crates with one version
   `opt-level = "s"`, no `wasm-opt`) and runs `wasm-bindgen --target web` into
   `assets/hub/pkg/`, which is **committed** and embedded with the hub's assets, so
   `cargo build` and `cargo install` need neither the `wasm32` target nor the CLI. The
-  output is reproducible: the script pins the Rust and `wasm-bindgen` versions,
+  output is reproducible (the sidebar's templates are copied into the staged build
+  too, so a change to `partials/annotation_lists.html` or `partials/find_results.html`
+  needs a rebuild as well): the script pins the Rust and `wasm-bindgen` versions,
   remaps the checkout, Cargo home and sysroot paths out of panic messages, and builds
   from a copy of the two crates (`target/wasm-stage/`) whose version has no `+BUILD`
   (the version enters symbol hashes and thus the module's layout, so a build number

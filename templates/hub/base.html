@@ -25,6 +25,7 @@
   <a class="icon-button home-link" href="{{ base }}/" title="My books" aria-label="My books">
     <svg class="icon" aria-hidden="true"><use href="#i-home"></use></svg>
   </a>
+  {%- block search %}{% endblock %}
   {%- block topbar %}{% endblock %}
   <select class="theme-select" aria-label="Theme" title="Theme (t)">
     <option value="">Auto</option>

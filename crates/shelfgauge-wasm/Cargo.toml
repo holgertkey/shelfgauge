@@ -14,7 +14,11 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 shelfgauge-core.workspace = true
+# The sidebar's lists and search results, from the library's own templates
+# (`askama.toml`: `../../templates`).
+askama = "0.16.1"
 base64 = "0.23.1"
+percent-encoding = "2.3.2"
 serde.workspace = true
 serde_json.workspace = true
 # Pinned exactly: the `wasm-bindgen` CLI that generates `assets/hub/pkg/` must be the

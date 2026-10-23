@@ -4,13 +4,24 @@
 // - "state": "pairing" → { account, device, token, aes, mac } (aes and mac are
 //   non-extractable CryptoKeys of the account key: scripts can use them, not read
 //   them), "seq" → the cursor of the last pull;
-// - "records": the account's sync records as the hub has them, still encrypted:
-//   { kind, id, seq, data } (data a Uint8Array, null for a deleted record).
+// - "records": the account's sync records, still encrypted: { kind, id, seq, data }
+//   (data a Uint8Array, null for a record the hub deleted); changes made here are
+//   written here first;
+// - "outbox": { kind, id } of the records changed here and not pushed yet.
 // Plaintext is never stored: records are opened when a page needs them.
+//
+// Merging follows the instance (src/hub_client/merge.rs): per record the newer
+// `updated_at` wins, on equal times the bytewise larger plaintext; a record changed
+// here that loses is replaced and leaves the outbox. Record plaintexts are written
+// exactly as the instance writes them (keys sorted, compact JSON; pinned by
+// tests/fixtures/publication/record_plaintexts.json), since ties compare bytes.
 import * as c from "./crypto.js";
 
 const DB_NAME = "shelfgauge-hub";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
+// The most records in one push, and the largest record the hub takes.
+const PUSH_BATCH = 500;
+const MAX_RECORD_BYTES = 1024 * 1024;
 
 /** The hub's base path ("" at the root), from the page. */
 export const base = document.body.dataset.base || "";
@@ -21,10 +32,15 @@ function db() {
   if (!dbPromise) {
     dbPromise = new Promise((resolve, reject) => {
       const open = indexedDB.open(DB_NAME, DB_VERSION);
-      open.onupgradeneeded = () => {
+      open.onupgradeneeded = (event) => {
         const d = open.result;
-        d.createObjectStore("state");
-        d.createObjectStore("records", { keyPath: ["kind", "id"] });
+        if (event.oldVersion < 1) {
+          d.createObjectStore("state");
+          d.createObjectStore("records", { keyPath: ["kind", "id"] });
+        }
+        if (event.oldVersion < 2) {
+          d.createObjectStore("outbox", { keyPath: ["kind", "id"] });
+        }
       };
       open.onsuccess = () => resolve(open.result);
       open.onerror = () => reject(open.error);
@@ -59,9 +75,10 @@ export function pairing() {
 
 /** Forgets the pairing and everything synced (revoked token, or another account). */
 export function forget() {
-  return tx(["state", "records"], "readwrite", (t) => {
+  return tx(["state", "records", "outbox"], "readwrite", (t) => {
     t.objectStore("state").clear();
     t.objectStore("records").clear();
+    t.objectStore("outbox").clear();
   });
 }
 
@@ -131,41 +148,216 @@ export async function pair(code) {
   }
   const issued = await response.json();
   const previous = await pairing();
-  await tx(["state", "records"], "readwrite", (t) => {
+  await tx(["state", "records", "outbox"], "readwrite", (t) => {
     const state = t.objectStore("state");
     if (!previous || previous.account !== issued.account) {
       state.clear();
       t.objectStore("records").clear();
+      t.objectStore("outbox").clear();
     }
     state.put({ account: issued.account, device: issued.device, token: issued.token, aes, mac }, "pairing");
   });
 }
 
+/** Whether `(time, bytes)` of `a` is greater than that of `b`. */
+function newer(a, b) {
+  if (a.time !== b.time) {
+    return a.time > b.time;
+  }
+  const n = Math.min(a.bytes.length, b.bytes.length);
+  for (let i = 0; i < n; i++) {
+    if (a.bytes[i] !== b.bytes[i]) {
+      return a.bytes[i] > b.bytes[i];
+    }
+  }
+  return a.bytes.length > b.bytes.length;
+}
+
+/** `(updated_at, plaintext)` of a sealed record, or null if it does not open. */
+async function stamp(key, kind, id, data) {
+  try {
+    const bytes = await c.openRecord(key, kind, id, data);
+    const time = Number(JSON.parse(new TextDecoder().decode(bytes)).updated_at);
+    return { time: Number.isFinite(time) ? time : 0, bytes };
+  } catch (e) {
+    return null;
+  }
+}
+
+function sameBytes(a, b) {
+  if (a === b) {
+    return true;
+  }
+  if (!a || !b || a.length !== b.length) {
+    return false;
+  }
+  return a.every((x, i) => x === b[i]);
+}
+
 /**
- * Pulls the records changed on the hub since the last pull into the records store.
- * Returns the number of records received.
+ * Whether the hub's record `remote` replaces this device's `local` copy (both
+ * `{ kind, id, data }`, data sealed or null), by the instance's rule: the newer
+ * `updated_at` wins, on equal times the bytewise larger plaintext (an echo of the
+ * same bytes changes nothing). A record the hub deleted (`null`: its book left the
+ * shelf) always wins; one that does not open with the account key never does.
+ * `key` is the account's AES key.
+ */
+export async function remoteWins(key, remote, local) {
+  if (!remote.data) {
+    return true;
+  }
+  const r = await stamp(key, remote.kind, remote.id, remote.data);
+  if (!r) {
+    return false;
+  }
+  if (!local || !local.data) {
+    return true;
+  }
+  const l = await stamp(key, local.kind, local.id, local.data);
+  return !l || newer(r, l);
+}
+
+/**
+ * Pulls the records changed on the hub since the last pull and merges them into the
+ * records store. Returns the number of records that changed here.
  */
 export async function pull(p) {
   let seq = (await tx(["state"], "readonly", (t) => done(t.objectStore("state").get("seq")))) || 0;
-  let count = 0;
+  let changed = 0;
   for (;;) {
     const response = await api(`sync?since=${seq}`, {}, p.token);
     if (!response.ok) {
       throw new Error(`sync: ${response.status}`);
     }
     const answer = await response.json();
-    await tx(["state", "records"], "readwrite", (t) => {
-      const records = t.objectStore("records");
-      for (const r of answer.records) {
-        records.put({ kind: r.kind, id: r.id, seq: r.seq, data: r.data === null ? null : c.unbase64url(r.data) });
+    const incoming = answer.records.map((r) => ({
+      kind: r.kind, id: r.id, seq: r.seq, data: r.data === null ? null : c.unbase64url(r.data),
+    }));
+    // Decisions need decrypting, which cannot happen inside a transaction: decide
+    // first, then write only where the local record is still what was compared.
+    const keys = incoming.map((r) => [r.kind, r.id]);
+    const [locals, pending] = await tx(["records", "outbox"], "readonly", (t) => Promise.all([
+      Promise.all(keys.map((k) => done(t.objectStore("records").get(k)))),
+      Promise.all(keys.map((k) => done(t.objectStore("outbox").get(k)))),
+    ]));
+    const take = [];
+    for (let i = 0; i < incoming.length; i++) {
+      const remote = incoming[i];
+      const local = locals[i];
+      if (!(await remoteWins(p.aes, remote, local))) {
+        continue;
       }
+      take.push({ remote, local: local ? local.data : undefined, pending: Boolean(pending[i]) });
+    }
+    await tx(["state", "records", "outbox"], "readwrite", async (t) => {
+      const records = t.objectStore("records");
+      const outbox = t.objectStore("outbox");
+      const now = await Promise.all(take.map(({ remote }) => done(records.get([remote.kind, remote.id]))));
+      take.forEach(({ remote, local, pending: wasPending }, i) => {
+        const current = now[i] ? now[i].data : undefined;
+        if (!sameBytes(current, local)) {
+          return; // Changed here meanwhile: the next pull decides again.
+        }
+        if (!sameBytes(current, remote.data)) {
+          changed += 1;
+        }
+        records.put(remote);
+        if (wasPending) {
+          outbox.delete([remote.kind, remote.id]);
+        }
+      });
       t.objectStore("state").put(answer.seq, "seq");
     });
-    count += answer.records.length;
     seq = answer.seq;
     if (!answer.more) {
-      return count;
+      return changed;
     }
+  }
+}
+
+// Browsers limit the bodies of `keepalive` requests (sent while a page goes away) to
+// 64 KiB in all.
+const KEEPALIVE_BYTES = 60 * 1024;
+
+/**
+ * Pushes the records changed here. Returns the number pushed; a record changed again
+ * while it was on its way stays in the outbox. With `keepalive` (the page is being
+ * hidden or left) small pushes outlive the page.
+ */
+export async function push(p, { keepalive = false } = {}) {
+  const entries = await tx(["outbox"], "readonly", (t) => done(t.objectStore("outbox").getAll()));
+  let pushed = 0;
+  for (let at = 0; at < entries.length; at += PUSH_BATCH) {
+    const batch = entries.slice(at, at + PUSH_BATCH);
+    const records = (await tx(["records"], "readonly", (t) =>
+      Promise.all(batch.map((e) => done(t.objectStore("records").get([e.kind, e.id]))))))
+      .filter((r) => r && r.data && r.data.length <= MAX_RECORD_BYTES);
+    if (!records.length) {
+      continue;
+    }
+    const body = JSON.stringify({ records: records.map((r) => ({ kind: r.kind, id: r.id, data: c.base64url(r.data) })) });
+    const response = await api("sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+      keepalive: keepalive && body.length <= KEEPALIVE_BYTES,
+    }, p.token);
+    if (!response.ok) {
+      throw new Error(`push: ${response.status}`);
+    }
+    const answer = await response.json();
+    await tx(["records", "outbox"], "readwrite", async (t) => {
+      const store = t.objectStore("records");
+      const now = await Promise.all(records.map((r) => done(store.get([r.kind, r.id]))));
+      records.forEach((r, i) => {
+        if (now[i] && sameBytes(now[i].data, r.data)) {
+          store.put(Object.assign({}, r, { seq: answer.seqs[i] }));
+          t.objectStore("outbox").delete([r.kind, r.id]);
+          pushed += 1;
+        }
+      });
+    });
+  }
+  return pushed;
+}
+
+/** Whether changes made here wait to be pushed. */
+export async function pending() {
+  return (await tx(["outbox"], "readonly", (t) => done(t.objectStore("outbox").count()))) > 0;
+}
+
+/**
+ * Record JSON as the instance writes it: keys sorted, compact, raw UTF-8 (serde_json
+ * and JSON.stringify escape the same characters).
+ */
+export function canonical(value) {
+  const sorted = {};
+  for (const key of Object.keys(value).sort()) {
+    sorted[key] = value[key];
+  }
+  return JSON.stringify(sorted);
+}
+
+/** Writes record `id` of `kind` changed here (sealed), to be pushed. */
+export async function write(p, kind, id, value) {
+  const plain = new TextEncoder().encode(canonical(value));
+  const data = await c.sealRecord(p.aes, kind, id, plain);
+  await tx(["records", "outbox"], "readwrite", (t) => {
+    t.objectStore("records").put({ kind, id, seq: null, data });
+    t.objectStore("outbox").put({ kind, id });
+  });
+}
+
+/** The opened record `id` of `kind`, or null. */
+export async function get(p, kind, id) {
+  const r = await tx(["records"], "readonly", (t) => done(t.objectStore("records").get([kind, id])));
+  if (!r || !r.data) {
+    return null;
+  }
+  try {
+    return JSON.parse(new TextDecoder().decode(await c.openRecord(p.aes, kind, id, r.data)));
+  } catch (e) {
+    return null;
   }
 }
 

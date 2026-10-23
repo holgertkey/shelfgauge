@@ -683,12 +683,93 @@ fn the_reader_app_rendering_vector_is_stable() {
     for (n, html) in parts.iter().enumerate() {
         assert_eq!(html, &render_part(&content, &split_parts, n, &HubLinks));
     }
+
+    // The whole book's text: quotes, positions, lists and search as on the instance.
+    assert!(book.load_text().is_ok());
+    let full = BookText::new(&content);
+    let b = |n| BlockId::new(n).unwrap();
+    let anchor = shelfgauge::annotations::anchor::Anchor {
+        start_block: b(2),
+        start_offset: 6,
+        end_block: b(2),
+        end_offset: 20,
+    };
+    let quote = book.quote(&anchor).unwrap();
+    let expected = shelfgauge::annotations::anchor::quote(&full, &anchor).unwrap();
+    assert_eq!(
+        (&quote.text, &quote.prefix, &quote.suffix),
+        (&expected.text, &expected.prefix, &expected.suffix)
+    );
+    assert_eq!(quote.section_title.as_deref(), full.section_title(b(2)));
+    let bookmark = book.bookmark(b(3)).unwrap();
+    assert!(bookmark.text.is_empty() && !bookmark.suffix.is_empty());
+    let position = book.position(b(3)).unwrap().unwrap();
+    assert_eq!(Some(position.progress), full.progress(b(3)));
+    assert_eq!(book.resume(b(3), &position.suffix), Some(b(3)));
+    assert_eq!(
+        book.resume(b(3), "not there"),
+        Some(b(3)),
+        "the block, if not found elsewhere"
+    );
+    let records: Vec<shelfgauge_wasm::book::AnnotationRecord> =
+        serde_json::from_value(serde_json::json!([
+            { "id": "0f8fad5b-d9cb-469f-a165-70867728950e", "start_block": 2, "start_offset": 6,
+              "end_block": 2, "end_offset": 20, "text": quote.text, "prefix": quote.prefix,
+              "suffix": quote.suffix, "section_title": quote.section_title, "note": "a <note>",
+              "created_at": 1 },
+            { "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7", "start_block": 3, "start_offset": 0,
+              "end_block": 3, "end_offset": 0, "text": "", "prefix": "",
+              "suffix": bookmark.suffix, "section_title": bookmark.section_title, "note": null,
+              "created_at": 2 },
+            { "id": "a lost one", "start_block": 9999, "start_offset": 0,
+              "end_block": 9999, "end_offset": 0, "text": "gone", "prefix": "",
+              "suffix": "", "section_title": null, "note": null, "created_at": 3 },
+        ]))
+        .unwrap();
+    let lists = book.lists(&records).unwrap();
+    assert!(
+        lists.contains(r#"<div class="annotation-lists">"#),
+        "{lists}"
+    );
+    assert!(lists.contains("a &#60;note&#62;"), "{lists}");
+    assert!(
+        lists.contains(r#"action="?delete=0f8fad5b-d9cb-469f-a165-70867728950e""#),
+        "{lists}"
+    );
+    assert!(lists.contains("place not found"), "the lost one: {lists}");
+    let find = book.find("маяк", Some(2)).unwrap();
+    assert!(find.contains(r#"<div class="find-results""#), "{find}");
+    assert!(find.contains(r#"class="current""#), "{find}");
+    assert!(
+        find.contains("?find=%D0%BC%D0%B0%D1%8F%D0%BA&#38;hit=1#b"),
+        "{find}"
+    );
+    assert!(book.find("x", None).unwrap().contains("Type at least"));
     check_vector(
         "rendered.json",
         &serde_json::json!({
-            "description": "the reader app's HTML of publication.json: parts[n] = part n, toc[n] = the contents at part n",
+            "description": "the reader app's HTML of publication.json: parts[n] = part n, toc[n] = the contents at part n; quote of b2 6..20, bookmark and position at b3, lists of the records, find of the query (hit 2 followed)",
             "parts": parts,
             "toc": toc,
+            "quote": serde_json::to_value(&quote).unwrap(),
+            "bookmark": serde_json::to_value(&bookmark).unwrap(),
+            "position": serde_json::to_value(&position).unwrap(),
+            "records": [
+                { "id": "0f8fad5b-d9cb-469f-a165-70867728950e", "start_block": 2, "start_offset": 6,
+                  "end_block": 2, "end_offset": 20, "text": quote.text, "prefix": quote.prefix,
+                  "suffix": quote.suffix, "section_title": quote.section_title, "note": "a <note>",
+                  "created_at": 1 },
+                { "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7", "start_block": 3, "start_offset": 0,
+                  "end_block": 3, "end_offset": 0, "text": "", "prefix": "",
+                  "suffix": bookmark.suffix, "section_title": bookmark.section_title, "note": null,
+                  "created_at": 2 },
+                { "id": "a lost one", "start_block": 9999, "start_offset": 0,
+                  "end_block": 9999, "end_offset": 0, "text": "gone", "prefix": "",
+                  "suffix": "", "section_title": null, "note": null, "created_at": 3 },
+            ],
+            "lists": lists,
+            "query": "маяк",
+            "find": find,
         }),
     );
 }

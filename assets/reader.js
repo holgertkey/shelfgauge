@@ -24,17 +24,8 @@
   if (!article || !text) {
     return;
   }
-  // Where pages of other parts come from: the instance's server, or the hub's reader
-  // app, which renders them on the device (assets/hub/app.js).
-  const source = window.shelfgaugeSource || {
-    async page(url) {
-      const r = await fetch(url, { credentials: "same-origin" });
-      if (!r.ok) {
-        throw new Error(r.statusText);
-      }
-      return new DOMParser().parseFromString(await r.text(), "text/html");
-    },
-  };
+  // With these set, annotations and the reading position are saved (their URLs on
+  // the instance; any value in the hub's reader app).
   const createUrl = article.dataset.annotations;
   const positionUrl = article.dataset.position;
   const maxText = Number(article.dataset.maxText) || Infinity;
@@ -220,6 +211,53 @@
     return response.status === 204 ? null : response.json();
   }
 
+  // ---------- Data source ----------
+
+  // Where the reader's data comes from and goes to: the instance's server, or the hub's
+  // reader app (assets/hub/hub.js sets `window.shelfgaugeSource`), which keeps it on
+  // the device and renders lists, pages and results with the same code (WASM).
+  const source = window.shelfgaugeSource || {
+    // The page of another part (notes open in a panel from it), as a document.
+    async page(url) {
+      const r = await fetch(url, { credentials: "same-origin" });
+      if (!r.ok) {
+        throw new Error(r.statusText);
+      }
+      return new DOMParser().parseFromString(await r.text(), "text/html");
+    },
+    // The sidebar's lists (`.annotation-lists`) as HTML.
+    async lists() {
+      const response = await fetch(createUrl, { headers: { Accept: "text/html" } });
+      reloadIfSignedOut(response);
+      if (!response.ok) {
+        throw new Error(`${createUrl}: ${response.status}`);
+      }
+      return response.text();
+    },
+    // A new bookmark (`{block}`) or quote (anchor and `note`).
+    create(body) {
+      return postJson(createUrl, body);
+    },
+    // Deletes the annotation of a list's delete form.
+    remove(form) {
+      return postJson(form.action, {});
+    },
+    // Saves the reading position (`{block}`).
+    savePosition(body, keepalive) {
+      return postJson(positionUrl, body, keepalive);
+    },
+    // The Search tab's results (`.find-results`) for the raw query, as HTML.
+    async find(raw, signal) {
+      const url = `${document.querySelector(".find-form").dataset.href}?q=${encodeURIComponent(raw)}`;
+      const response = await fetch(url, { headers: { Accept: "text/html" }, signal });
+      reloadIfSignedOut(response);
+      if (!response.ok) {
+        throw new Error(`${response.status}`);
+      }
+      return response.text();
+    },
+  };
+
   // ---------- Toast ----------
 
   let toastTimer = null;
@@ -275,13 +313,9 @@
     if (!lists || !createUrl) {
       return;
     }
-    const response = await fetch(createUrl, { headers: { Accept: "text/html" } });
-    reloadIfSignedOut(response);
-    if (!response.ok) {
-      throw new Error(`${createUrl}: ${response.status}`);
-    }
+    const html = await source.lists();
     const template = document.createElement("template");
-    template.innerHTML = (await response.text()).trim();
+    template.innerHTML = html.trim();
     const replacement = template.content.firstElementChild;
     const active = sidebar.querySelector(".reader-tabs a.active");
     if (replacement) {
@@ -350,7 +384,7 @@
       }
       event.preventDefault();
       try {
-        await postJson(form.action, {});
+        await source.remove(form);
         await refreshLists();
         toast("Deleted.");
       } catch (e) {
@@ -597,7 +631,7 @@
       }
       save.disabled = true;
       try {
-        await postJson(createUrl, {
+        await source.create({
           start_block: anchor.start.block.id,
           start_offset: anchor.start.offset,
           end_block: anchor.end.block.id,
@@ -663,7 +697,7 @@
       return;
     }
     try {
-      await postJson(createUrl, { block: block.id });
+      await source.create({ block: block.id });
       await refreshLists();
       toast("Bookmark saved.");
     } catch (e) {
@@ -783,7 +817,7 @@
       return;
     }
     lastSaved = candidate.id;
-    postJson(positionUrl, { block: candidate.id }, keepalive).catch((e) => console.error(e));
+    Promise.resolve(source.savePosition({ block: candidate.id }, keepalive)).catch((e) => console.error(e));
   }
 
   function trySave() {
@@ -1776,17 +1810,13 @@
         return;
       }
       controller = new AbortController();
-      const url = `${findForm.dataset.href}?q=${encodeURIComponent(raw)}`;
+      const signal = controller.signal;
       try {
-        const response = await fetch(url, {
-          headers: { Accept: "text/html" },
-          signal: controller.signal,
-        });
-        reloadIfSignedOut(response);
-        if (!response.ok) {
-          throw new Error(`${response.status}`);
+        const html = await source.find(raw, signal);
+        if (signal.aborted) {
+          return;
         }
-        replaceResults(await response.text());
+        replaceResults(html);
         highlightFind(raw);
         openSidebar();
         showResults(true);
@@ -2489,4 +2519,8 @@
   setupCut();
   setupNotes();
   highlight();
+  // The hub's reader app has new lists (marks synced from another device).
+  document.addEventListener("shelfgauge:lists", () => {
+    refreshLists().catch((e) => console.error(e));
+  });
 })();

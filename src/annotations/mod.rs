@@ -24,7 +24,7 @@ pub mod export;
 pub mod store;
 
 // Shared with the reading device: these live in the core crate (`shelfgauge-core`).
-pub use shelfgauge_core::annotations::{anchor, find, text};
+pub use shelfgauge_core::annotations::{anchor, find, lists, results, text};
 
 use anchor::{Anchor, Quote};
 
@@ -107,8 +107,6 @@ pub struct Annotation {
 }
 
 /// Code points of a mark's text shown as its label when it has no note.
-const LABEL_CHARS: usize = 80;
-
 impl Annotation {
     /// Whether this is a bookmark (no selected text).
     pub fn is_bookmark(&self) -> bool {
@@ -120,45 +118,13 @@ impl Annotation {
         self.note.as_deref().filter(|n| !n.trim().is_empty())
     }
 
-    /// The label in lists: the note's first line, else the start of the text; for a
-    /// bookmark without a note, "`<section title> — <start of the block>`".
+    /// The label in lists ([`lists::label`]).
     pub fn label(&self) -> String {
-        if let Some(note) = self.note() {
-            return one_line(note.lines().find(|l| !l.trim().is_empty()).unwrap_or(""));
-        }
-        if self.is_bookmark() {
-            let start = one_line(&words(&self.quote.suffix));
-            return match (&self.section_title, start.is_empty()) {
-                // A bookmark on the section's title: the title alone.
-                (Some(section), false) if start == one_line(section) => section.clone(),
-                (Some(section), false) => format!("{section} — {start}"),
-                (Some(section), true) => section.clone(),
-                (None, false) => start,
-                (None, true) => "Bookmark".to_owned(),
-            };
-        }
-        let text = one_line(&self.quote.text);
-        if text::char_len(&text) > LABEL_CHARS {
-            format!("{}…", text::first_chars(&text, LABEL_CHARS).trim_end())
-        } else {
-            text
-        }
-    }
-}
-
-/// Whitespace runs (including line breaks) collapsed to single spaces, trimmed.
-fn one_line(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-/// A bookmark's fingerprint cut back to whole words, with "…" if it was cut.
-fn words(suffix: &str) -> String {
-    if text::char_len(suffix) < anchor::BOOKMARK_CHARS {
-        return suffix.to_owned();
-    }
-    match suffix.trim_end().rsplit_once(char::is_whitespace) {
-        Some((head, _)) if !head.trim().is_empty() => format!("{}…", head.trim_end()),
-        _ => format!("{suffix}…"),
+        lists::label(
+            self.note.as_deref(),
+            &self.quote,
+            self.section_title.as_deref(),
+        )
     }
 }
 

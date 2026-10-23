@@ -138,6 +138,28 @@ pub fn html_lang(language: Option<&str>) -> Option<String> {
     })
 }
 
+/// `n` with its digits grouped by narrow no-break spaces: "1 234 567".
+///
+/// # Examples
+///
+/// ```
+/// use shelfgauge_core::render::outline::group_digits;
+///
+/// assert_eq!(group_digits(1234), "1\u{202f}234");
+/// assert_eq!(group_digits(500), "500");
+/// ```
+pub fn group_digits(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push('\u{202f}');
+        }
+        out.push(c);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::{html_lang, title_before};

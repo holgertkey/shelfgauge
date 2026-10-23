@@ -51,6 +51,8 @@ stage=$root/target/wasm-stage
 rm -rf "$stage"
 mkdir -p "$stage/crates"
 cp -R "$root/crates/shelfgauge-core" "$root/crates/shelfgauge-wasm" "$stage/crates/"
+# The lists and search results render from the library's templates.
+cp -R "$root/templates" "$stage/"
 cp "$root/Cargo.lock" "$stage/"
 # The workspace manifest: only the workspace sections and the two profiles the build
 # uses (the root package's sections are left out).

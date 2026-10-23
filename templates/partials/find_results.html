@@ -1,3 +1,5 @@
+{#- Also built into the hub's reader app (shelfgauge-wasm, askama): after a change,
+    run scripts/build-wasm.sh and commit assets/hub/pkg/ (CI checks it). -#}
 <div class="find-results" data-tab-count="{{ results.tab_count() }}" data-tab-title="{{ results.tab_title() }}">
   {%- if let Some(message) = results.message %}
   <p class="hint">{{ message }}</p>

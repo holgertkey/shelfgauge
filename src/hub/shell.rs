@@ -16,6 +16,8 @@ use axum::routing::get;
 use rust_embed::Embed;
 
 use super::{HubError, HubState};
+use crate::annotations::lists::Lists;
+use crate::annotations::results::FindResults;
 use crate::publication::format::PublicationId;
 use crate::web::assets::{content_type, hex_prefix};
 
@@ -50,6 +52,15 @@ struct ReadPage {
     /// The limits of a mark's text and note: the library's defaults.
     max_text: u32,
     max_note: u32,
+    /// Empty lists (the app fills them in).
+    lists: Lists,
+    /// No search yet (the app shows results).
+    find: FindPanel,
+}
+
+/// The Search panel of the reading view, empty.
+struct FindPanel {
+    results: Option<FindResults>,
 }
 
 /// The shell routes.
@@ -94,6 +105,8 @@ async fn reader(
         base: state.path(""),
         max_text: limits.max_text_length,
         max_note: limits.max_note_length,
+        lists: Lists::default(),
+        find: FindPanel { results: None },
     }))
 }
 

@@ -1,17 +1,6 @@
 //! How figures are shown: grouped digits, file sizes and the width classes of bars.
 
-/// `n` with its digits in groups of three, separated by a narrow no-break space.
-pub(crate) fn group_digits(n: u64) -> String {
-    let digits = n.to_string();
-    let mut out = String::new();
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push('\u{202f}');
-        }
-        out.push(c);
-    }
-    out
-}
+pub(crate) use crate::render::outline::group_digits;
 
 /// "1 book", "12 345 books": `n` with its digits grouped and the noun for it.
 pub(crate) fn count(n: u64, one: &str, many: &str) -> String {

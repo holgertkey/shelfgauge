@@ -9,7 +9,16 @@
     <svg class="icon" aria-hidden="true"><use href="#i-menu"></use></svg>
   </button>
 {%- endblock %}
+{% block search %}
+  <form class="search find-form" method="get" role="search" data-href="" data-part="1">
+    <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg>
+    <input type="search" name="find" class="find-input" value="" placeholder="Search in this book…" aria-label="Search in this book" title="Search in this book (/ or s)" maxlength="1000" autocomplete="off" spellcheck="false">
+  </form>
+{%- endblock %}
 {% block topbar %}
+  <button type="button" class="icon-button bookmark-button" title="Bookmark the place at the top of the page (b)" aria-label="Bookmark this place" hidden>
+    <svg class="icon" aria-hidden="true"><use href="#i-bookmark"></use></svg>
+  </button>
   <button type="button" class="icon-button focus-button" title="Focus mode (f)" aria-label="Focus mode" aria-pressed="false" hidden>
     <svg class="icon" aria-hidden="true"><use href="#i-focus"></use></svg>
   </button>
@@ -29,13 +38,18 @@
 </div>
 <nav class="reader-tabs" aria-label="Sidebar" lang="en">
   <a href="#tab-toc" data-tab="toc" hidden>Contents</a>
+  <a href="#tab-bookmarks" data-tab="bookmarks">Bookmarks</a>
+  <a href="#tab-marks" data-tab="marks">Quotes</a>
+  <a href="#tab-find" data-tab="find" class="find-tab" title="Search results" aria-label="Search results" hidden><svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg><span class="tab-count"></span></a>
 </nav>
 </div>
 <section class="tab-panel" id="tab-toc" data-tab="toc" aria-label="Contents"></section>
+{% include "partials/annotation_lists.html" %}
+{% include "partials/find_panel.html" %}
   </nav>
   <div class="sidebar-resizer" role="separator" aria-orientation="vertical" aria-controls="sidebar" aria-label="Sidebar width" tabindex="0" title="Drag to resize the sidebar (double-click: default width)"></div>
   <main class="main">
-<article class="reader" data-max-text="{{ max_text }}" data-max-note="{{ max_note }}">
+<article class="reader" data-annotations="device" data-position="device" data-max-text="{{ max_text }}" data-max-note="{{ max_note }}">
   <header class="reader-head">
     <a class="book-link" href="{{ base }}/"></a><span class="muted part-title"></span>
     <a class="back-to-text" lang="en" hidden>&nbsp;Back to text</a>

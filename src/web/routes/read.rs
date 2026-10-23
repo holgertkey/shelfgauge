@@ -6,8 +6,8 @@ use axum::extract::{Path, Query, RawQuery, State};
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Redirect, Response};
 
-use super::annotations::{Lists, book_annotations};
-use super::find::FindResults;
+use super::annotations::{Lists, annotation_lists, book_annotations};
+use super::find::{FindResults, results};
 use super::{Params, parse_id, render};
 use crate::annotations::attach;
 use crate::cache::covers;
@@ -248,7 +248,7 @@ fn page(
         toc: render_toc(&content, &parts, index, &links),
         prev: index.checked_sub(1).and_then(neighbour),
         next: neighbour(index + 1),
-        lists: Lists::new(urls, book.id, &annotations, current, Some(&text)),
+        lists: annotation_lists(urls, book.id, &annotations, current, Some(&text)),
         annotations_href: urls.annotations(book.id),
         position_href: if config.reader.remember_position {
             urls.position(book.id)
@@ -267,7 +267,7 @@ fn page(
                 .filter(|query| !query.trim().is_empty())
                 .map(|query| {
                     let hit = params.hit.as_deref().and_then(|hit| hit.parse().ok());
-                    FindResults::new(urls, book.id, &parts, &text, query, hit)
+                    results(urls, book.id, &parts, &text, query, hit)
                 }),
             query: params.find.clone().unwrap_or_default(),
         },
