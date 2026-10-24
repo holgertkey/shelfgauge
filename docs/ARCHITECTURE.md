@@ -877,6 +877,19 @@ Phase 26: `assets/hub/` (`hub.js` pages, `store.js` IndexedDB and API calls,
   asked for. A `401` forgets the pairing and the records.
 - **Unpaired** browsers make no API call: the shelf and `/r/<id>` say "This device is
   not paired" with instructions, never content.
+- **This device** (`/device`, 0.19.1; the top bar's `device-link`, cached by the
+  worker like the other pages): the library names from the shelf items' `instance`,
+  the device name (`GET /api/devices`, the `current` entry, opened with the account
+  key), last sync (`state["synced_at"]`, written when a pull reaches the hub's newest
+  record) and the outbox count, local counts (`store.offline()`, book file copies)
+  and `navigator.storage.estimate()`/`persisted()`, the account's usage and quotas
+  (`GET /api/account`), the hub's address and version (`GET /api/info`). **Remove
+  downloaded books** empties `shelfgauge-blobs` and the `offline:*` flags (book file
+  copies stay). **Forget this device** pushes the outbox, revokes the own device
+  (`DELETE /api/devices/{own id}`), then `store.forget()`; offline, after a second
+  confirmation naming the unsent changes, it forgets locally only. No new API, no
+  record kind: the profile's name and colour are not on the hub (a sealed `profile`
+  record could add the library's avatar later).
 - **Shelf** (`/`): pulled records (`GET /api/sync`) are stored encrypted and opened
   when the page is drawn; a shelf item counts only if its record id equals
   `shelf_id` of its content key. "Currently reading" (with a position below 100 %,

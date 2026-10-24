@@ -83,3 +83,45 @@
 .hub-book .hub-file-hint {
   font-size: 0.85rem;
 }
+
+/* The top bar's way to "This device", at its right end. */
+.topbar:not(:has(.search)) > .theme-select {
+  margin-left: auto;
+}
+
+@media (max-width: 48rem) {
+  /* The theme select is hidden there. */
+  .topbar:not(:has(.search)) > .device-link {
+    margin-left: auto;
+  }
+}
+
+/* "This device" (`/device`). */
+.hub-device-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.hub-device-title .icon {
+  flex: none;
+  color: var(--muted);
+}
+
+.hub-device-actions {
+  margin: 0.75rem 0 0;
+}
+
+.hub-device-status,
+.hub-device-local-status,
+.hub-device-forget-status {
+  margin: 0.5rem 0 0;
+}
+
+.hub-device-status:empty,
+.hub-device-local-status:empty,
+.hub-device-forget-status:empty {
+  display: none;
+}

@@ -3,7 +3,9 @@
 // IndexedDB "shelfgauge-hub":
 // - "state": "pairing" → { account, device, token, aes, mac } (aes and mac are
 //   non-extractable CryptoKeys of the account key: scripts can use them, not read
-//   them), "seq" → the cursor of the last pull;
+//   them), "seq" → the cursor of the last pull, "synced_at" → when a pull last
+//   reached the hub's newest record (ms), "offline:<publication>" → every blob of it
+//   is cached;
 // - "records": the account's sync records, still encrypted: { kind, id, seq, data }
 //   (data a Uint8Array, null for a record the hub deleted); changes made here are
 //   written here first;
@@ -294,6 +296,9 @@ export async function pull(p) {
         }
       });
       t.objectStore("state").put(answer.seq, "seq");
+      if (!answer.more) {
+        t.objectStore("state").put(Date.now(), "synced_at");
+      }
     });
     seq = answer.seq;
     if (!answer.more) {
@@ -350,7 +355,40 @@ export async function push(p, { keepalive = false } = {}) {
 
 /** Whether changes made here wait to be pushed. */
 export async function pending() {
-  return (await tx(["outbox"], "readonly", (t) => done(t.objectStore("outbox").count()))) > 0;
+  return (await waiting()) > 0;
+}
+
+/** The number of records changed here and not pushed yet. */
+export function waiting() {
+  return tx(["outbox"], "readonly", (t) => done(t.objectStore("outbox").count()));
+}
+
+/** When a pull last brought this device up to date (ms), or null. */
+export async function syncedAt() {
+  return (await tx(["state"], "readonly", (t) => done(t.objectStore("state").get("synced_at")))) || null;
+}
+
+/**
+ * Forgets this device: the marks made here go out first, then the hub revokes the
+ * device, then everything here is forgotten. With `offline`, nothing is sent and the
+ * device is forgotten here only (the library still lists it until removed there).
+ * Throws what the hub calls throw (an Unpaired token is forgotten all the same).
+ */
+export async function forgetDevice(p, { offline = false } = {}) {
+  if (!offline) {
+    try {
+      await push(p);
+      const response = await api(`devices/${p.device}`, { method: "DELETE" }, p.token);
+      if (!response.ok && response.status !== 404) {
+        throw new Error(`The hub did not remove this device (${response.status}).`);
+      }
+    } catch (e) {
+      if (!(e instanceof Unpaired)) {
+        throw e;
+      }
+    }
+  }
+  await forget();
 }
 
 /**
@@ -480,6 +518,43 @@ export async function cached(id, path) {
     return false;
   }
   return Boolean(await (await caches.open(BLOBS)).match(`${location.origin}${base}/api/pub/${id}/${path}`));
+}
+
+/**
+ * Deletes every downloaded hub publication (they download again when opened). Book
+ * file copies stay.
+ */
+export async function removeDownloads() {
+  await dropBlobs(() => true);
+  await tx(["state"], "readwrite", async (t) => {
+    const state = t.objectStore("state");
+    for (const key of await done(state.getAllKeys())) {
+      if (typeof key === "string" && key.startsWith("offline:")) {
+        state.delete(key);
+      }
+    }
+  });
+}
+
+/**
+ * What this site keeps here: `{ usage, quota, persisted }` (bytes; null where the
+ * browser does not say).
+ */
+export async function storageInfo() {
+  const info = { usage: null, quota: null, persisted: null };
+  try {
+    if (navigator.storage && navigator.storage.estimate) {
+      const estimate = await navigator.storage.estimate();
+      info.usage = Number.isFinite(estimate.usage) ? estimate.usage : null;
+      info.quota = Number.isFinite(estimate.quota) ? estimate.quota : null;
+    }
+    if (navigator.storage && navigator.storage.persisted) {
+      info.persisted = await navigator.storage.persisted();
+    }
+  } catch (e) {
+    // Not offered here.
+  }
+  return info;
 }
 
 /** Notes that every blob of publication `id` is cached. */

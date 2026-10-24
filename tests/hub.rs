@@ -1197,7 +1197,7 @@ async fn book_files_open_through_the_installed_app() {
         let page = String::from_utf8(open.body).unwrap();
         assert!(page.contains(r#"id="hub-app""#), "{page}");
         let sw = String::from_utf8(hub.get(&format!("{prefix}/sw.js"), None).await.body).unwrap();
-        assert!(sw.contains("pair|open|r"), "{sw}");
+        assert!(sw.contains("pair|open|device|r"), "{sw}");
         assert!(sw.contains("`${BASE}/share`"), "{sw}");
 
         // A share no Service Worker took: the body is not read, the shelf says so.

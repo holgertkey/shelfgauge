@@ -171,6 +171,11 @@ export function sealDeviceName(accountKey, name) {
   return sealRecord(accountKey, "device", "", encoder.encode(name));
 }
 
+/** Opens a device name sealed by `sealDeviceName`. */
+export async function openDeviceName(accountKey, sealed) {
+  return new TextDecoder("utf-8", { fatal: true }).decode(await openRecord(accountKey, "device", "", sealed));
+}
+
 async function mac(key, label, contentKey) {
   const sig = await crypto.subtle.sign("HMAC", key, concat(encoder.encode(label), contentKey));
   return base64url(new Uint8Array(sig));

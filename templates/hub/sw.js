@@ -60,7 +60,7 @@ self.addEventListener("activate", (event) => {
 });
 
 const BLOB = /^\/api\/pub\/[0-9a-f]{32}\/(manifest|p\/[0-9]+|i\/[0-9]+)$/;
-const PAGE = /^\/(pair|open|r\/[0-9a-f]{32})?$/;
+const PAGE = /^\/(pair|open|device|r\/[0-9a-f]{32})?$/;
 // How long the manifest may take before the cached copy is used.
 const MANIFEST_WAIT_MS = 4000;
 

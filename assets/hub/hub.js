@@ -282,6 +282,235 @@ async function shelfPage() {
   }
 }
 
+// ---- This device ---------------------------------------------------------------
+
+/** `n` bytes for people: "1.4 MB". */
+function formatBytes(n) {
+  if (!Number.isFinite(n)) {
+    return "unknown";
+  }
+  const units = ["bytes", "KB", "MB", "GB", "TB"];
+  let unit = 0;
+  while (n >= 1000 && unit < units.length - 1) {
+    n /= 1000;
+    unit += 1;
+  }
+  return unit === 0 ? `${n} bytes` : `${n.toFixed(n < 10 ? 1 : 0)} ${units[unit]}`;
+}
+
+/** How long ago `ms` was: "just now", "5 minutes ago", or the date. */
+function ago(ms) {
+  const minutes = Math.floor((Date.now() - ms) / 60000);
+  if (minutes < 1) {
+    return "just now";
+  }
+  if (minutes < 60) {
+    return minutes === 1 ? "a minute ago" : `${minutes} minutes ago`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return hours === 1 ? "an hour ago" : `${hours} hours ago`;
+  }
+  return new Date(ms).toLocaleDateString();
+}
+
+/** `n` of `max` ("3 of 5"; no limit when `max` is 0). */
+function ofQuota(n, max, format = String) {
+  return max ? `${format(n)} of ${format(max)}` : format(n);
+}
+
+/** A `dl` of [term, description] pairs; a description may be a node. */
+function facts(pairs) {
+  const dl = el("dl", { class: "facts settings-facts" });
+  for (const [term, description] of pairs) {
+    dl.append(el("dt", {}, term), el("dd", {}, description));
+  }
+  return dl;
+}
+
+/** The hub's address and version (shown paired or not). */
+function hubSection(info) {
+  return el("section", { class: "hub-device-hub" },
+    el("h2", {}, "Hub"),
+    facts([
+      ["Address", `${location.origin}${base}/`],
+      ["Version", info && typeof info.version === "string" ? info.version : "unknown (offline)"],
+    ]));
+}
+
+/** `/device`: what this device is paired with, its sync, what it keeps, unpairing. */
+async function devicePage() {
+  const info = await store.api("info").then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  const p = await store.pairing();
+  if (!p) {
+    show(...unpairedHelp(), hubSection(info));
+    return;
+  }
+  const libraries = [...new Set((await store.shelf(p)).map((i) => i.instance).filter(Boolean))];
+  const name = el("span", {}, store.deviceName());
+  const since = el("span", {}, "unknown (offline)");
+  const synced = el("span");
+  const waiting = el("span");
+  const syncStatus = el("p", { class: "muted hub-device-status", role: "status" });
+  const offlineBooks = el("span");
+  const fileBooks = el("span");
+  const used = el("span");
+  const kept = el("span");
+  const account = el("div", {}, el("p", { class: "muted" }, "Asking the hub…"));
+
+  const refreshSync = async () => {
+    const at = await store.syncedAt();
+    synced.textContent = at ? ago(at) : "not yet";
+    const n = await store.waiting();
+    waiting.textContent = n ? `${n} ${n === 1 ? "change" : "changes"} made here, not sent yet` : "none";
+  };
+  const refreshLocal = async () => {
+    offlineBooks.textContent = String((await store.offline().catch(() => new Set())).size);
+    fileBooks.textContent = String((await store.copies().catch(() => [])).length);
+    const storage = await store.storageInfo();
+    used.textContent = storage.usage === null ? "unknown"
+      : storage.quota ? `${formatBytes(storage.usage)} of ${formatBytes(storage.quota)} the browser allows` : formatBytes(storage.usage);
+    kept.textContent = storage.persisted === null ? "unknown"
+      : storage.persisted ? "yes, kept when space runs low"
+      : "may be cleared when space runs low; on an iPhone or iPad, add the reader to the home screen";
+  };
+
+  const update = el("button", { type: "button", class: "hub-device-update" }, "Update now");
+  update.addEventListener("click", async () => {
+    update.disabled = true;
+    syncStatus.textContent = "Updating…";
+    try {
+      await store.push(p);
+      await store.pull(p);
+      syncStatus.textContent = "Up to date.";
+    } catch (e) {
+      if (e instanceof store.Unpaired) {
+        await store.forget();
+        location.reload();
+        return;
+      }
+      if (!unreachable(e)) {
+        console.error(e);
+      }
+      syncStatus.textContent = "Offline: the hub is not reachable. Changes made here are sent when it is.";
+    }
+    await refreshSync();
+    update.disabled = false;
+  });
+
+  const removeDownloads = el("button", { type: "button", class: "hub-device-remove" }, "Remove downloaded books");
+  const localStatus = el("p", { class: "muted hub-device-local-status", role: "status" });
+  removeDownloads.addEventListener("click", async () => {
+    if (!confirm("Remove the books downloaded to this device? They download again when you open them (with a connection). Books opened from book files stay.")) {
+      return;
+    }
+    await store.removeDownloads();
+    localStatus.textContent = "Downloaded books removed.";
+    await refreshLocal();
+  });
+
+  const forgetButton = el("button", { type: "button", class: "danger hub-device-forget" }, "Forget this device");
+  const forgetStatus = el("p", { class: "hub-device-forget-status", role: "status" });
+  forgetButton.addEventListener("click", async () => {
+    if (!confirm("Forget this device? Your books, marks and keys are removed from it, and the hub stops accepting it. Pair it again in your library to read here.")) {
+      return;
+    }
+    forgetButton.disabled = true;
+    forgetStatus.textContent = "Forgetting…";
+    try {
+      await store.forgetDevice(p);
+    } catch (e) {
+      if (!unreachable(e)) {
+        console.error(e);
+        forgetStatus.textContent = e.message;
+        forgetStatus.classList.add("error");
+        forgetButton.disabled = false;
+        return;
+      }
+      const n = await store.waiting();
+      const lost = n ? ` ${n} ${n === 1 ? "change" : "changes"} made on this device (marks, the reading position) have not reached your library and will be lost.` : "";
+      if (!confirm(`The hub is not reachable.${lost} Forget this device anyway? Your library will list it until you remove it there (My profile → Phone and other devices).`)) {
+        forgetStatus.textContent = "";
+        forgetButton.disabled = false;
+        return;
+      }
+      await store.forgetDevice(p, { offline: true });
+    }
+    show(el("h1", {}, "This device was forgotten"),
+      el("p", {}, "Its books, marks and keys are gone from it. To read here again, pair it in your library: My profile → Phone and other devices → Pair a device."));
+  });
+
+  show(
+    el("h1", {}, "This device"),
+    el("section", { class: "hub-device-pairing" },
+      el("p", { class: "hub-device-title" },
+        document.querySelector(".device-link svg").cloneNode(true),
+        libraries.length
+          ? `Paired with your library ${libraries.map((l) => `“${l}”`).join(", ")}.`
+          : "Paired with your library's account."),
+      facts([["This device", name], ["Paired since", since]])),
+    el("section", { class: "hub-device-sync" },
+      el("h2", {}, "Sync"),
+      facts([["Last updated", synced], ["Waiting", waiting]]),
+      el("div", { class: "hub-device-actions" }, update),
+      syncStatus),
+    el("section", { class: "hub-device-local" },
+      el("h2", {}, "On this device"),
+      facts([
+        ["Books readable offline", offlineBooks],
+        ["Opened from book files", fileBooks],
+        ["Space used", used],
+        ["Kept by the browser", kept],
+      ]),
+      el("div", { class: "hub-device-actions" }, removeDownloads),
+      localStatus),
+    el("section", { class: "hub-device-account" },
+      el("h2", {}, "Your account on the hub"),
+      account,
+      el("p", { class: "muted" }, "Your devices are managed in your library: My profile → Phone and other devices.")),
+    hubSection(info),
+    el("section", { class: "hub-device-danger" },
+      el("h2", {}, "Forget this device"),
+      el("p", { class: "muted" }, "Removes your books, marks and keys from this device and unpairs it. Marks made here are sent to your library first."),
+      el("div", { class: "hub-device-actions" }, forgetButton),
+      forgetStatus),
+  );
+  await Promise.all([refreshSync(), refreshLocal()]);
+
+  try {
+    const [mine, list] = await Promise.all([
+      store.api("account", {}, p.token).then((r) => (r.ok ? r.json() : Promise.reject(new Error(`account: ${r.status}`)))),
+      store.api("devices", {}, p.token).then((r) => (r.ok ? r.json() : Promise.reject(new Error(`devices: ${r.status}`)))),
+    ]);
+    const current = (list.devices || []).find((d) => d.current);
+    if (current) {
+      if (typeof current.name === "string") {
+        name.textContent = await c.openDeviceName(p.aes, c.unbase64url(current.name)).catch(() => store.deviceName());
+      }
+      if (Number.isFinite(current.created_at)) {
+        since.textContent = new Date(current.created_at * 1000).toLocaleDateString();
+      }
+    }
+    const usage = mine.usage || {};
+    const quotas = mine.quotas || {};
+    account.replaceChildren(facts([
+      ["Space used", ofQuota(usage.bytes, quotas.max_bytes, formatBytes)],
+      ["Books on the hub", ofQuota(usage.publications, quotas.max_publications)],
+      ["Devices, your library included", ofQuota(usage.devices, quotas.max_devices)],
+    ]));
+  } catch (e) {
+    if (e instanceof store.Unpaired) {
+      await store.forget();
+      show(...unpairedHelp(), hubSection(info));
+      return;
+    }
+    if (!unreachable(e)) {
+      console.error(e);
+    }
+    account.replaceChildren(el("p", { class: "muted" }, "Offline: the hub is not reachable."));
+  }
+}
+
 // ---- Reading view --------------------------------------------------------------
 
 /** A message in place of the text. */
@@ -920,6 +1149,8 @@ if (route === "/pair") {
   pairPage();
 } else if (route.startsWith("/r/")) {
   readerPage(route.slice(3));
+} else if (route === "/device") {
+  devicePage();
 } else if (route === "/open" || new URLSearchParams(location.search).has("shared")) {
   openPage();
 } else {

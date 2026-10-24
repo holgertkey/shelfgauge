@@ -8,6 +8,23 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+### Added
+
+- **This device** in the reader on your phone: the button at the right of its top bar
+  shows which library the device is paired with, the device's name, when it last
+  synced and how many changes wait to be sent (with **Update now**), how many books
+  it keeps offline and how much space they take (with **Remove downloaded books**;
+  books opened from book files stay), your account's usage on the hub, and the hub's
+  address and version. **Forget this device** sends the marks made there, unpairs it
+  on the hub and removes its books, marks and keys; without a connection it warns
+  about unsent changes first. The page opens offline.
+
+### Fixed
+
+- The reader installs as an app on Android: its manifest lists 192 and 512 pixel PNG
+  icons (Chrome had offered only a shortcut), and an iPhone or iPad home screen gets
+  the icon too.
+
 ## [0.19.0] - 2026-10-24
 
 ### Added

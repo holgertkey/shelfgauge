@@ -1,4 +1,5 @@
-//! The reader app shell: `GET /` (the shelf) and `GET /pair` serve the start page,
+//! The reader app shell: `GET /` (the shelf), `GET /pair`, `GET /open` and
+//! `GET /device` (this device's page) serve the start page,
 //! `GET /r/{id}` the reading view, and `GET /assets/{*path}` their files: the app's own
 //! from `assets/hub/` and the library's reading files (`style.css`, `reader.css`,
 //! `theme.js`, `app.js`, `reader.js`, `icon.svg`) from `assets/`.
@@ -81,6 +82,7 @@ pub(super) fn routes(state: &HubState) -> Router<HubState> {
         // (`share_target`, a POST the Service Worker answers).
         .route(&state.path("/open"), get(page))
         .route(&state.path("/share"), post(share_fallback))
+        .route(&state.path("/device"), get(page))
         .route(&state.path("/assets/{*path}"), get(asset))
         .route(&state.path("/sw.js"), get(service_worker))
         .route(&state.path("/manifest.webmanifest"), get(web_manifest))
@@ -237,7 +239,7 @@ fn shell(page: &impl Template) -> Response {
         .into_response()
 }
 
-/// `GET /pair`, `GET /open` and `GET /`.
+/// `GET /pair`, `GET /open`, `GET /device` and `GET /`.
 async fn page(State(state): State<HubState>) -> Response {
     shell(&HomePage {
         base: state.path(""),
