@@ -166,11 +166,33 @@ async fn web_manifest(State(state): State<HubState>) -> Response {
         "display": "standalone",
         "background_color": "#ffffff",
         "theme_color": "#ffffff",
-        "icons": [{
-            "src": format!("{base}/assets/icon.svg"),
-            "sizes": "any",
-            "type": "image/svg+xml",
-        }],
+        // Chrome installs the app only with 192 and 512 pixel raster icons; the
+        // padded PNGs also serve as maskable icons on Android.
+        "icons": [
+            {
+                "src": format!("{base}/assets/icon-192.png"),
+                "sizes": "192x192",
+                "type": "image/png",
+                "purpose": "any",
+            },
+            {
+                "src": format!("{base}/assets/icon-512.png"),
+                "sizes": "512x512",
+                "type": "image/png",
+                "purpose": "any",
+            },
+            {
+                "src": format!("{base}/assets/icon-512.png"),
+                "sizes": "512x512",
+                "type": "image/png",
+                "purpose": "maskable",
+            },
+            {
+                "src": format!("{base}/assets/icon.svg"),
+                "sizes": "any",
+                "type": "image/svg+xml",
+            },
+        ],
         // Book files (`.sgbook`; `.sgb` opens too): double-click on desktop Chromium,
         // "Share" on Android.
         "file_handlers": [{

@@ -1139,7 +1139,25 @@ async fn the_service_worker_and_manifest_make_the_reader_installable() {
         assert_eq!(json["start_url"], format!("{prefix}/"));
         assert_eq!(json["scope"], format!("{prefix}/"));
         assert_eq!(json["display"], "standalone");
-        assert_eq!(json["icons"][0]["src"], format!("{prefix}/assets/icon.svg"));
+        // Chrome refuses to install without 192 and 512 pixel raster icons.
+        for size in ["192x192", "512x512"] {
+            let icon = json["icons"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|i| i["sizes"] == size && i["type"] == "image/png")
+                .unwrap_or_else(|| panic!("no {size} PNG icon: {json}"));
+            let src = icon["src"].as_str().unwrap();
+            assert!(src.starts_with(&format!("{prefix}/assets/")), "{src}");
+            let png = hub.get(src, None).await;
+            assert_eq!(png.status, StatusCode::OK, "{src}");
+            assert_eq!(png.headers[header::CONTENT_TYPE], "image/png");
+            let side: u32 = size.split_once('x').unwrap().0.parse().unwrap();
+            // The PNG header's width and height.
+            assert_eq!(&png.body[..8], b"\x89PNG\r\n\x1a\n");
+            assert_eq!(png.body[16..20], side.to_be_bytes());
+            assert_eq!(png.body[20..24], side.to_be_bytes());
+        }
         let page = String::from_utf8(hub.get(&format!("{prefix}/"), None).await.body).unwrap();
         assert!(
             page.contains(&format!(

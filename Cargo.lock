@@ -1962,7 +1962,7 @@ dependencies = [
 
 [[package]]
 name = "shelfgauge"
-version = "0.19.0+000"
+version = "0.19.0+001"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2014,7 +2014,7 @@ dependencies = [
 
 [[package]]
 name = "shelfgauge-core"
-version = "0.19.0+000"
+version = "0.19.0+001"
 dependencies = [
  "postcard",
  "serde",
@@ -2025,7 +2025,7 @@ dependencies = [
 
 [[package]]
 name = "shelfgauge-wasm"
-version = "0.19.0+000"
+version = "0.19.0+001"
 dependencies = [
  "askama",
  "base64",
