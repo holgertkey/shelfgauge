@@ -1,11 +1,14 @@
 // The hub's reader app: pairing this browser (`/pair#<secret>.<account key>`), the
-// shelf (`/`) and the reading view (`/r/<publication id>?part=<n>`).
+// shelf (`/`, with "Open file" for book files) and the reading view
+// (`/r/<publication id>?part=<n>`), of a hub publication or of a book file's copy
+// kept on this device (bookfile.js).
 //
 // Books arrive as encrypted blobs; crypto.js opens them, the WASM module
 // (pkg/shelfgauge.js, the instance's own renderer) turns them into escaped HTML, and
 // the page is then the instance's reading page: reader.js runs on it unchanged, with
 // `window.shelfgaugeSource` giving it the pages of other parts. Text from records or
 // the manifest goes into the page as text only (`textContent`), never as markup.
+import * as bookfile from "./bookfile.js";
 import * as c from "./crypto.js";
 import * as store from "./store.js";
 
@@ -104,7 +107,11 @@ async function pairPage() {
 // ---- Shelf ---------------------------------------------------------------------
 
 function bookItem(item) {
-  const link = el("a", { href: `${base}/r/${item.publication}` }, item.title || "Untitled");
+  // A book on the shelf as files only opens from a copy on this device.
+  const target = item.copy ? item.copy.publication : (item.kind === "file" ? null : item.publication);
+  const link = target
+    ? el("a", { href: `${base}/r/${target}` }, item.title || "Untitled")
+    : el("strong", {}, item.title || "Untitled");
   const meta = [];
   if (item.authors) {
     meta.push(item.authors);
@@ -116,8 +123,12 @@ function bookItem(item) {
   if (meta.length) {
     li.append(el("span", { class: "muted" }, meta.join(" · ")));
   }
-  if (item.offline) {
+  if (item.copy) {
+    li.append(el("span", { class: "muted hub-offline", title: "Opened from a book file: kept on this device, opens without a connection" }, "file · offline"));
+  } else if (item.offline) {
     li.append(el("span", { class: "muted hub-offline", title: "Saved on this device: opens without a connection" }, "offline"));
+  } else if (!target) {
+    li.append(el("span", { class: "muted hub-file-hint" }, "Open its book file on this device"));
   }
   if (item.position && Number.isFinite(item.position.progress)) {
     li.append(el("span", { class: "muted hub-progress" }, `${Math.min(Math.floor(item.position.progress / 10), 100)} %`));
@@ -136,8 +147,9 @@ function renderShelf(items, status) {
   if (status) {
     nodes.push(el("p", { class: "muted hub-sync", role: "status" }, status));
   }
+  nodes.push(openFileForm());
   if (!items.length) {
-    nodes.push(el("p", { class: "hint" }, "No books yet. In your library, choose Open on phone on a book's page to put it here."));
+    nodes.push(el("p", { class: "hint" }, "No books yet. In your library, choose Open on phone on a book's page to put it here, or Download book file and open the file here."));
   }
   if (reading.length) {
     nodes.push(el("h2", {}, "Currently reading"), el("ul", { class: "hub-books" }, ...reading.map(bookItem)));
@@ -151,17 +163,94 @@ function renderShelf(items, status) {
   show(...nodes);
 }
 
-/** The shelf with each book's offline state. */
+/** The shelf with each book's offline state and its book file copy here, if any. */
 async function shelfItems(p) {
   const items = await store.shelf(p);
   const offline = await store.offline().catch(() => new Set());
+  const copies = await store.copies().catch(() => []);
   for (const item of items) {
     item.offline = offline.has(item.publication);
+    // The newest copy of the book.
+    item.copy = copies
+      .filter((copy) => copy.content_key === item.content_key)
+      .sort((a, b) => b.imported_at - a.imported_at)[0] || null;
   }
   return items;
 }
 
+// ---- Book files ----------------------------------------------------------------
+
+/** The status line of opening a file (kept across shelf redraws). */
+let fileStatus = null;
+
+/** "Open file": a button for the file picker (and drag and drop on the page). */
+function openFileForm() {
+  const input = el("input", { type: "file", accept: bookfile.ACCEPT, hidden: "", class: "hub-file-input" });
+  input.addEventListener("change", () => {
+    if (input.files && input.files[0]) {
+      openBookFile(input.files[0]);
+    }
+    input.value = "";
+  });
+  const button = el("button", { type: "button", class: "hub-open-file" }, "Open file");
+  button.addEventListener("click", () => input.click());
+  const status = el("p", { class: "hub-file-status", role: "status" });
+  if (fileStatus) {
+    status.textContent = fileStatus.text;
+    status.classList.toggle("error", fileStatus.error);
+  }
+  return el("div", { class: "hub-open" }, button, input,
+    el("span", { class: "muted" }, "a book file (.sgbook) downloaded from your library"), status);
+}
+
+function setFileStatus(text, error = false) {
+  fileStatus = text ? { text, error } : null;
+  const status = document.querySelector(".hub-file-status");
+  if (status) {
+    status.textContent = text;
+    status.classList.toggle("error", error);
+  }
+}
+
+/** Opens a book file: keeps a copy here and opens the book. */
+async function openBookFile(file) {
+  const p = await store.pairing();
+  if (!p) {
+    show(...unpairedHelp());
+    return;
+  }
+  setFileStatus(`Opening ${file.name}…`);
+  try {
+    const { publication } = await bookfile.importFile(p, file);
+    setFileStatus("");
+    location.assign(`${base}/r/${publication}`);
+  } catch (e) {
+    if (!(e instanceof bookfile.BookFileError)) {
+      console.error(e);
+    }
+    setFileStatus(e instanceof bookfile.BookFileError ? e.message : "The book file could not be opened.", true);
+  }
+}
+
+/** Drag and drop of a book file anywhere on the shelf page. */
+function acceptDrops() {
+  document.addEventListener("dragover", (event) => {
+    if (event.dataTransfer && Array.from(event.dataTransfer.types).includes("Files")) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+    }
+  });
+  document.addEventListener("drop", (event) => {
+    const file = event.dataTransfer && event.dataTransfer.files[0];
+    if (file) {
+      event.preventDefault();
+      openBookFile(file);
+    }
+  });
+}
+
 async function shelfPage() {
+  acceptDrops();
   const p = await store.pairing();
   if (!p) {
     show(...unpairedHelp());
@@ -172,10 +261,13 @@ async function shelfPage() {
     // Marks made offline go out from here too.
     await store.push(p);
     await store.pull(p);
-    // Copies of books that left the shelf (or were republished) go.
+    // Copies of books that left the shelf (or were republished) go; so do book
+    // file copies of books no longer on the shelf.
     const items = await store.shelf(p);
     const kept = new Set(items.map((i) => i.publication));
     await store.dropBlobs((id) => !kept.has(id)).catch((e) => console.error(e));
+    const shelved = new Set(items.map((i) => i.content_key));
+    await store.dropCopies((copy) => !shelved.has(copy.content_key)).catch((e) => console.error(e));
     renderShelf(await shelfItems(p), "");
   } catch (e) {
     if (e instanceof store.Unpaired) {
@@ -201,9 +293,11 @@ function readerMessage(title, ...lines) {
 
 /** The opened publication: the WASM reader plus what it needs to fetch more. */
 class Book {
-  constructor(p, id, key, reader) {
+  constructor(p, id, key, reader, copy = null) {
     this.p = p;
     this.id = id;
+    // A book file's copy on this device: blobs from IndexedDB, never from the hub.
+    this.copy = copy;
     this.idBytes = c.unhex(id);
     this.key = key;
     this.reader = reader;
@@ -213,7 +307,7 @@ class Book {
   }
 
   async open(path) {
-    const sealed = await store.blob(this.p, this.id, path);
+    const sealed = this.copy ? await store.copyBlob(this.id, path) : await store.blob(this.p, this.id, path);
     if (!sealed) {
       throw new Error("gone");
     }
@@ -262,7 +356,7 @@ class Book {
    * kept), then the shelf can say "offline".
    */
   async saveOffline() {
-    if (!("serviceWorker" in navigator)) {
+    if (this.copy || !("serviceWorker" in navigator)) {
       return;
     }
     await navigator.serviceWorker.ready;
@@ -670,29 +764,52 @@ async function readerPage(id) {
     return;
   }
   try {
-    let item = (await store.shelf(p)).find((i) => i.publication === id);
-    if (!item) {
-      await store.pull(p).catch((e) => {
-        if (e instanceof store.Unpaired) {
-          throw e;
-        }
-      });
+    // A book file's copy on this device first: it needs no hub.
+    const copy = await store.copy(id);
+    let item;
+    let key;
+    let sealed;
+    if (copy) {
+      item = (await store.shelf(p)).find((i) => i.content_key === copy.content_key)
+        || { title: copy.title, authors: copy.authors, content_key: copy.content_key, publication: id };
+      const raw = await c.openRecord(p.aes, "file_key", id, c.unbase64url(copy.book_key));
+      key = await c.aesKey(raw);
+      raw.fill(0);
+      sealed = await store.copyBlob(id, "manifest");
+    } else {
       item = (await store.shelf(p)).find((i) => i.publication === id);
-    }
-    if (!item) {
-      readerMessage("This book is not on your shelf", "It may have been removed from the shelf in your library.");
-      return;
-    }
-    const key = await c.aesKey(c.unbase64url(item.book_key));
-    const sealed = await store.blob(p, id, "manifest");
-    if (!sealed) {
-      readerMessage(`“${item.title}” is no longer on the hub`, "It was not opened for a long time, or it was removed. Choose Open on phone on the book's page in your library to publish it again.");
-      return;
+      if (!item) {
+        await store.pull(p).catch((e) => {
+          if (e instanceof store.Unpaired) {
+            throw e;
+          }
+        });
+        item = (await store.shelf(p)).find((i) => i.publication === id);
+      }
+      if (!item) {
+        readerMessage("This book is not on your shelf", "It may have been removed from the shelf in your library.");
+        return;
+      }
+      const other = (await store.copies()).find((x) => x.content_key === item.content_key);
+      if (other) {
+        location.replace(`${base}/r/${other.publication}${location.search}${location.hash}`);
+        return;
+      }
+      if (item.kind === "file") {
+        readerMessage(`Open the book file of “${item.title}”`, "This book is on your shelf as a book file: the hub has no copy. Open the file on this device with Open file on My books (download it from the book's page in your library if it is not here).");
+        return;
+      }
+      key = await c.aesKey(c.unbase64url(item.book_key));
+      sealed = await store.blob(p, id, "manifest");
+      if (!sealed) {
+        readerMessage(`“${item.title}” is no longer on the hub`, "It was not opened for a long time, or it was removed. Choose Open on phone on the book's page in your library to publish it again.");
+        return;
+      }
     }
     const wasm = await import("./pkg/shelfgauge.js");
     await wasm.default();
     const reader = new wasm.Reader(await c.openBlob(key, c.unhex(id), "manifest", sealed));
-    const book = new Book(p, id, key, reader);
+    const book = new Book(p, id, key, reader, copy);
     if (book.summary.content_key !== item.content_key) {
       // Marks would be filed under another book.
       readerMessage("This book could not be opened", "Its shelf entry does not match the published book. Publish it again from your library.");
@@ -759,10 +876,52 @@ async function readerPage(id) {
   }
 }
 
+/**
+ * `/open`: a book file handed to the installed app — by the system (`file_handlers`,
+ * through `launchQueue`) or shared to it (`share_target`: the Service Worker kept it,
+ * `?shared=1`). Shows the shelf and opens the file. Also `/?shared=lost` (a share
+ * that no Service Worker took).
+ */
+function openPage() {
+  const shared = new URLSearchParams(location.search).get("shared");
+  history.replaceState(null, "", `${base}/`);
+  shelfPage();
+  if ("launchQueue" in window) {
+    window.launchQueue.setConsumer(async (launch) => {
+      if (launch.files && launch.files.length) {
+        openBookFile(await launch.files[0].getFile());
+      }
+    });
+  }
+  if (shared === "1") {
+    takeShared().catch((e) => {
+      console.error(e);
+      setFileStatus("The shared file could not be opened. Use Open file instead.", true);
+    });
+  } else if (shared) {
+    setFileStatus("The shared file did not arrive. Open shelfgauge once while connected, then share the file again (or use Open file).", true);
+  }
+}
+
+/** Opens the book file the Service Worker kept from a share, and forgets it. */
+async function takeShared() {
+  const cache = await caches.open("shelfgauge-shared");
+  const key = `${base}/shared-file`;
+  const response = await cache.match(key);
+  await cache.delete(key);
+  if (!response) {
+    return;
+  }
+  const name = decodeURIComponent(response.headers.get("X-File-Name") || "book.sgbook");
+  openBookFile(new File([await response.blob()], name));
+}
+
 if (route === "/pair") {
   pairPage();
 } else if (route.startsWith("/r/")) {
   readerPage(route.slice(3));
+} else if (route === "/open" || new URLSearchParams(location.search).has("shared")) {
+  openPage();
 } else {
   shelfPage();
 }

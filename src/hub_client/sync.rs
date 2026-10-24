@@ -9,7 +9,7 @@ use rusqlite::{Connection, params};
 
 use super::keys::{self, AccountKey};
 use super::records;
-use super::store::{self, HubAccount, ShelfEntry, ShelfState};
+use super::store::{self, HubAccount, ShelfEntry, ShelfKind, ShelfState};
 use super::{ClientError, HubClient, OutRecord};
 use crate::annotations::store::UserData;
 use crate::profiles::ProfileId;
@@ -20,7 +20,7 @@ const BATCH: usize = 200;
 
 /// The largest sealed record pushed (the hub's limit is 1 MiB); larger ones (a note
 /// near `annotations.max_note_length` = 1 000 000) stay local.
-const MAX_RECORD: usize = 1024 * 1024;
+pub(crate) const MAX_RECORD: usize = 1024 * 1024;
 
 /// A failed push.
 #[derive(Debug, thiserror::Error)]
@@ -236,14 +236,18 @@ pub fn push(
 
 /// Deletes the publication of a book being removed from the shelf, pushes the
 /// deletions and forgets the entry; `false` when the hub could not be reached (the
-/// entry stays `removing` for the next sync). Runs blocking HTTP.
+/// entry stays `removing` for the next sync). A book on the shelf as files only has
+/// no copy on the hub. Runs blocking HTTP.
 pub fn take_down(
     userdata: &UserData,
     account: &HubAccount,
     client: &HubClient,
     entry: &ShelfEntry,
 ) -> bool {
-    if let Some(id) = &entry.publication
+    if let Some(id) = entry
+        .publication
+        .as_ref()
+        .filter(|_| entry.kind == ShelfKind::Upload)
         && let Err(e) = client.delete_publication(&account.token, id)
     {
         tracing::info!(error = %e, "the hub did not delete a publication");
@@ -267,8 +271,8 @@ pub fn take_down(
     true
 }
 
-/// Marks this library's publications that the hub no longer has as expired. Runs
-/// blocking HTTP.
+/// Marks this library's publications that the hub no longer has as expired (books on
+/// the shelf as files never were there and do not expire). Runs blocking HTTP.
 pub fn check_expired(
     userdata: &UserData,
     account: &HubAccount,
@@ -279,6 +283,7 @@ pub fn check_expired(
     let mut expired = 0;
     for entry in store::shelf(&conn, account.profile)? {
         if entry.own
+            && entry.kind == ShelfKind::Upload
             && entry.state == ShelfState::Published
             && entry.publication.is_some_and(|id| !on_hub.contains(&id))
         {
@@ -316,12 +321,14 @@ pub struct Report {
 }
 
 /// Pulls everything after `account`'s last `seq` and merges it; `book_id` finds the
-/// library's book with a content key. Runs blocking HTTP.
+/// library's book with a content key, `instance` is this library's name. Runs
+/// blocking HTTP.
 pub fn pull(
     userdata: &UserData,
     account: &HubAccount,
     client: &HubClient,
     book_id: &dyn Fn(&[u8]) -> Option<i64>,
+    instance: &str,
     report: &mut Report,
 ) -> Result<(), SyncError> {
     let profile = account.profile;
@@ -332,7 +339,7 @@ pub fn pull(
         let tx = conn.unchecked_transaction()?;
         for record in &page.records {
             report.pulled += 1;
-            match super::merge::apply(&tx, profile, &account.key, record, book_id)? {
+            match super::merge::apply(&tx, profile, &account.key, record, book_id, instance)? {
                 super::merge::Applied::Kept => {}
                 super::merge::Applied::Annotation(content) => {
                     report.merged += 1;
@@ -352,13 +359,14 @@ pub fn pull(
 }
 
 /// One full sync of `account`: push the outbox, finish removals, pull and merge,
-/// notice expired publications; records the outcome on the account. Runs blocking
-/// HTTP.
+/// notice expired publications; records the outcome on the account. `instance` is
+/// this library's name on the shelf. Runs blocking HTTP.
 pub fn sync_once(
     userdata: &UserData,
     account: &HubAccount,
     client: &HubClient,
     book_id: &dyn Fn(&[u8]) -> Option<i64>,
+    instance: &str,
     now: i64,
 ) -> Result<Report, SyncError> {
     let mut report = Report::default();
@@ -371,7 +379,7 @@ pub fn sync_once(
         for entry in &removing {
             take_down(userdata, account, client, entry);
         }
-        pull(userdata, account, client, book_id, &mut report)?;
+        pull(userdata, account, client, book_id, instance, &mut report)?;
         check_expired(userdata, account, client)?;
         Ok(())
     })();

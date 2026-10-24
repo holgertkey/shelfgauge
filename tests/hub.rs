@@ -1150,6 +1150,56 @@ async fn the_service_worker_and_manifest_make_the_reader_installable() {
     }
 }
 
+#[tokio::test]
+async fn book_files_open_through_the_installed_app() {
+    for (base, prefix) in [("/", ""), ("/hub", "/hub")] {
+        let hub = TestHub::new(|c| c.server.base_path = base.into());
+        let manifest = hub
+            .get(&format!("{prefix}/manifest.webmanifest"), None)
+            .await;
+        let json: serde_json::Value = serde_json::from_slice(&manifest.body).unwrap();
+        let handler = &json["file_handlers"][0];
+        assert_eq!(handler["action"], format!("{prefix}/open"));
+        assert_eq!(
+            handler["accept"]["application/vnd.shelfgauge.book"],
+            json!([".sgbook", ".sgb"])
+        );
+        let share = &json["share_target"];
+        assert_eq!(share["action"], format!("{prefix}/share"));
+        assert_eq!(share["method"], "POST");
+        assert_eq!(share["enctype"], "multipart/form-data");
+        assert_eq!(
+            share["params"]["files"][0]["accept"],
+            json!(["application/vnd.shelfgauge.book", ".sgbook", ".sgb"])
+        );
+
+        // `/open` is the shell (the app takes the file), served offline as the shelf.
+        let open = hub.get(&format!("{prefix}/open"), None).await;
+        assert_eq!(open.status, StatusCode::OK);
+        let page = String::from_utf8(open.body).unwrap();
+        assert!(page.contains(r#"id="hub-app""#), "{page}");
+        let sw = String::from_utf8(hub.get(&format!("{prefix}/sw.js"), None).await.body).unwrap();
+        assert!(sw.contains("pair|open|r"), "{sw}");
+        assert!(sw.contains("`${BASE}/share`"), "{sw}");
+
+        // A share no Service Worker took: the body is not read, the shelf says so.
+        let shared = hub
+            .call_with(
+                Method::POST,
+                &format!("{prefix}/share"),
+                None,
+                Body::from(vec![0u8; 4 << 20]),
+                |r| r.header(header::CONTENT_TYPE, "multipart/form-data; boundary=x"),
+            )
+            .await;
+        assert_eq!(shared.status, StatusCode::SEE_OTHER);
+        assert_eq!(
+            shared.headers[header::LOCATION],
+            format!("{prefix}/?shared=lost")
+        );
+    }
+}
+
 #[test]
 fn a_hub_is_created_only_when_asked() {
     let dir = tempfile::tempdir().unwrap();

@@ -37,6 +37,7 @@
 //!
 //! [`PARSER_VERSION`]: crate::format::model::PARSER_VERSION
 
+pub mod container;
 mod manifest;
 mod part;
 

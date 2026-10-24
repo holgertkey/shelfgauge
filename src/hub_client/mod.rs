@@ -10,6 +10,7 @@
 //! keys, public account ids and publication ids (also not inside URLs: client errors
 //! never carry the request URL).
 
+pub mod book_file;
 pub mod keys;
 pub mod merge;
 pub mod records;

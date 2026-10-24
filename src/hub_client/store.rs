@@ -211,6 +211,25 @@ impl ShelfState {
     }
 }
 
+/// How a shelf book reaches the devices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShelfKind {
+    /// Its publication is on the hub.
+    Upload,
+    /// As book files (`.sgbook`) only: the hub never had it.
+    File,
+}
+
+impl ShelfKind {
+    /// The stored name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Upload => "upload",
+            Self::File => "file",
+        }
+    }
+}
+
 /// A book on a profile's shelf. `Debug` hides the publication id and book key.
 #[derive(Clone)]
 pub struct ShelfEntry {
@@ -222,6 +241,8 @@ pub struct ShelfEntry {
     pub book_key: Option<BookKey>,
     /// Whether this instance published it.
     pub own: bool,
+    /// On the hub or as files.
+    pub kind: ShelfKind,
     /// Where it stands.
     pub state: ShelfState,
     /// The name of the library that published it.
@@ -240,6 +261,7 @@ impl fmt::Debug for ShelfEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ShelfEntry")
             .field("own", &self.own)
+            .field("kind", &self.kind)
             .field("state", &self.state)
             .field("updated_at", &self.updated_at)
             .finish_non_exhaustive()
@@ -250,6 +272,7 @@ fn shelf_row(row: &Row<'_>) -> rusqlite::Result<ShelfEntry> {
     let publication: Option<Vec<u8>> = row.get("publication_id")?;
     let key: Option<Vec<u8>> = row.get("cipher_key")?;
     let state: String = row.get("state")?;
+    let kind: String = row.get("kind")?;
     Ok(ShelfEntry {
         content_key: row.get("book_key")?,
         publication: publication
@@ -261,6 +284,11 @@ fn shelf_row(row: &Row<'_>) -> rusqlite::Result<ShelfEntry> {
             .transpose()
             .map_err(|_| corrupt("cipher_key"))?,
         own: row.get("own")?,
+        kind: if kind == "file" {
+            ShelfKind::File
+        } else {
+            ShelfKind::Upload
+        },
         state: ShelfState::parse(&state).ok_or_else(|| corrupt("state"))?,
         instance: row.get("instance")?,
         title: row.get("title")?,
@@ -305,6 +333,34 @@ pub fn begin_publish(
              (profile_id, book_key, publication_id, cipher_key, own, kind, state, instance,
               title, authors, published_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, 1, 'upload', 'uploading', ?5, ?6, ?7, ?8, ?9)",
+        params![
+            profile.0,
+            entry.content_key,
+            entry.publication.map(|p| p.as_bytes().to_vec()),
+            entry.book_key.as_ref().map(|k| k.as_bytes().to_vec()),
+            entry.instance,
+            entry.title,
+            entry.authors,
+            entry.published_at,
+            entry.updated_at,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Puts a book this instance exported as a book file on the shelf (kind `file`, state
+/// `published`: there is nothing to upload), replacing an earlier entry of the same
+/// book. Call [`enqueue_book`] after it.
+pub fn put_file(
+    conn: &Connection,
+    profile: ProfileId,
+    entry: &ShelfEntry,
+) -> Result<(), StorageError> {
+    conn.execute(
+        "INSERT OR REPLACE INTO hub_shelf
+             (profile_id, book_key, publication_id, cipher_key, own, kind, state, instance,
+              title, authors, published_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, 1, 'file', 'published', ?5, ?6, ?7, ?8, ?9)",
         params![
             profile.0,
             entry.content_key,

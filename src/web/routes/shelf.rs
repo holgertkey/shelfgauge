@@ -2,11 +2,15 @@
 //! publishes it (build, seal, upload, push the shelf item with the book's annotations
 //! and position), "Remove from shelf" deletes the publication and the book's records
 //! on the hub (local data stays), an expired publication can be published again.
+//! "Download book file" exports the book as a `.sgbook` file (concept §11 "Book
+//! files"): always a new publication, nothing uploaded; a book not yet on the shelf
+//! goes on it as a `file` item.
 //!
 //! Publication ids and book keys are never logged; only profile and book ids.
 
 use axum::extract::rejection::FormRejection;
 use axum::extract::{Form, Path, State};
+use axum::http::{HeaderValue, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
@@ -15,18 +19,20 @@ use super::parse_id;
 use crate::annotations::now;
 use crate::cache::covers;
 use crate::format::model::Image;
-use crate::hub_client::store::{self, HubAccount, ShelfEntry, ShelfState};
+use crate::hub_client::book_file::{self, FileKeys};
+use crate::hub_client::store::{self, HubAccount, ShelfEntry, ShelfKind, ShelfState};
 use crate::hub_client::{ClientError, HubClient, sync};
 use crate::profiles::ProfileId;
 use crate::publication::{self, BookInfo, BookKey, Publication, generate_publication_id};
 use crate::render::load::content_key;
 use crate::storage::books::{BookDetails, BookStatus, book_by_id};
 use crate::web::profile::CurrentProfile;
-use crate::web::{AppError, AppState, qr};
+use crate::web::{AppError, AppState, blocking, qr};
 
 /// The book's place on the shelf, for the book card.
 pub(crate) struct ShelfView {
-    /// `none`, `uploading`, `published`, `expired`, `removing` or `protected`.
+    /// `none`, `uploading`, `published`, `file` (on the shelf as book files),
+    /// `expired`, `removing` or `protected`.
     pub(crate) state: &'static str,
     /// The library that published it, when it is another one.
     pub(crate) other: Option<String>,
@@ -59,7 +65,7 @@ pub(crate) fn view(
         None => ("none", None, None),
         Some(entry) => {
             let link = match (entry.state, entry.publication) {
-                (ShelfState::Published, Some(id)) => {
+                (ShelfState::Published, Some(id)) if entry.kind == ShelfKind::Upload => {
                     let link = account.hub_url.book_link(&id);
                     qr::svg(&link, "QR code of the book link").map(|svg| (link, svg))
                 }
@@ -68,6 +74,7 @@ pub(crate) fn view(
             let other = (!entry.own).then(|| entry.instance.clone());
             let name = match entry.state {
                 ShelfState::Uploading => "uploading",
+                ShelfState::Published if entry.kind == ShelfKind::File => "file",
                 ShelfState::Published => "published",
                 ShelfState::Expired => "expired",
                 ShelfState::Removing => "removing",
@@ -144,7 +151,8 @@ pub(crate) struct ShelfForm {
 }
 
 /// `POST /book/{id}/hub` (form): `publish` (also again, after expiry or an
-/// interrupted upload) or `remove`; `303` back to the book card with a `hub` notice.
+/// interrupted upload) or `remove`, `303` back to the book card with a `hub` notice;
+/// `export` answers with the book file (or `303` with a notice when it cannot be made).
 pub(crate) async fn save(
     State(state): State<AppState>,
     current: CurrentProfile,
@@ -158,6 +166,10 @@ pub(crate) async fn save(
         .await?
         .ok_or_else(|| AppError::BadRequest("this profile has no hub account".to_owned()))?;
     let code = match form.action.as_str() {
+        "export" => match export(&state, account, id).await? {
+            Ok(file) => return Ok(file),
+            Err(code) => code,
+        },
         "publish" => publish(&state, account, id).await?,
         "remove" => remove(&state, account, id).await?,
         _ => return Err(AppError::BadRequest("unknown action".to_owned())),
@@ -175,9 +187,10 @@ fn cover(state: &AppState, book: &BookDetails) -> Option<Image> {
     })
 }
 
-async fn publish(state: &AppState, account: HubAccount, id: i64) -> Result<&'static str, AppError> {
-    let profile = account.profile;
-    let built = state
+/// The publication of library book `id` as the reader splits it now; `None` for a
+/// DRM-protected book.
+async fn build(state: &AppState, id: i64) -> Result<Option<(BookInfo, Publication)>, AppError> {
+    state
         .user_db(move |s, conn| {
             let book = book_by_id(conn, id)?.ok_or(AppError::NotFound)?;
             if book.status == BookStatus::Protected {
@@ -192,8 +205,12 @@ async fn publish(state: &AppState, account: HubAccount, id: i64) -> Result<&'sta
                 Err(publication::PublishError::Protected(_)) => Ok(None),
             }
         })
-        .await?;
-    let Some((info, publication)) = built else {
+        .await
+}
+
+async fn publish(state: &AppState, account: HubAccount, id: i64) -> Result<&'static str, AppError> {
+    let profile = account.profile;
+    let Some((info, publication)) = build(state, id).await? else {
         return Ok("protected");
     };
     // A second click (or tab) while it uploads, or on a published book, changes nothing.
@@ -204,7 +221,7 @@ async fn publish(state: &AppState, account: HubAccount, id: i64) -> Result<&'sta
         let conn = state.userdata().lock();
         store::shelf_entry(&conn, profile, &info.content_key)?
     };
-    if entry.is_some_and(|e| e.state == ShelfState::Published) {
+    if entry.is_some_and(|e| e.state == ShelfState::Published && e.kind == ShelfKind::Upload) {
         return Ok("published");
     }
     let instance = super::hub::instance_name(state);
@@ -275,6 +292,7 @@ fn upload(
         publication: Some(pub_id),
         book_key: Some(key),
         own: true,
+        kind: ShelfKind::Upload,
         state: ShelfState::Uploading,
         instance: instance.to_owned(),
         title: info.title.clone(),
@@ -286,11 +304,12 @@ fn upload(
         tracing::error!(error = %e, "cannot write the hub shelf");
         return "failed";
     }
-    // An earlier copy (expired, or an interrupted upload) is not reused.
-    if let Some(old) = previous
-        .as_ref()
-        .and_then(|p| p.publication.filter(|_| p.own))
-        && let Err(e) = client.delete_publication(&account.token, &old)
+    // An earlier copy (expired, or an interrupted upload) is not reused; a book on
+    // the shelf as files has none on the hub.
+    if let Some(old) = previous.as_ref().and_then(|p| {
+        p.publication
+            .filter(|_| p.own && p.kind == ShelfKind::Upload)
+    }) && let Err(e) = client.delete_publication(&account.token, &old)
     {
         tracing::info!(error = %e, "the hub did not delete an earlier copy");
     }
@@ -345,6 +364,133 @@ fn restore(
     if let Err(e) = result {
         tracing::error!(error = %e, "cannot write the hub shelf");
     }
+}
+
+/// Exports library book `id` as a book file: a new publication sealed for the account,
+/// with a snapshot of the book's records. A book not on the shelf (or being taken
+/// off it) goes on it as a `file` item, a `file` item points to the newest file; an
+/// uploaded book's shelf item stays as it is. Nothing is sent to the hub here (the
+/// shelf item and records go out with the next push).
+async fn export(
+    state: &AppState,
+    account: HubAccount,
+    id: i64,
+) -> Result<Result<Response, &'static str>, AppError> {
+    let profile = account.profile;
+    let Some((info, publication)) = build(state, id).await? else {
+        return Ok(Err("protected"));
+    };
+    let instance = super::hub::instance_name(state);
+    let userdata = state.userdata_handle();
+    let made = blocking(move || -> Result<(Vec<u8>, String), AppError> {
+        let pub_id = generate_publication_id().map_err(random)?;
+        let key = BookKey::generate().map_err(random)?;
+        let sealed = publication.seal(&pub_id, &key).map_err(random)?;
+        let snapshot = {
+            let conn = userdata.lock();
+            let entry = store::shelf_entry(&conn, profile, &info.content_key)?;
+            let replace = match &entry {
+                None => true,
+                Some(e) => e.state == ShelfState::Removing || (e.own && e.kind == ShelfKind::File),
+            };
+            if replace {
+                let now = now();
+                store::put_file(
+                    &conn,
+                    profile,
+                    &ShelfEntry {
+                        content_key: info.content_key.clone(),
+                        publication: Some(pub_id),
+                        book_key: Some(key.clone()),
+                        own: true,
+                        kind: ShelfKind::File,
+                        state: ShelfState::Published,
+                        instance,
+                        title: info.title.clone(),
+                        authors: info.authors.join(", "),
+                        published_at: Some(now),
+                        updated_at: now,
+                    },
+                )?;
+                store::enqueue_book(&conn, profile, &info.content_key)?;
+            }
+            book_file::snapshot(&conn, profile, &account.key, &info.content_key).map_err(|e| {
+                match e {
+                    book_file::SnapshotError::Storage(e) => AppError::from(e),
+                    book_file::SnapshotError::Random(e) => random(e),
+                }
+            })?
+        };
+        let keys = FileKeys {
+            account: account.account,
+            key: &account.key,
+            key_id: account.key_id,
+        };
+        let sg = book_file::sg_json(
+            keys,
+            &pub_id,
+            &key,
+            publication.manifest.format_version,
+            snapshot,
+        )
+        .map_err(random)?;
+        let name = book_file::file_name(&info.title, &info.authors.join(", "));
+        Ok((book_file::write(&sg, &sealed), name))
+    })
+    .await??;
+    let (file, name) = made;
+    tracing::info!(
+        profile = profile.0,
+        book_id = id,
+        bytes = file.len(),
+        "book file exported"
+    );
+    Ok(Ok((
+        [
+            (
+                header::CONTENT_TYPE,
+                HeaderValue::from_static(publication::format::container::MIME),
+            ),
+            (header::CONTENT_DISPOSITION, attachment(&name)),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
+        ],
+        file,
+    )
+        .into_response()))
+}
+
+fn random(e: getrandom::Error) -> AppError {
+    AppError::Internal(format!("no randomness: {e}"))
+}
+
+/// `Content-Disposition: attachment` with `name`: an ASCII fallback and the UTF-8 name
+/// (RFC 6266, RFC 8187).
+///
+/// The fallback keeps letters, digits and `-_.,()` and a space; everything else
+/// becomes `_`.
+fn attachment(name: &str) -> HeaderValue {
+    let fallback: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || " -_.,()".contains(c) {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let mut encoded = String::with_capacity(name.len() * 3);
+    for byte in name.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-_.!~".contains(&byte) {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    HeaderValue::from_str(&format!(
+        "attachment; filename=\"{fallback}\"; filename*=UTF-8''{encoded}"
+    ))
+    .expect("only visible ASCII")
 }
 
 async fn remove(state: &AppState, account: HubAccount, id: i64) -> Result<&'static str, AppError> {

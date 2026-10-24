@@ -15,6 +15,7 @@ pub mod book;
 
 use shelfgauge_core::annotations::anchor::Anchor;
 use shelfgauge_core::format::model::BlockId;
+use shelfgauge_core::publication::container;
 use wasm_bindgen::prelude::*;
 
 /// An opened publication (see [`book::Book`]).
@@ -128,6 +129,48 @@ impl Reader {
             .find(query, current.map(|c| c as usize))
             .map_err(book_error)
     }
+}
+
+/// Checks the start of a book file (its first `HEAD_LEN` bytes, see
+/// [`container::check_head`]); throws for any other file, an EPUB too.
+#[wasm_bindgen(js_name = bookFileHead)]
+pub fn book_file_head(head: &[u8]) -> Result<(), JsError> {
+    container::check_head(head).map_err(container_error)
+}
+
+/// The number of bytes at the start of a book file that [`book_file_head`] checks.
+#[wasm_bindgen(js_name = bookFileHeadLength)]
+pub fn book_file_head_length() -> usize {
+    container::HEAD_LEN
+}
+
+/// Where the central directory of a book file of `file_len` bytes is, from its last
+/// 22 bytes: JSON `{offset, size}`.
+#[wasm_bindgen(js_name = bookFileDirectory)]
+pub fn book_file_directory(tail: &[u8], file_len: f64) -> Result<String, JsError> {
+    let dir = container::end_of_directory(tail, file_len as u64).map_err(container_error)?;
+    Ok(format!(
+        r#"{{"offset":{},"size":{}}}"#,
+        dir.offset, dir.size
+    ))
+}
+
+/// The entries of a book file from its last 22 bytes and its central directory: JSON
+/// `[{name, offset, size}]` in file order (`mimetype`, `sg.json`, then the blobs at
+/// their hub paths); the data of each is the file's bytes `offset..offset + size`.
+#[wasm_bindgen(js_name = bookFileEntries)]
+pub fn book_file_entries(tail: &[u8], directory: &[u8], file_len: f64) -> Result<String, JsError> {
+    let dir = container::end_of_directory(tail, file_len as u64).map_err(container_error)?;
+    let entries = container::entries(directory, &dir).map_err(container_error)?;
+    let list: Vec<serde_json::Value> = entries
+        .iter()
+        .map(|e| serde_json::json!({ "name": e.name.to_string(), "offset": e.offset, "size": e.size }))
+        .collect();
+    json(&list)
+}
+
+fn container_error(e: container::ContainerError) -> JsError {
+    JsError::new(&e.to_string())
 }
 
 fn error(e: shelfgauge_core::publication::FormatError) -> JsError {

@@ -197,7 +197,9 @@ impl Drop for Lib {
 pub struct Reply {
     pub status: StatusCode,
     pub headers: HeaderMap,
+    /// The body as text (lossy for a binary body; see `bytes`).
     pub body: String,
+    pub bytes: Vec<u8>,
 }
 
 impl Reply {
@@ -267,7 +269,8 @@ impl Lib {
         Reply {
             status,
             headers,
-            body: String::from_utf8(bytes.to_vec()).unwrap(),
+            body: String::from_utf8_lossy(&bytes).into_owned(),
+            bytes: bytes.to_vec(),
         }
     }
 
@@ -411,6 +414,15 @@ impl Lib {
     /// Publishes book `id` ("Open on phone"); the `hub` code of the outcome.
     pub async fn publish(&self, id: i64) -> String {
         self.shelf_action(id, "publish").await
+    }
+
+    /// Downloads the book file of book `id` ("Download book file").
+    pub async fn export(&self, id: i64) -> Reply {
+        let reply = self
+            .post(&format!("/book/{id}/hub"), &[("action", "export")])
+            .await;
+        assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+        reply
     }
 
     pub async fn shelf_action(&self, id: i64, action: &str) -> String {

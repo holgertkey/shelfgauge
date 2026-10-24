@@ -983,6 +983,7 @@ fn record_plaintexts_are_stable() {
         publication: Some("00112233445566778899aabbccddeeff".parse().unwrap()),
         book_key: Some(BookKey::new([3; 32])),
         own: true,
+        kind: store::ShelfKind::Upload,
         state: ShelfState::Uploading,
         instance: "Home library".into(),
         title: "Война и мир".into(),
@@ -1036,4 +1037,117 @@ fn record_plaintexts_are_stable() {
             "position": position,
         }),
     );
+}
+
+#[test]
+fn book_file_vector_opens() {
+    // A whole book file (Phase 27) made from the sealed publication vector with fixed
+    // nonces: the reader app's import checks open these exact bytes. Regenerate with
+    // `SHELFGAUGE_WRITE_VECTORS=1` after a change of the container or `sg.json`.
+    use base64::Engine as _;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use shelfgauge::hub::AccountId;
+    use shelfgauge::hub_client::book_file::{
+        self, FILE_KEY_KIND, FileKeys, SgJson, SnapshotRecord,
+    };
+    use shelfgauge::hub_client::keys::{AccountKey, encrypt_record, shelf_id};
+    use shelfgauge::publication::format::container::{CONTAINER_VERSION, MIME};
+
+    let publication: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(vectors_dir().join("publication.json")).unwrap(),
+    )
+    .unwrap();
+    let id: PublicationId = publication["publication_id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let book_key = unhex(publication["key"].as_str().unwrap());
+    let blobs = publication["blobs"].as_object().unwrap();
+    let mut sealed: Vec<(BlobPath, Vec<u8>)> = blobs
+        .iter()
+        .map(|(path, blob)| (path.parse().unwrap(), unhex(blob.as_str().unwrap())))
+        .collect();
+    let order = |p: &BlobPath| match p {
+        BlobPath::Manifest => (0, 0),
+        BlobPath::Part(n) => (1, *n),
+        BlobPath::Image(n) => (2, *n),
+    };
+    sealed.sort_by_key(|(p, _)| order(p));
+
+    let key = AccountKey::new(std::array::from_fn(|i| 0x80 + i as u8));
+    let account = AccountId::new([0x24; 16]);
+    let content_key = vec![7u8; 16];
+    let item = serde_json::json!({
+        "publication": id.to_string(),
+        "book_key": URL_SAFE_NO_PAD.encode(&book_key),
+        "content_key": URL_SAFE_NO_PAD.encode(&content_key),
+        "kind": "file",
+        "instance": "Home library",
+        "title": "Book",
+        "authors": "A. Author",
+        "updated_at": 1_800_000_000,
+        "format_version": 1,
+    });
+    let item_id = shelf_id(&key, &content_key);
+    let item_sealed = encrypt_record(
+        &key,
+        "shelf_item",
+        &item_id,
+        &serde_json::to_vec(&item).unwrap(),
+        [0x61; 12],
+    );
+    let sg = SgJson {
+        format: CONTAINER_VERSION,
+        mime: MIME.to_owned(),
+        format_version: 1,
+        publication: id.to_string(),
+        account: account.to_string(),
+        key_id: 1,
+        book_key: URL_SAFE_NO_PAD.encode(encrypt_record(
+            &key,
+            FILE_KEY_KIND,
+            &id.to_string(),
+            &book_key,
+            [0x51; 12],
+        )),
+        snapshot: vec![SnapshotRecord {
+            kind: "shelf_item".into(),
+            id: item_id,
+            data: URL_SAFE_NO_PAD.encode(item_sealed),
+        }],
+    };
+    let file = book_file::write(&sg, &sealed);
+    check_vector(
+        "book_file.json",
+        &serde_json::json!({
+            "description": "a book file (.sgbook) of publication.json: a stored zip of mimetype, sg.json and the sealed blobs; sg.json's book_key is the book key sealed as a record of kind 'file_key' with the publication id as its id, under the account key",
+            "account_key": hex(key.as_bytes()),
+            "account": account.to_string(),
+            "key_id": 1,
+            "content_key": hex(&content_key),
+            "file": hex(&file),
+        }),
+    );
+    let keys = FileKeys {
+        account,
+        key: &key,
+        key_id: 1,
+    };
+    let opened = book_file::open(&file, keys).unwrap();
+    assert_eq!(opened.id, id);
+    assert_eq!(opened.book_key.as_bytes().as_slice(), book_key.as_slice());
+    let manifest = Manifest::decode(
+        &open(
+            &id,
+            &opened.book_key,
+            BlobPath::Manifest,
+            opened.blobs[0].1,
+            LIMIT,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest.title, "Book");
+    assert_eq!(opened.blobs.len(), blobs.len());
 }

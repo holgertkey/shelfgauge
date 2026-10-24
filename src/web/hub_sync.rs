@@ -38,7 +38,15 @@ pub(crate) async fn sync_account(
             let conn = pool.get().ok()?;
             live_books_by_key(&conn, key).ok()?.first().copied()
         };
-        let report = sync::sync_once(state.userdata(), &account, &client, &book_id, now());
+        let instance = super::routes::hub::instance_name(&state);
+        let report = sync::sync_once(
+            state.userdata(),
+            &account,
+            &client,
+            &book_id,
+            &instance,
+            now(),
+        );
         if let Ok(report) = &report
             && !report.annotated.is_empty()
             && let Ok(index) = state.pool().get()

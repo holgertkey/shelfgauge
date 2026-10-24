@@ -104,7 +104,7 @@ fn done_text(done: Option<&str>) -> Option<String> {
 }
 
 /// The name of this library on the account's devices.
-pub(super) fn instance_name(state: &AppState) -> String {
+pub(crate) fn instance_name(state: &AppState) -> String {
     let configured = state.config().hub.instance_name.clone();
     if !configured.is_empty() {
         return configured;

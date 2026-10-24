@@ -57,3 +57,29 @@
 .reader .text .hub-status {
   color: var(--muted);
 }
+
+/* "Open file" for book files (.sgbook) on the shelf. */
+.hub-open {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.75rem;
+  margin: 0 0 1rem;
+}
+
+.hub-open .muted {
+  font-size: 0.9rem;
+}
+
+.hub-file-status {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.hub-file-status:empty {
+  display: none;
+}
+
+.hub-book .hub-file-hint {
+  font-size: 0.85rem;
+}

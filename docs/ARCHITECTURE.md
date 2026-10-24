@@ -5,8 +5,9 @@
 > and `.fbz` (0.9.0), HTML (0.10.0, opt-in), search within the book (0.11.0), library
 > statistics (0.12.0), the settings page (0.13.0), remote access (0.16.0). The V2 hub
 > below is built: the core crate and the publication format (0.17.0), the hub server,
-> the instance side and the reader app (0.18.0); `.sgbook` files and OPDS follow (see
-> "Crates", "Publication format", "Hub server", "Reader app" and "Instance side").
+> the instance side and the reader app (0.18.0), `.sgbook` book files (0.19.0); OPDS
+> follows (see "Crates", "Publication format", "Hub server", "Reader app", "Instance
+> side" and "Book files").
 
 `shelfgauge` is a single-binary Rust app that indexes a directory tree of ebook files (FB2
 (also `.fbz`), EPUB, TXT and opt-in HTML, plain files and `.zip` archives with any number of books inside) into a local SQLite DB
@@ -741,13 +742,13 @@ independent features.
   content, not name), then `sg.json` (format version, publication id, account id and
   key id, the book key encrypted with the account key, optionally an encrypted snapshot
   of the book's annotations) and the blobs at the hub's paths. Passed on by any means
-  and opened only in the hub's reader app, which copies it into browser storage (OPFS /
-  IndexedDB); it opens only where the account key is, also offline — a forwarded file
+  and opened only in the hub's reader app, which copies it into browser storage
+  (IndexedDB); it opens only where the account key is, also offline — a forwarded file
   is useless to others. Opening: File Handling API on desktop Chromium, Web Share Target
   on Chrome for Android, an "Open file" button everywhere (the only way on iOS / Safari
   and Firefox). Exporting or opening a file puts the book on the shelf; files do not
-  expire and cannot be revoked; clients keep old account keys after a rotation (selected
-  by the key id).
+  expire and cannot be revoked; the key id in the file is checked (a keyring for old
+  keys comes with key rotation). Built in 0.19.0, see "Book files" below.
 - **Lifetime and quotas** are hub settings: `publication_expiry_days` (days without
   opens, `0` = never, the self-hosted default; the shelf item stays and the book can be
   republished) and per-account limits on bytes, publications and devices (unlimited by
@@ -1070,6 +1071,47 @@ while a change still costs only a `PARSER_VERSION` bump. FB2 block numbering sta
 unchanged (its golden test must not change). TXT and `.fbz` followed in 0.9.0, HTML
 (opt-in) followed in 0.10.0; no other formats (decided 2026-10-15). Images of HTML books
 (sibling files) need a container-layer extension and come later.
+
+### Book files (0.19.0)
+
+A publication in one file (decisions in `.debug/sg-v2devplan.md`, Phase 27):
+
+- **Container** (`shelfgauge_core::publication::container`): a zip of stored entries
+  in a fixed order — `mimetype` (no extra field, so the type is at byte 38), `sg.json`,
+  the sealed blobs at their hub paths — without extra fields, comments, data
+  descriptors or zip64. The reader is strict and needs only the first 69 bytes (an
+  EPUB is "not a book file" there), the 22-byte end record and the central directory;
+  entries follow each other without gaps, so their data is found by offset (the
+  browser slices the `File`, a large file never sits in WASM memory). Written with the
+  `zip` crate, with a fixed time and system so the bytes do not depend on the platform.
+- **`sg.json`** (`src/hub_client/book_file.rs`): container and blob format versions,
+  publication id, account id, key id, the book key sealed as a record of kind
+  `file_key` (id = publication id) under the account key, and a snapshot of the book's
+  `shelf_item`, `annotation` and `position` records sealed as they are pushed. No new
+  cryptography: the record layout of the hub client.
+- **Every export is a new publication** (an id is never reused for another build, as
+  the reader split may have changed). A book not on the shelf goes on it as a `file`
+  item (`hub_shelf.kind`), which points to the newest file; an uploaded book's shelf
+  item stays the upload. `file` items never expire, nothing is deleted on the hub for
+  them, and "Open on phone" on one uploads a new publication. Export needs a hub
+  account but no connection: the shelf item and records go out with the next push.
+- **On the device** (`assets/hub/bookfile.js`): checks in this order before anything
+  is decrypted — container (WASM), `sg.json` versions, account id ("belongs to another
+  account"), key id —, then opens the book key and the manifest and keeps the sealed
+  copy (IndexedDB `copies` and `files`, schema 3; `navigator.storage.persist()` is
+  asked). The snapshot is merged by the pull rule without being pushed; a record known
+  as deleted is not revived unless the book goes back on the shelf with the file
+  (opening a file is putting the book on the shelf: the device seals and pushes a
+  `file` shelf item naming the exporting library, which keeps it as its own). The
+  shelf matches copies by content key: a book with a copy opens it, a `file` item
+  without one asks for the file. One copy per book: opening another file of the same
+  book replaces it. Removing the book from the shelf deletes the copy.
+- **Entry points**: "Open file" and drag and drop on the shelf; `/open` with
+  `file_handlers` + `launchQueue` (installed app on desktop Chromium); `share_target`
+  `POST /share`, which the Service Worker answers (the file kept in the cache
+  `shelfgauge-shared`, `303` to `/open?shared=1`); without a worker the hub answers
+  `303` to `/?shared=lost` without reading the body. `.sgb` is accepted on opening;
+  files are always written as `.sgbook`.
 
 ## Crates (0.17.0)
 

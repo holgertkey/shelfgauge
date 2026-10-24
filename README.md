@@ -541,6 +541,18 @@ the browser and drop its copies, while a home screen app keeps them (your marks 
 safe in the library either way; pair again if it happens). Removing a device in the
 library, or a book from the shelf, removes it from the phone at its next connection.
 
+**Book files** (`.sgbook`): instead of putting a book on the hub, **Download book
+file** on the book card writes it into one file that you pass to your devices by any
+means (messenger, e-mail, USB, a synced folder) and open in the reader with **Open
+file** on My books, or by dropping it on the page. The hub keeps no copy; your marks
+and position still sync through it. The file is encrypted for your account: it opens
+only on your paired devices, also without a connection, and is useless to anyone
+else. An installed reader opens it by double-click on a computer with Chrome or Edge,
+and through **Share** on an Android phone; on an iPhone or iPad and in Firefox use
+Open file. Books protected by DRM are never exported. Each download is a new copy;
+files downloaded earlier keep opening. Removing the book from the shelf removes the
+copy from the phone; opening the file again puts the book back.
+
 Behind a proxy on the same machine all clients share one budget for registering,
 pairing and recovering; add a rate limit in the proxy for a hub on the internet. The
 hub logs no tokens, secrets, account or publication ids; `--log-format json` suits a

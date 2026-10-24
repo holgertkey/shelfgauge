@@ -47,10 +47,10 @@
       {%- when "protected" %}
       <p class="muted">Books protected by DRM never leave this library.</p>
       {%- when "none" %}
-      <p class="muted">Put the book on your shelf to read it on your paired phone and other devices, also when this computer is off. The hub keeps an encrypted copy that only your devices can open.</p>
+      <p class="muted">Put the book on your shelf to read it on your paired phone and other devices, also when this computer is off. The hub keeps an encrypted copy that only your devices can open. Or download it as a book file and open that on your devices: the hub then keeps no copy.</p>
       <form method="post" action="{{ shelf.action }}" class="actions">
-        <input type="hidden" name="action" value="publish">
-        <button type="submit">Open on phone</button>
+        <button type="submit" name="action" value="publish">Open on phone</button>
+        <button type="submit" name="action" value="export">Download book file</button>
       </form>
       {%- when "published" %}
       <p>On your shelf{% if let Some(other) = shelf.other %}, from {{ other }}{% endif %}: it shows on your paired devices, with your marks and position.</p>
@@ -63,13 +63,22 @@
       </details>
       {%- endif %}
       <form method="post" action="{{ shelf.action }}" class="actions">
-        <input type="hidden" name="action" value="remove">
-        <button type="submit">Remove from shelf</button>
+        <button type="submit" name="action" value="export">Download book file</button>
+        <button type="submit" name="action" value="remove">Remove from shelf</button>
       </form>
+      {%- when "file" %}
+      <p>On your shelf as a book file: open the file in the reader on your paired devices (Open file there). Your marks and position are synced through the hub; the book itself is not on it.</p>
+      <form method="post" action="{{ shelf.action }}" class="actions">
+        <button type="submit" name="action" value="export">Download book file</button>
+        <button type="submit" name="action" value="publish">Open on phone</button>
+        <button type="submit" name="action" value="remove">Remove from shelf</button>
+      </form>
+      <p class="hint">Each download is a new copy; files downloaded before keep opening on your devices.</p>
       {%- when "expired" %}
       <p>The hub deleted its copy because it was not opened for a long time. Your marks and position stay.</p>
       <form method="post" action="{{ shelf.action }}" class="actions">
         <button type="submit" name="action" value="publish">Publish again</button>
+        <button type="submit" name="action" value="export">Download book file</button>
         <button type="submit" name="action" value="remove">Remove from shelf</button>
       </form>
       {%- when "uploading" %}

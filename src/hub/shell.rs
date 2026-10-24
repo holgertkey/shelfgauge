@@ -11,8 +11,8 @@ use askama::Template;
 use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
-use axum::response::{Html, IntoResponse, Response};
-use axum::routing::get;
+use axum::response::{Html, IntoResponse, Redirect, Response};
+use axum::routing::{get, post};
 use rust_embed::Embed;
 use sha2::{Digest, Sha256};
 
@@ -20,6 +20,7 @@ use super::{HubError, HubState};
 use crate::annotations::lists::Lists;
 use crate::annotations::results::FindResults;
 use crate::publication::format::PublicationId;
+use crate::publication::format::container::MIME;
 use crate::web::assets::{content_type, hex_prefix};
 
 #[derive(Embed)]
@@ -76,6 +77,10 @@ pub(super) fn routes(state: &HubState) -> Router<HubState> {
     router
         .route(&state.path("/r/{id}"), get(reader))
         .route(&state.path("/pair"), get(page))
+        // Book files: opened by the installed app (`file_handlers`) and shared to it
+        // (`share_target`, a POST the Service Worker answers).
+        .route(&state.path("/open"), get(page))
+        .route(&state.path("/share"), post(share_fallback))
         .route(&state.path("/assets/{*path}"), get(asset))
         .route(&state.path("/sw.js"), get(service_worker))
         .route(&state.path("/manifest.webmanifest"), get(web_manifest))
@@ -166,6 +171,20 @@ async fn web_manifest(State(state): State<HubState>) -> Response {
             "sizes": "any",
             "type": "image/svg+xml",
         }],
+        // Book files (`.sgbook`; `.sgb` opens too): double-click on desktop Chromium,
+        // "Share" on Android.
+        "file_handlers": [{
+            "action": format!("{base}/open"),
+            "accept": { MIME: [".sgbook", ".sgb"] },
+        }],
+        "share_target": {
+            "action": format!("{base}/share"),
+            "method": "POST",
+            "enctype": "multipart/form-data",
+            "params": {
+                "files": [{ "name": "book", "accept": [MIME, ".sgbook", ".sgb"] }],
+            },
+        },
     });
     (
         [
@@ -180,6 +199,12 @@ async fn web_manifest(State(state): State<HubState>) -> Response {
         .into_response()
 }
 
+/// `POST /share` when no Service Worker took it (the app was never opened in this
+/// browser, or its worker is gone): the shared file is not read; the shelf says so.
+async fn share_fallback(State(state): State<HubState>) -> Redirect {
+    Redirect::to(&state.path("/?shared=lost"))
+}
+
 /// A page of the shell.
 fn shell(page: &impl Template) -> Response {
     let text = page.render().expect("the shell pages render");
@@ -190,7 +215,7 @@ fn shell(page: &impl Template) -> Response {
         .into_response()
 }
 
-/// `GET /pair` and `GET /`.
+/// `GET /pair`, `GET /open` and `GET /`.
 async fn page(State(state): State<HubState>) -> Response {
     shell(&HomePage {
         base: state.path(""),

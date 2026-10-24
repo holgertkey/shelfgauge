@@ -11,7 +11,9 @@
 //   from the network when it answers in time (the hub counts its fetches as openings,
 //   and a gone publication must show as gone), else from the cache — also when a
 //   reverse proxy answers 5xx for a hub that is down;
-// - the rest of the API: always the network.
+// - the rest of the API: always the network;
+// - a book file shared to the installed app (`share_target`, `POST /share`): kept in
+//   the cache SHARED for the app to open, answered with `303` to `/open?shared=1`.
 // A full storage never breaks reading online: what cannot be cached is still served.
 // Only ciphertext is cached; the app deletes the copies of books that left the shelf.
 "use strict";
@@ -20,6 +22,8 @@ const BASE = "{{ base }}";
 const VERSION = "{{ version }}";
 const SHELL = `shelfgauge-shell-${VERSION}`;
 const BLOBS = "shelfgauge-blobs";
+// A book file shared to the app, until the page takes it (hub.js).
+const SHARED = "shelfgauge-shared";
 // The reading view is the same page for every publication: cached once, under this.
 const READER = `${BASE}/r/00000000000000000000000000000000`;
 const HOME = `${BASE}/`;
@@ -56,7 +60,7 @@ self.addEventListener("activate", (event) => {
 });
 
 const BLOB = /^\/api\/pub\/[0-9a-f]{32}\/(manifest|p\/[0-9]+|i\/[0-9]+)$/;
-const PAGE = /^\/(pair|r\/[0-9a-f]{32})?$/;
+const PAGE = /^\/(pair|open|r\/[0-9a-f]{32})?$/;
 // How long the manifest may take before the cached copy is used.
 const MANIFEST_WAIT_MS = 4000;
 
@@ -64,6 +68,10 @@ self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);
   const ours = url.pathname.startsWith(`${BASE}/`) || url.pathname === BASE;
+  if (request.method === "POST" && url.origin === self.location.origin && url.pathname === `${BASE}/share`) {
+    event.respondWith(share(request));
+    return;
+  }
   if (request.method !== "GET" || url.origin !== self.location.origin || !ours) {
     return;
   }
@@ -137,4 +145,24 @@ async function blob(request, url, manifest) {
     return cached;
   }
   return response || fetch(request);
+}
+
+/** Keeps a shared book file for the page (the first file of the form) and sends the
+ * browser to `/open`, which opens it. */
+async function share(request) {
+  let shared = "none";
+  try {
+    const form = await request.formData();
+    const file = form.getAll("book").find((f) => f && typeof f.arrayBuffer === "function");
+    if (file) {
+      const cache = await caches.open(SHARED);
+      await cache.put(`${BASE}/shared-file`, new Response(file, {
+        headers: { "Content-Type": "application/octet-stream", "X-File-Name": encodeURIComponent(file.name || "book.sgbook") },
+      }));
+      shared = "1";
+    }
+  } catch (e) {
+    shared = "lost";
+  }
+  return Response.redirect(`${self.location.origin}${BASE}/open?shared=${shared}`, 303);
 }

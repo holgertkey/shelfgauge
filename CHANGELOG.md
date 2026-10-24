@@ -8,6 +8,17 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+### Added
+
+- **Book files** (`.sgbook`): **Download book file** on the book card (with a hub
+  account) writes the book into one encrypted file with its bookmarks, quotes and
+  reading position; the hub keeps no copy. The reader on your paired devices opens it
+  with **Open file** or drag and drop, by double-click in an installed reader on
+  desktop Chrome or Edge, and through **Share** on Android; it reads offline from the
+  start and syncs marks as usual. A file opens only on the account's devices (another
+  account's file is refused without decrypting anything); DRM-protected books are
+  never exported; a renamed `.sgb` file opens too.
+
 ## [0.18.0] - 2026-10-23
 
 ### Added

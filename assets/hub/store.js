@@ -7,7 +7,11 @@
 // - "records": the account's sync records, still encrypted: { kind, id, seq, data }
 //   (data a Uint8Array, null for a record the hub deleted); changes made here are
 //   written here first;
-// - "outbox": { kind, id } of the records changed here and not pushed yet.
+// - "outbox": { kind, id } of the records changed here and not pushed yet;
+// - "copies": books opened from book files (bookfile.js): { publication,
+//   content_key, title, authors, book_key (sealed under the account key, as in the
+//   file's sg.json), imported_at }; "files": their sealed blobs { publication,
+//   path, blob }.
 // Plaintext is never stored: records are opened when a page needs them.
 //
 // Merging follows the instance (src/hub_client/merge.rs): per record the newer
@@ -18,7 +22,7 @@
 import * as c from "./crypto.js";
 
 const DB_NAME = "shelfgauge-hub";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 // The most records in one push, and the largest record the hub takes.
 const PUSH_BATCH = 500;
 const MAX_RECORD_BYTES = 1024 * 1024;
@@ -40,6 +44,10 @@ function db() {
         }
         if (event.oldVersion < 2) {
           d.createObjectStore("outbox", { keyPath: ["kind", "id"] });
+        }
+        if (event.oldVersion < 3) {
+          d.createObjectStore("copies", { keyPath: "publication" });
+          d.createObjectStore("files", { keyPath: ["publication", "path"] });
         }
       };
       open.onsuccess = () => {
@@ -87,10 +95,10 @@ export function pairing() {
 /** Forgets the pairing and everything synced (revoked token, or another account). */
 export async function forget() {
   await dropBlobs(() => true);
-  return tx(["state", "records", "outbox"], "readwrite", (t) => {
-    t.objectStore("state").clear();
-    t.objectStore("records").clear();
-    t.objectStore("outbox").clear();
+  return tx(["state", "records", "outbox", "copies", "files"], "readwrite", (t) => {
+    for (const name of ["state", "records", "outbox", "copies", "files"]) {
+      t.objectStore(name).clear();
+    }
   });
 }
 
@@ -166,12 +174,13 @@ export async function pair(code) {
   }
   const issued = await response.json();
   const previous = await pairing();
-  await tx(["state", "records", "outbox"], "readwrite", (t) => {
+  await tx(["state", "records", "outbox", "copies", "files"], "readwrite", (t) => {
     const state = t.objectStore("state");
     if (!previous || previous.account !== issued.account) {
       state.clear();
-      t.objectStore("records").clear();
-      t.objectStore("outbox").clear();
+      for (const name of ["records", "outbox", "copies", "files"]) {
+        t.objectStore(name).clear();
+      }
     }
     state.put({ account: issued.account, device: issued.device, token: issued.token, aes, mac }, "pairing");
   });
@@ -488,4 +497,98 @@ export async function blob(p, id, path) {
     throw new Error(`${path}: ${response.status}`);
   }
   return new Uint8Array(await response.arrayBuffer());
+}
+
+/**
+ * Merges the sealed records of a book file's snapshot (`{ kind, id, data }`) into the
+ * records store, by the pull rule; they are the library's own records, so they are
+ * not pushed. A record this device knows as deleted (its book left the shelf) is not
+ * brought back, unless `revive` (the book goes back on the shelf with the file): then
+ * it replaces the deletion and is pushed.
+ */
+export async function mergeSnapshot(p, incoming, { revive }) {
+  const keys = incoming.map((r) => [r.kind, r.id]);
+  const locals = await tx(["records"], "readonly", (t) =>
+    Promise.all(keys.map((k) => done(t.objectStore("records").get(k)))));
+  const take = [];
+  for (let i = 0; i < incoming.length; i++) {
+    const remote = incoming[i];
+    const local = locals[i];
+    if (local && !local.data) {
+      if (revive && await stamp(p.aes, remote.kind, remote.id, remote.data)) {
+        take.push({ remote, local: null, push: true });
+      }
+      continue;
+    }
+    if (await remoteWins(p.aes, remote, local)) {
+      take.push({ remote, local: local ? local.data : undefined, push: false });
+    }
+  }
+  await tx(["records", "outbox"], "readwrite", async (t) => {
+    const records = t.objectStore("records");
+    const now = await Promise.all(take.map(({ remote }) => done(records.get([remote.kind, remote.id]))));
+    take.forEach(({ remote, local, push }, i) => {
+      const current = now[i] ? now[i].data : undefined;
+      if (!sameBytes(current, local)) {
+        return; // Changed meanwhile.
+      }
+      records.put({ kind: remote.kind, id: remote.id, seq: null, data: remote.data });
+      if (push) {
+        t.objectStore("outbox").put({ kind: remote.kind, id: remote.id });
+      }
+    });
+  });
+}
+
+/** Keeps a book file's copy: its row and its sealed blobs (`[{ path, blob }]`). */
+export function saveCopy(copy, blobs) {
+  return tx(["copies", "files"], "readwrite", (t) => {
+    t.objectStore("copies").put(copy);
+    const files = t.objectStore("files");
+    for (const { path, blob } of blobs) {
+      files.put({ publication: copy.publication, path, blob });
+    }
+  });
+}
+
+/** The books opened from files on this device. */
+export function copies() {
+  return tx(["copies"], "readonly", (t) => done(t.objectStore("copies").getAll()));
+}
+
+/** The copy of publication `id`, or null. */
+export function copy(id) {
+  return tx(["copies"], "readonly", (t) => done(t.objectStore("copies").get(id))).then((c) => c || null);
+}
+
+/** The sealed blob at `path` of copy `id`; null if it is not here. */
+export async function copyBlob(id, path) {
+  const row = await tx(["files"], "readonly", (t) => done(t.objectStore("files").get([id, path])));
+  return row ? new Uint8Array(await row.blob.arrayBuffer()) : null;
+}
+
+/** Deletes the copies (and their blobs) that `drop(copy)` says. */
+export async function dropCopies(drop) {
+  const gone = (await copies()).filter(drop).map((c) => c.publication);
+  if (!gone.length) {
+    return;
+  }
+  await tx(["copies", "files"], "readwrite", (t) => {
+    const files = t.objectStore("files");
+    for (const id of gone) {
+      t.objectStore("copies").delete(id);
+      files.delete(IDBKeyRange.bound([id, ""], [id, "\uffff"]));
+    }
+  });
+}
+
+/** Asks the browser to keep this site's data under storage pressure (best effort). */
+export async function navigatorPersist() {
+  try {
+    if (navigator.storage && navigator.storage.persist && !(await navigator.storage.persisted())) {
+      await navigator.storage.persist();
+    }
+  } catch (e) {
+    // Not offered here.
+  }
 }

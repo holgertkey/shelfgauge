@@ -109,13 +109,14 @@ fn drop_outbox(
 }
 
 /// Applies one pulled record of `profile`'s account; `book_id` finds the library's
-/// book with a content key.
+/// book with a content key, `instance` is this library's name on the shelf.
 pub fn apply(
     conn: &Connection,
     profile: ProfileId,
     key: &AccountKey,
     record: &InRecord,
     book_id: &dyn Fn(&[u8]) -> Option<i64>,
+    instance: &str,
 ) -> Result<Applied, StorageError> {
     let Some(data) = &record.data else {
         return match record.kind.as_str() {
@@ -128,7 +129,7 @@ pub fn apply(
     };
     match record.kind.as_str() {
         "shelf_item" => match serde_json::from_slice(&plain) {
-            Ok(item) => shelf_item(conn, profile, key, record, &plain, item),
+            Ok(item) => shelf_item(conn, profile, key, record, &plain, item, instance),
             Err(_) => Ok(Applied::Kept),
         },
         "annotation" => match serde_json::from_slice(&plain) {
@@ -150,6 +151,7 @@ fn shelf_item(
     record: &InRecord,
     plain: &[u8],
     item: ShelfItemIn,
+    instance: &str,
 ) -> Result<Applied, StorageError> {
     let Some(content) = b64(&item.content_key) else {
         return Ok(Applied::Kept);
@@ -180,9 +182,12 @@ fn shelf_item(
     if !newer((item.updated_at, plain), local_state) {
         return Ok(Applied::Kept);
     }
+    // A book file this library exported stays its own when a device puts the book
+    // back on the shelf by opening the file (its shelf item names this library).
     let own = local
         .as_ref()
-        .is_some_and(|l| l.own && l.publication.is_some() && l.publication == publication);
+        .is_some_and(|l| l.own && l.publication.is_some() && l.publication == publication)
+        || (item.kind == "file" && item.instance == instance);
     let kind = if item.kind == "file" {
         "file"
     } else {
@@ -450,7 +455,7 @@ mod tests {
         let (userdata, key) = setup();
         let conn = userdata.lock();
         let none = |_: &[u8]| None;
-        let apply = |r: &InRecord| apply(&conn, ProfileId::OWNER, &key, r, &none).unwrap();
+        let apply = |r: &InRecord| apply(&conn, ProfileId::OWNER, &key, r, &none, "Home").unwrap();
 
         // Sealed with another key, or for another record id.
         let plain = annotation_json("a1", "n");
@@ -534,7 +539,7 @@ mod tests {
             Some(seal_record(&key, "annotation", "a1", &plain).unwrap()),
         );
         assert_eq!(
-            apply(&conn, ProfileId::OWNER, &key, &r, &|_| None).unwrap(),
+            apply(&conn, ProfileId::OWNER, &key, &r, &|_| None, "Home").unwrap(),
             Applied::Kept
         );
         let owner: i64 = conn

@@ -42,7 +42,7 @@ export class Reader {
         let deferred3_1;
         try {
             const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-            const ptr0 = passStringToWasm0(block, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const ptr0 = passStringToWasm0(block, wasm.__wbindgen_export, wasm.__wbindgen_export3);
             const len0 = WASM_VECTOR_LEN;
             wasm.reader_bookmark(retptr, this.__wbg_ptr, ptr0, len0);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
@@ -60,7 +60,7 @@ export class Reader {
             return getStringFromWasm0(ptr2, len2);
         } finally {
             wasm.__wbindgen_add_to_stack_pointer(16);
-            wasm.__wbindgen_export3(deferred3_0, deferred3_1, 1);
+            wasm.__wbindgen_export2(deferred3_0, deferred3_1, 1);
         }
     }
     /**
@@ -82,7 +82,7 @@ export class Reader {
         let deferred3_1;
         try {
             const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-            const ptr0 = passStringToWasm0(query, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const ptr0 = passStringToWasm0(query, wasm.__wbindgen_export, wasm.__wbindgen_export3);
             const len0 = WASM_VECTOR_LEN;
             wasm.reader_find(retptr, this.__wbg_ptr, ptr0, len0, isLikeNone(current) ? Number.MAX_SAFE_INTEGER : (current) >>> 0);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
@@ -100,7 +100,7 @@ export class Reader {
             return getStringFromWasm0(ptr2, len2);
         } finally {
             wasm.__wbindgen_add_to_stack_pointer(16);
-            wasm.__wbindgen_export3(deferred3_0, deferred3_1, 1);
+            wasm.__wbindgen_export2(deferred3_0, deferred3_1, 1);
         }
     }
     /**
@@ -113,7 +113,7 @@ export class Reader {
         let deferred3_1;
         try {
             const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-            const ptr0 = passStringToWasm0(annotations, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const ptr0 = passStringToWasm0(annotations, wasm.__wbindgen_export, wasm.__wbindgen_export3);
             const len0 = WASM_VECTOR_LEN;
             wasm.reader_lists(retptr, this.__wbg_ptr, ptr0, len0);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
@@ -131,7 +131,7 @@ export class Reader {
             return getStringFromWasm0(ptr2, len2);
         } finally {
             wasm.__wbindgen_add_to_stack_pointer(16);
-            wasm.__wbindgen_export3(deferred3_0, deferred3_1, 1);
+            wasm.__wbindgen_export2(deferred3_0, deferred3_1, 1);
         }
     }
     /**
@@ -187,7 +187,7 @@ export class Reader {
      * @returns {number | undefined}
      */
     partOf(block) {
-        const ptr0 = passStringToWasm0(block, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const ptr0 = passStringToWasm0(block, wasm.__wbindgen_export, wasm.__wbindgen_export3);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.reader_partOf(this.__wbg_ptr, ptr0, len0);
         return ret === Number.MAX_SAFE_INTEGER ? undefined : ret;
@@ -202,7 +202,7 @@ export class Reader {
         let deferred3_1;
         try {
             const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-            const ptr0 = passStringToWasm0(block, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const ptr0 = passStringToWasm0(block, wasm.__wbindgen_export, wasm.__wbindgen_export3);
             const len0 = WASM_VECTOR_LEN;
             wasm.reader_position(retptr, this.__wbg_ptr, ptr0, len0);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
@@ -220,7 +220,7 @@ export class Reader {
             return getStringFromWasm0(ptr2, len2);
         } finally {
             wasm.__wbindgen_add_to_stack_pointer(16);
-            wasm.__wbindgen_export3(deferred3_0, deferred3_1, 1);
+            wasm.__wbindgen_export2(deferred3_0, deferred3_1, 1);
         }
     }
     /**
@@ -234,7 +234,7 @@ export class Reader {
         let deferred3_1;
         try {
             const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-            const ptr0 = passStringToWasm0(anchor, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const ptr0 = passStringToWasm0(anchor, wasm.__wbindgen_export, wasm.__wbindgen_export3);
             const len0 = WASM_VECTOR_LEN;
             wasm.reader_quote(retptr, this.__wbg_ptr, ptr0, len0);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
@@ -252,7 +252,7 @@ export class Reader {
             return getStringFromWasm0(ptr2, len2);
         } finally {
             wasm.__wbindgen_add_to_stack_pointer(16);
-            wasm.__wbindgen_export3(deferred3_0, deferred3_1, 1);
+            wasm.__wbindgen_export2(deferred3_0, deferred3_1, 1);
         }
     }
     /**
@@ -281,7 +281,7 @@ export class Reader {
             return getStringFromWasm0(ptr1, len1);
         } finally {
             wasm.__wbindgen_add_to_stack_pointer(16);
-            wasm.__wbindgen_export3(deferred2_0, deferred2_1, 1);
+            wasm.__wbindgen_export2(deferred2_0, deferred2_1, 1);
         }
     }
     /**
@@ -302,7 +302,7 @@ export class Reader {
             return getStringFromWasm0(r0, r1);
         } finally {
             wasm.__wbindgen_add_to_stack_pointer(16);
-            wasm.__wbindgen_export3(deferred1_0, deferred1_1, 1);
+            wasm.__wbindgen_export2(deferred1_0, deferred1_1, 1);
         }
     }
     /**
@@ -314,7 +314,7 @@ export class Reader {
     resume(block, suffix) {
         try {
             const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-            const ptr0 = passStringToWasm0(suffix, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const ptr0 = passStringToWasm0(suffix, wasm.__wbindgen_export, wasm.__wbindgen_export3);
             const len0 = WASM_VECTOR_LEN;
             wasm.reader_resume(retptr, this.__wbg_ptr, block, ptr0, len0);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
@@ -322,7 +322,7 @@ export class Reader {
             let v2;
             if (r0 !== 0) {
                 v2 = getStringFromWasm0(r0, r1);
-                wasm.__wbindgen_export3(r0, r1 * 1, 1);
+                wasm.__wbindgen_export2(r0, r1 * 1, 1);
             }
             return v2;
         } finally {
@@ -346,11 +346,113 @@ export class Reader {
             return getStringFromWasm0(r0, r1);
         } finally {
             wasm.__wbindgen_add_to_stack_pointer(16);
-            wasm.__wbindgen_export3(deferred1_0, deferred1_1, 1);
+            wasm.__wbindgen_export2(deferred1_0, deferred1_1, 1);
         }
     }
 }
 if (Symbol.dispose) Reader.prototype[Symbol.dispose] = Reader.prototype.free;
+
+/**
+ * Where the central directory of a book file of `file_len` bytes is, from its last
+ * 22 bytes: JSON `{offset, size}`.
+ * @param {Uint8Array} tail
+ * @param {number} file_len
+ * @returns {string}
+ */
+export function bookFileDirectory(tail, file_len) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(tail, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.bookFileDirectory(retptr, ptr0, len0, file_len);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr2 = r0;
+        var len2 = r1;
+        if (r3) {
+            ptr2 = 0; len2 = 0;
+            throw takeObject(r2);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export2(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * The entries of a book file from its last 22 bytes and its central directory: JSON
+ * `[{name, offset, size}]` in file order (`mimetype`, `sg.json`, then the blobs at
+ * their hub paths); the data of each is the file's bytes `offset..offset + size`.
+ * @param {Uint8Array} tail
+ * @param {Uint8Array} directory
+ * @param {number} file_len
+ * @returns {string}
+ */
+export function bookFileEntries(tail, directory, file_len) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(tail, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(directory, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.bookFileEntries(retptr, ptr0, len0, ptr1, len1, file_len);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr3 = r0;
+        var len3 = r1;
+        if (r3) {
+            ptr3 = 0; len3 = 0;
+            throw takeObject(r2);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export2(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * Checks the start of a book file (its first `HEAD_LEN` bytes, see
+ * [`container::check_head`]); throws for any other file, an EPUB too.
+ * @param {Uint8Array} head
+ */
+export function bookFileHead(head) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(head, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.bookFileHead(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        if (r1) {
+            throw takeObject(r0);
+        }
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * The number of bytes at the start of a book file that [`book_file_head`] checks.
+ * @returns {number}
+ */
+export function bookFileHeadLength() {
+    const ret = wasm.bookFileHeadLength();
+    return ret >>> 0;
+}
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
