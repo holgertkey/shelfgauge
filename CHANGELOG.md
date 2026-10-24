@@ -8,6 +8,8 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-24
+
 ### Added
 
 - **Book files** (`.sgbook`): **Download book file** on the book card (with a hub
@@ -18,6 +20,14 @@ Build numbers (`+NNN`) do not get their own sections.
   start and syncs marks as usual. A file opens only on the account's devices (another
   account's file is refused without decrypting anything); DRM-protected books are
   never exported; a renamed `.sgb` file opens too.
+
+### Changed
+
+- The hub client's `sync::sync_once`, `sync::pull` and `merge::apply` take the
+  library's name: a book a device puts back on the shelf by opening its file stays
+  this library's.
+- The hub reader's browser database is upgraded to version 3 (book file copies);
+  marks and pairing are kept.
 
 ## [0.18.0] - 2026-10-23
 

@@ -797,7 +797,7 @@ and sealing in the app (`src/publication/`).
   (encryption from a fixed key, nonce and padded plaintext; a raw deflate stream; a
   whole sealed publication; regenerate with `SHELFGAUGE_WRITE_VECTORS=1`).
 
-### Hub server (0.18.0, in progress)
+### Hub server (0.18.0)
 
 `src/hub/` in the app crate, `shelfgauge hub` in the same binary (no feature flag).
 Built in Phase 24 (0.18.0); the reader app (Phase 26) and the instance side (Phase 25) are below.
