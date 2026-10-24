@@ -10,8 +10,8 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ### Added
 
-- **This device** in the reader on your phone: the button at the right of its top bar
-  shows which library the device is paired with, the device's name, when it last
+- **This device** in the reader on your phone: the button at the right of the top bar
+  on My books shows which library the device is paired with, the device's name, when it last
   synced and how many changes wait to be sent (with **Update now**), how many books
   it keeps offline and how much space they take (with **Remove downloaded books**;
   books opened from book files stay), your account's usage on the hub, and the hub's

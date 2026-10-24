@@ -878,7 +878,8 @@ Phase 26: `assets/hub/` (`hub.js` pages, `store.js` IndexedDB and API calls,
 - **Unpaired** browsers make no API call: the shelf and `/r/<id>` say "This device is
   not paired" with instructions, never content.
 - **This device** (`/device`, 0.19.1; the top bar's `device-link`, cached by the
-  worker like the other pages): the library names from the shelf items' `instance`,
+  worker like the other pages; the reading view has neither it nor the home link —
+  its sidebar's My books leads back): the library names from the shelf items' `instance`,
   the device name (`GET /api/devices`, the `current` entry, opened with the account
   key), last sync (`state["synced_at"]`, written when a pull reaches the hub's newest
   record) and the outbox count, local counts (`store.offline()`, book file copies)

@@ -541,7 +541,7 @@ the browser and drop its copies, while a home screen app keeps them (your marks 
 safe in the library either way; pair again if it happens). Removing a device in the
 library, or a book from the shelf, removes it from the phone at its next connection.
 
-**This device** (the button at the right of the reader's top bar) shows which library
+**This device** (the button at the right of the top bar on My books) shows which library
 the phone is paired with, when it last synced and what waits to be sent (**Update
 now**), what it keeps offline (**Remove downloaded books** frees the space; they
 download again when opened), your account's usage on the hub and the hub's version.

@@ -26,9 +26,11 @@
 <header class="topbar">
   {%- block toggle %}{% endblock %}
   <a class="brand" href="{{ base }}/">Shelfgauge</a>
+  {%- block home %}
   <a class="icon-button home-link" href="{{ base }}/" title="My books" aria-label="My books">
     <svg class="icon" aria-hidden="true"><use href="#i-home"></use></svg>
   </a>
+  {%- endblock %}
   {%- block search %}{% endblock %}
   {%- block topbar %}{% endblock %}
   <select class="theme-select" aria-label="Theme" title="Theme (t)">
@@ -39,9 +41,11 @@
     <option value="navy">Navy</option>
     <option value="black">Black</option>
   </select>
+  {%- block device %}
   <a class="icon-button device-link" href="{{ base }}/device" title="This device" aria-label="This device">
     <svg class="icon" aria-hidden="true"><use href="#i-device"></use></svg>
   </a>
+  {%- endblock %}
 </header>
 {% block body %}{% endblock %}
 </body>

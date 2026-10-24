@@ -1165,6 +1165,21 @@ async fn the_service_worker_and_manifest_make_the_reader_installable() {
             )),
             "{page}"
         );
+        // The shelf's top bar leads to This device; the reading view has neither that
+        // nor the home link (its sidebar has My books).
+        assert!(page.contains(r#"class="icon-button home-link""#), "{page}");
+        assert!(
+            page.contains(r#"class="icon-button device-link""#),
+            "{page}"
+        );
+        let read = hub
+            .get(&format!("{prefix}/r/{}", "0".repeat(32)), None)
+            .await;
+        assert_eq!(read.status, StatusCode::OK);
+        let read = String::from_utf8(read.body).unwrap();
+        assert!(read.contains(r#"class="toc-book""#), "{read}");
+        assert!(!read.contains("home-link"), "{read}");
+        assert!(!read.contains("device-link"), "{read}");
     }
 }
 
