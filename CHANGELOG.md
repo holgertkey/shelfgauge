@@ -8,6 +8,8 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-25
+
 ### Added
 
 - **This device** in the reader on your phone: the button at the right of the top bar
@@ -46,6 +48,8 @@ Build numbers (`+NNN`) do not get their own sections.
   `new_accounts_per_address_per_day = 0`). Invite-only hubs are not affected.
 - IPv6 clients now share the per-address limits per /64 network, also when they
   connect directly.
+- The hub's database is upgraded to schema version 3 (own quotas, the stored total);
+  a hub of 0.18 or 0.19 migrates on start and keeps its accounts and books.
 
 ### Fixed
 
