@@ -21,6 +21,12 @@
   color: var(--error);
 }
 
+/* The terms of use keep the line breaks of their text file. */
+.hub-terms p {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
 .hub-books {
   list-style: none;
   margin: 0;

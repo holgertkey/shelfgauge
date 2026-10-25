@@ -565,8 +565,8 @@ fn publication_keys_and_ids_are_never_logged() {
 
 /// The hub never logs device tokens, pairing secrets, invite codes, recovery secrets
 /// or their hashes, public account ids, publication ids or bodies (blobs, records,
-/// device names), also not when requests fail; accounts appear as `account=N` and
-/// routes as templates.
+/// device names) or client addresses (behind a trusted proxy), also not when requests
+/// fail or are rate limited; accounts appear as `account=N` and routes as templates.
 #[tokio::test]
 async fn hub_secrets_and_publication_ids_are_never_logged() {
     use base64::Engine as _;
@@ -578,7 +578,11 @@ async fn hub_secrets_and_publication_ids_are_never_logged() {
     let dir = tempfile::tempdir().unwrap();
     for format in [LogFormat::Text, LogFormat::Json] {
         let data = tempfile::tempdir_in(dir.path()).unwrap();
-        let hub = Hub::with_config(data.path(), HubConfig::default()).unwrap();
+        let mut config = HubConfig::default();
+        config.server.trusted_proxies = vec!["127.0.0.1".into()];
+        // Account, pair, recover and a reused pairing secret; the next is limited.
+        config.limits.public_requests_per_hour = 4;
+        let hub = Hub::with_config(data.path(), config).unwrap();
         let (invite, _) = hub.invite(shelfgauge::annotations::now()).unwrap();
         let state = HubState::new(hub);
         let app = common::local(shelfgauge::hub::router(state.clone()));
@@ -591,6 +595,7 @@ async fn hub_secrets_and_publication_ids_are_never_logged() {
                     .method(method)
                     .uri(uri)
                     .header(header::HOST, "localhost:8743")
+                    .header("x-forwarded-for", "198.51.100.77")
                     .header(header::CONTENT_TYPE, "application/json");
                 if let Some(token) = token {
                     request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
@@ -700,6 +705,14 @@ async fn hub_secrets_and_publication_ids_are_never_logged() {
             json(serde_json::json!({ "secret": pairing })),
         )
         .await;
+        let (status, _) = send(
+            Method::POST,
+            "/api/pair".into(),
+            None,
+            json(serde_json::json!({ "secret": pairing })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
         send(
             Method::GET,
             format!("/api/pub/{}/p/9", "7a".repeat(16)),
@@ -742,6 +755,7 @@ async fn hub_secrets_and_publication_ids_are_never_logged() {
             record.as_str(),
             "Record-Id-Okapi",
             blob_text.as_str(),
+            "198.51.100",
         ] {
             assert!(!log.contains(secret), "{secret:?} in {log}");
         }

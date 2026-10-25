@@ -60,11 +60,13 @@ struct Device {
 }
 
 impl TestHub {
-    /// A hub with open registration and `edit` applied to the config.
+    /// A hub with open registration (no per-address account limit) and `edit`
+    /// applied to the config.
     fn new(edit: impl FnOnce(&mut HubConfig)) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let mut config = HubConfig::default();
         config.accounts.registration = Registration::Open;
+        config.accounts.new_accounts_per_address_per_day = 0;
         edit(&mut config);
         let hub = Hub::with_config(dir.path(), config).unwrap();
         let clock = Arc::new(AtomicI64::new(T0));
@@ -600,9 +602,9 @@ async fn unopened_publications_expire() {
         Some(&device.token),
     )
     .await;
-    assert_eq!(hub.state.hub().expire(hub.now()).unwrap(), 0);
+    assert_eq!(hub.state.hub().expire(hub.now()).unwrap().0, 0);
     hub.advance(86_400);
-    assert_eq!(hub.state.hub().expire(hub.now()).unwrap(), 1);
+    assert_eq!(hub.state.hub().expire(hub.now()).unwrap().0, 1);
     let list = hub.get("/api/pub", Some(&device.token)).await.json();
     let ids: Vec<&str> = list["publications"]
         .as_array()
@@ -634,7 +636,7 @@ async fn expiry_is_off_by_default() {
     )
     .await;
     hub.advance(10_000 * 86_400);
-    assert_eq!(hub.state.hub().expire(hub.now()).unwrap(), 0);
+    assert_eq!(hub.state.hub().expire(hub.now()).unwrap().0, 0);
 }
 
 #[tokio::test]
@@ -932,6 +934,358 @@ async fn requests_are_rate_limited() {
     assert_eq!(third.error(), "rate_limited");
     // The info route is not limited.
     assert_eq!(hub.get("/api/info", None).await.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn open_registration_limits_new_accounts_per_address() {
+    let hub = TestHub::new(|c| {
+        c.server.trusted_proxies = vec!["127.0.0.1".into()];
+        c.accounts.new_accounts_per_address_per_day = 2;
+    });
+    let create = |client: &'static str, recovery: &'static str| {
+        let body =
+            json!({ "recovery_hash": URL_SAFE_NO_PAD.encode(Secret::from_text(recovery).hash()) });
+        hub.call_with(
+            Method::POST,
+            "/api/account",
+            None,
+            Body::from(body.to_string()),
+            move |r| {
+                r.header(header::CONTENT_TYPE, "application/json")
+                    .header("x-forwarded-for", client)
+            },
+        )
+    };
+    // A refused request (a bad body) does not count.
+    let bad = hub
+        .call_with(Method::POST, "/api/account", None, Body::from("{}"), |r| {
+            r.header(header::CONTENT_TYPE, "application/json")
+                .header("x-forwarded-for", "192.0.2.1")
+        })
+        .await;
+    assert_eq!(bad.status, StatusCode::BAD_REQUEST);
+    assert_eq!(create("192.0.2.1", "a").await.status, StatusCode::CREATED);
+    assert_eq!(create("192.0.2.1", "b").await.status, StatusCode::CREATED);
+    let third = create("192.0.2.1", "c").await;
+    assert_eq!(third.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(third.error(), "account_limit");
+    assert_eq!(third.headers[header::RETRY_AFTER], "86400");
+    assert_eq!(create("192.0.2.2", "d").await.status, StatusCode::CREATED);
+    // IPv6: one /64 is one client.
+    assert_eq!(create("2001:db8::1", "e").await.status, StatusCode::CREATED);
+    assert_eq!(create("2001:db8::2", "f").await.status, StatusCode::CREATED);
+    assert_eq!(
+        create("2001:db8::3", "g").await.status,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    assert_eq!(
+        create("2001:db8:0:1::1", "h").await.status,
+        StatusCode::CREATED
+    );
+}
+
+#[tokio::test]
+async fn invite_codes_are_not_counted_per_address() {
+    let hub = TestHub::new(|c| {
+        c.accounts.registration = Registration::Invite;
+        c.accounts.new_accounts_per_address_per_day = 1;
+    });
+    for n in 0..3 {
+        let (code, _) = hub.state.hub().invite(hub.now()).unwrap();
+        let recovery = Secret::from_text(&format!("r{n}"));
+        let answer = hub.try_register(Some(code.as_str()), &recovery).await;
+        assert_eq!(answer.status, StatusCode::CREATED);
+    }
+}
+
+#[tokio::test]
+async fn a_full_hub_refuses_new_data_and_says_so() {
+    let hub = TestHub::new(|c| c.limits.max_total_bytes = 1000);
+    assert_eq!(hub.get("/api/info", None).await.json()["accepting"], true);
+    let device = hub.register().await;
+    let put = |path: &'static str, len: usize| {
+        let token = device.token.clone();
+        let hub = &hub;
+        async move {
+            hub.put(
+                &format!("/api/pub/{}/{path}", pub_id(1)),
+                &token,
+                blob(len, 0),
+            )
+            .await
+        }
+    };
+    assert_eq!(put("manifest", 900).await.status, StatusCode::CREATED);
+    assert_eq!(put("p/0", 200).await.error(), "hub_full");
+    let full = hub
+        .post(
+            "/api/sync",
+            Some(&device.token),
+            json!({ "records": [{ "kind": "position", "id": "p", "data": b64(&[0; 200]) }] }),
+        )
+        .await;
+    assert_eq!(full.status, StatusCode::INSUFFICIENT_STORAGE);
+    assert_eq!(full.error(), "hub_full");
+    assert_eq!(hub.blob_files(), 1, "a refused blob is not written");
+    // A new state for the info route (its answer is cached for a minute); the smallest
+    // test blob takes 30 bytes with its header, so the hub is then exactly full.
+    let again = TestHub::new(|c| c.limits.max_total_bytes = 30);
+    let device = again.register().await;
+    again
+        .put(
+            &format!("/api/pub/{}/manifest", pub_id(1)),
+            &device.token,
+            blob(10, 0),
+        )
+        .await;
+    assert_eq!(
+        again.get("/api/info", None).await.json()["accepting"],
+        false
+    );
+}
+
+#[tokio::test]
+async fn an_account_quota_replaces_the_hub_value() {
+    let hub = TestHub::new(|c| c.quotas.max_publications = 1);
+    let device = hub.register().await;
+    let first = hub.state.hub().accounts().unwrap()[0].id;
+    let own = shelfgauge::hub::AccountQuotas {
+        max_publications: Some(2),
+        max_bytes: Some(5000),
+        ..Default::default()
+    };
+    assert!(hub.state.hub().set_account_quotas(first, &own).unwrap());
+    for n in [1, 2] {
+        let answer = hub
+            .put(
+                &format!("/api/pub/{}/manifest", pub_id(n)),
+                &device.token,
+                blob(10, 0),
+            )
+            .await;
+        assert_eq!(answer.status, StatusCode::CREATED);
+    }
+    let third = hub
+        .put(
+            &format!("/api/pub/{}/manifest", pub_id(3)),
+            &device.token,
+            blob(10, 0),
+        )
+        .await;
+    assert_eq!(third.error(), "quota_exceeded");
+    let account = hub.get("/api/account", Some(&device.token)).await.json();
+    assert_eq!(account["quotas"]["max_publications"], 2);
+    assert_eq!(account["quotas"]["max_bytes"], 5000);
+    let info = hub.get("/api/info", None).await.json();
+    assert_eq!(info["quotas"]["max_publications"], 1, "the hub's defaults");
+}
+
+#[tokio::test]
+async fn deleted_and_idle_accounts_lose_everything() {
+    let hub = TestHub::new(|c| c.accounts.account_expiry_days = 30);
+    let idle = hub.register().await;
+    let kept = hub.register().await;
+    let gone = hub.register().await;
+    hub.put(
+        &format!("/api/pub/{}/manifest", pub_id(1)),
+        &idle.token,
+        blob(10, 0),
+    )
+    .await;
+    hub.put(
+        &format!("/api/pub/{}/manifest", pub_id(2)),
+        &gone.token,
+        blob(10, 0),
+    )
+    .await;
+    assert_eq!(hub.blob_files(), 2);
+    let ids: Vec<i64> = hub
+        .state
+        .hub()
+        .accounts()
+        .unwrap()
+        .iter()
+        .map(|a| a.id)
+        .collect();
+    assert!(hub.state.hub().delete_account(ids[2]).unwrap());
+    assert!(!hub.state.hub().delete_account(ids[2]).unwrap());
+    assert_eq!(
+        hub.get("/api/pub", Some(&gone.token)).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(hub.blob_files(), 1);
+    hub.advance(20 * 86_400);
+    assert_eq!(
+        hub.get("/api/account", Some(&kept.token)).await.status,
+        StatusCode::OK
+    );
+    hub.advance(10 * 86_400);
+    assert_eq!(hub.state.hub().expire(hub.now()).unwrap(), (0, 1));
+    assert_eq!(
+        hub.get("/api/pub", Some(&idle.token)).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        hub.get("/api/pub", Some(&kept.token)).await.status,
+        StatusCode::OK
+    );
+    assert_eq!(hub.blob_files(), 0);
+}
+
+#[tokio::test]
+async fn a_trusted_proxy_gives_each_client_its_own_budget() {
+    let hub = TestHub::new(|c| {
+        c.server.trusted_proxies = vec!["127.0.0.1".into()];
+        c.limits.public_requests_per_hour = 1;
+    });
+    let pair = |forwarded: Option<&'static str>| {
+        hub.call_with(
+            Method::POST,
+            "/api/pair",
+            None,
+            Body::from(json!({ "secret": "x" }).to_string()),
+            move |r| {
+                let r = r.header(header::CONTENT_TYPE, "application/json");
+                match forwarded {
+                    Some(value) => r.header("x-forwarded-for", value),
+                    None => r,
+                }
+            },
+        )
+    };
+    let status = |answer: Answer| answer.status;
+    assert_eq!(status(pair(Some("192.0.2.1")).await), StatusCode::FORBIDDEN);
+    assert_eq!(
+        status(pair(Some("192.0.2.1")).await),
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    // A value the client sent itself is left of the one the proxy appended.
+    assert_eq!(
+        status(pair(Some("192.0.2.2, 192.0.2.1")).await),
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    assert_eq!(status(pair(Some("192.0.2.2")).await), StatusCode::FORBIDDEN);
+    // Without a usable value: the shared budget, not the proxy's address.
+    assert_eq!(status(pair(None).await), StatusCode::FORBIDDEN);
+    assert_eq!(
+        status(pair(Some("garbage")).await),
+        StatusCode::TOO_MANY_REQUESTS
+    );
+}
+
+#[tokio::test]
+async fn forwarded_values_of_an_untrusted_peer_are_ignored() {
+    let hub = TestHub::new(|c| c.limits.public_requests_per_hour = 1);
+    for (value, expected) in [
+        ("192.0.2.1", StatusCode::FORBIDDEN),
+        ("192.0.2.2", StatusCode::TOO_MANY_REQUESTS),
+    ] {
+        let answer = hub
+            .call_with(
+                Method::POST,
+                "/api/pair",
+                None,
+                Body::from(json!({ "secret": "x" }).to_string()),
+                |r| {
+                    r.header(header::CONTENT_TYPE, "application/json")
+                        .header("x-forwarded-for", value)
+                },
+            )
+            .await;
+        assert_eq!(answer.status, expected, "{value}");
+    }
+}
+
+/// One GET against a hub opened in `dir` with `config`.
+async fn get_from(dir: &std::path::Path, config: HubConfig, uri: &str) -> Answer {
+    let hub = Hub::with_config(dir, config).unwrap();
+    let app = shelfgauge::hub::router(HubState::new(hub))
+        .layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 50000))));
+    let request = Request::builder()
+        .uri(uri)
+        .header(header::HOST, HOST)
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    Answer {
+        status: response.status(),
+        headers: response.headers().clone(),
+        body: response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec(),
+    }
+}
+
+#[tokio::test]
+async fn the_terms_page_shows_the_operators_text_escaped() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("terms.txt"),
+        "Books stay encrypted.\r\nWe cannot read them.\n\n<script>alert(1)</script> & more\n",
+    )
+    .unwrap();
+    let mut config = HubConfig::default();
+    config.operator.name = "Example <hub>".into();
+    config.operator.contact = "abuse@example.org".into();
+    config.server.base_path = "/hub".into();
+    config.validate().unwrap();
+    let page = get_from(dir.path(), config.clone(), "/hub/terms").await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert_eq!(page.headers[header::CACHE_CONTROL], "no-cache");
+    let html = String::from_utf8(page.body).unwrap();
+    assert!(
+        html.contains("<p>Books stay encrypted.\nWe cannot read them.</p>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("&#60;script&#62;alert(1)&#60;/script&#62; &#38; more"),
+        "{html}"
+    );
+    assert!(!html.contains("<script>alert"), "{html}");
+    assert!(html.contains("Example &#60;hub&#62;"), "{html}");
+    assert!(
+        html.contains(r#"href="mailto:abuse@example.org""#),
+        "{html}"
+    );
+    assert!(
+        !html.contains("assets/hub.js"),
+        "the page runs without the app"
+    );
+    let info = get_from(dir.path(), config, "/hub/api/info").await.json();
+    assert_eq!(info["operator"]["name"], "Example <hub>");
+    assert_eq!(info["operator"]["contact"], "abuse@example.org");
+    assert_eq!(info["operator"]["terms"], true);
+
+    let empty = tempfile::tempdir().unwrap();
+    let mut config = HubConfig::default();
+    config.operator.contact = "javascript:alert(1)".into();
+    let page = get_from(empty.path(), config.clone(), "/terms").await;
+    let html = String::from_utf8(page.body).unwrap();
+    assert!(html.contains("This hub has no terms of use."), "{html}");
+    assert!(
+        !html.contains("href=\"javascript"),
+        "only mailto and https links: {html}"
+    );
+    let info = get_from(empty.path(), config, "/api/info").await.json();
+    assert_eq!(info["operator"]["terms"], false);
+    assert_eq!(info["operator"]["name"], "");
+}
+
+#[test]
+fn a_terms_file_too_large_or_not_text_is_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("terms.txt");
+    std::fs::write(&path, vec![b'a'; 64 * 1024 + 1]).unwrap();
+    assert!(Hub::with_config(dir.path(), HubConfig::default()).is_err());
+    std::fs::write(&path, [0xff, 0xfe]).unwrap();
+    assert!(Hub::with_config(dir.path(), HubConfig::default()).is_err());
+    std::fs::write(&path, " \n").unwrap();
+    let hub = Hub::with_config(dir.path(), HubConfig::default()).unwrap();
+    assert_eq!(hub.terms(), None, "only whitespace is no terms");
 }
 
 #[tokio::test]

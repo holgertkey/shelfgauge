@@ -328,14 +328,34 @@ function facts(pairs) {
   return dl;
 }
 
-/** The hub's address and version (shown paired or not). */
+/** A link for an operator contact (an e-mail address or an https URL), else text. */
+function contactNode(contact) {
+  if (/^https:\/\/\S+$/.test(contact)) {
+    return el("a", { href: contact, rel: "noopener" }, contact);
+  }
+  if (/^[\w.+-]+@[\w-]+(\.[\w-]+)+$/.test(contact)) {
+    return el("a", { href: `mailto:${contact}` }, contact);
+  }
+  return contact;
+}
+
+/** The hub's address, version, operator and terms (shown paired or not). */
 function hubSection(info) {
-  return el("section", { class: "hub-device-hub" },
-    el("h2", {}, "Hub"),
-    facts([
-      ["Address", `${location.origin}${base}/`],
-      ["Version", info && typeof info.version === "string" ? info.version : "unknown (offline)"],
-    ]));
+  const operator = info && typeof info.operator === "object" && info.operator ? info.operator : {};
+  const pairs = [
+    ["Address", `${location.origin}${base}/`],
+    ["Version", info && typeof info.version === "string" ? info.version : "unknown (offline)"],
+  ];
+  if (typeof operator.name === "string" && operator.name) {
+    pairs.push(["Run by", operator.name]);
+  }
+  if (typeof operator.contact === "string" && operator.contact) {
+    pairs.push(["Contact", contactNode(operator.contact)]);
+  }
+  if (operator.terms === true) {
+    pairs.push(["Terms of use", el("a", { href: `${base}/terms` }, "Read the terms")]);
+  }
+  return el("section", { class: "hub-device-hub" }, el("h2", {}, "Hub"), facts(pairs));
 }
 
 /** `/device`: what this device is paired with, its sync, what it keeps, unpairing. */

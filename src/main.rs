@@ -79,6 +79,10 @@ fn main() -> anyhow::Result<()> {
 fn hub(data: &std::path::Path, explicit: bool, action: HubAction) -> anyhow::Result<()> {
     use shelfgauge::hub::{self, Hub, HubState};
 
+    if let HubAction::Check { url } = &action {
+        return check_hub(url);
+    }
+
     let create = explicit && action == HubAction::Serve;
     let opened = Hub::open(data, create)?;
     let config_path = data.join(hub::CONFIG_FILE);
@@ -124,9 +128,17 @@ fn hub(data: &std::path::Path, explicit: bool, action: HubAction) -> anyhow::Res
             let accounts = hub.accounts()?;
             for a in &accounts {
                 let days = |t: i64| (now - t).max(0) / 86_400;
+                let own = if a.quotas.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "  own quotas: {}",
+                        quota_text(&a.quotas.over(&hub.config().quotas))
+                    )
+                };
                 println!(
                     "{:>5}  created {} days ago  last seen {}  {} devices  {} publications  \
-                     {} records  {} bytes",
+                     {} records  {} bytes{own}",
                     a.id,
                     days(a.created_at),
                     a.last_seen_at
@@ -142,6 +154,49 @@ fn hub(data: &std::path::Path, explicit: bool, action: HubAction) -> anyhow::Res
                 n => println!("{n} accounts."),
             }
         }
+        HubAction::Check { .. } => unreachable!("handled before the hub is opened"),
+        HubAction::DeleteAccount { account } => {
+            if hub.delete_account(account)? {
+                println!("Deleted account {account} with its devices, books and reading data.");
+            } else {
+                anyhow::bail!("there is no account {account} (see `shelfgauge hub accounts`)");
+            }
+        }
+        HubAction::Quota {
+            account,
+            max_bytes,
+            max_publications,
+            max_devices,
+        } => {
+            let Some(mut own) = hub.account_quotas(account)? else {
+                anyhow::bail!("there is no account {account} (see `shelfgauge hub accounts`)");
+            };
+            let changes = [
+                (&mut own.max_bytes, max_bytes),
+                (&mut own.max_publications, max_publications),
+                (&mut own.max_devices, max_devices),
+            ];
+            let mut changed = false;
+            for (field, value) in changes {
+                if let Some(value) = value {
+                    *field = value.own();
+                    changed = true;
+                }
+            }
+            if changed {
+                hub.set_account_quotas(account, &own)?;
+            }
+            let defaults = &hub.config().quotas;
+            println!(
+                "Account {account}: {} ({})",
+                quota_text(&own.over(defaults)),
+                if own.is_empty() {
+                    "the hub's quotas"
+                } else {
+                    "own quotas over the hub's"
+                }
+            );
+        }
         HubAction::Invite => {
             let (code, _) = hub.invite(now)?;
             println!("{}", code.as_str());
@@ -153,6 +208,57 @@ fn hub(data: &std::path::Path, explicit: bool, action: HubAction) -> anyhow::Res
         }
     }
     Ok(())
+}
+
+/// `shelfgauge hub check <url>`: prints whether the hub serves this build's reader app;
+/// an error when it does not.
+fn check_hub(url: &str) -> anyhow::Result<()> {
+    let url = shelfgauge::hub_client::HubUrl::parse(url)
+        .map_err(|e| anyhow::anyhow!("the hub URL {e}"))?;
+    let report = shelfgauge::hub::check::check(&url).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let version = shelfgauge::VERSION;
+    println!(
+        "The hub at {url} runs shelfgauge {}; this is {version}.",
+        report.hub_version
+    );
+    for path in &report.differing {
+        println!("  differs: {path}");
+    }
+    for (path, status) in &report.missing {
+        println!("  not served (HTTP {status}): {path}");
+    }
+    if !report.csp_matches {
+        println!("  the start page's Content-Security-Policy differs");
+    }
+    if report.matches() {
+        println!(
+            "All {} files of the reader app match this build (app version {}).",
+            report.checked, report.app_version
+        );
+        return Ok(());
+    }
+    if !report.same_version() {
+        anyhow::bail!(
+            "the reader app differs; the hub runs another version, so check again with \
+             shelfgauge {}",
+            report.hub_version
+        );
+    }
+    anyhow::bail!("the hub serves a reader app that differs from shelfgauge {version}")
+}
+
+/// Quotas as `max 1073741824 bytes, 300 publications, no device limit`.
+fn quota_text(quotas: &shelfgauge::hub::config::QuotasConfig) -> String {
+    let limit = |n: u64, what: &str| match n {
+        0 => format!("no {what} limit"),
+        n => format!("max {n} {what}s"),
+    };
+    format!(
+        "{}, {}, {}",
+        limit(quotas.max_bytes, "byte"),
+        limit(quotas.max_publications, "publication"),
+        limit(quotas.max_devices, "device")
+    )
 }
 
 /// The exporter of a library's annotations, linking to the configured server address.

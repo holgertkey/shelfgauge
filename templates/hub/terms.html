@@ -1,0 +1,23 @@
+{% extends "hub/base.html" %}
+{#- `/terms`: the hub's terms of use and its operator's contact, rendered by the hub
+    from `[operator]` (not part of the reader app's shell, so without the app). #}
+{% block app %}{% endblock %}
+{% block body %}
+<main class="hub-page hub-terms">
+  <h1>Terms of use</h1>
+  {%- if !name.is_empty() %}
+  <p class="muted">This hub is run by {{ name }}.</p>
+  {%- endif %}
+  {%- for paragraph in paragraphs %}
+  <p>{{ paragraph }}</p>
+  {%- else %}
+  <p>This hub has no terms of use.</p>
+  {%- endfor %}
+  {%- if !contact.is_empty() %}
+  <h2>Contact</h2>
+  <p>To report abuse or ask for a book to be taken down:
+    {% match contact_href %}{% when Some with (href) %}<a href="{{ href }}" rel="noopener">{{ contact }}</a>{% when None %}{{ contact }}{% endmatch %}</p>
+  {%- endif %}
+  <p><a href="{{ base }}/">My books</a></p>
+</main>
+{% endblock %}

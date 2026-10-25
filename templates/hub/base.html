@@ -19,7 +19,9 @@
 <link rel="stylesheet" href="{{ base }}/assets/hub.css">
 <script src="{{ base }}/assets/theme.js"></script>
 <script src="{{ base }}/assets/app.js" defer></script>
+{%- block app %}
 <script type="module" src="{{ base }}/assets/hub.js"></script>
+{%- endblock %}
 </head>
 <body data-base="{{ base }}">
 {% include "partials/symbols.html" %}

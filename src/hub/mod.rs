@@ -18,6 +18,7 @@
 //! their hashes, public account ids, publication ids (only route templates are logged)
 //! and request bodies. Accounts appear as `account = N`, the internal id.
 
+pub mod check;
 pub mod config;
 
 mod api;
@@ -49,12 +50,13 @@ use crate::storage::StorageError;
 use crate::web::HostAllowlist;
 use crate::web::security::{request_host, set_hardening_headers};
 use crate::web::trace;
+use limits::{DAY, HOUR};
 
 use blobs::BlobStore;
 use config::HubConfig;
-use limits::{DeviceLimiter, PublicLimiter};
+use limits::{DeviceLimiter, IpRange, WindowLimiter};
 
-pub use store::{AccountSummary, PAIRING_TTL, Usage};
+pub use store::{AccountQuotas, AccountSummary, PAIRING_TTL, Usage};
 
 /// The file name of a hub's config file in its data directory.
 pub const CONFIG_FILE: &str = "hub.toml";
@@ -109,6 +111,13 @@ pub enum HubError {
     /// A quota of the account (or the hub's account limit) is used up.
     #[error("the quota of {0} is used up")]
     Quota(&'static str),
+    /// The hub stores as many bytes as `[limits] max_total_bytes` allows.
+    #[error("the hub is full and accepts no new data for now")]
+    Full,
+    /// This client address created as many accounts today as the hub allows; retry
+    /// after the duration.
+    #[error("this hub allows only a few new accounts a day from one address")]
+    AccountLimit(Duration),
     /// The request body is larger than allowed.
     #[error("the request body is too large")]
     TooLarge,
@@ -130,6 +139,8 @@ impl HubError {
             Self::InviteRequired => (StatusCode::FORBIDDEN, "invite_required"),
             Self::InvalidSecret => (StatusCode::FORBIDDEN, "invalid_secret"),
             Self::Quota(_) => (StatusCode::FORBIDDEN, "quota_exceeded"),
+            Self::Full => (StatusCode::INSUFFICIENT_STORAGE, "hub_full"),
+            Self::AccountLimit(_) => (StatusCode::TOO_MANY_REQUESTS, "account_limit"),
             Self::TooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "too_large"),
             Self::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
             Self::RateLimited(_) => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
@@ -157,7 +168,7 @@ impl IntoResponse for HubError {
                 .headers_mut()
                 .insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
         }
-        if let Self::RateLimited(wait) = self {
+        if let Self::RateLimited(wait) | Self::AccountLimit(wait) = self {
             // Rounded up: a client that waits this long gets through.
             let secs = (wait.as_secs() + u64::from(wait.subsec_nanos() > 0))
                 .max(1)
@@ -291,9 +302,14 @@ impl FromStr for AccountId {
 /// The current time in Unix seconds, replaceable in tests.
 type Clock = Arc<dyn Fn() -> i64 + Send + Sync>;
 
+/// The largest terms of use file read, in bytes.
+pub const MAX_TERMS_BYTES: u64 = 64 * 1024;
+
 /// An opened hub data directory: its config, database and blobs.
 pub struct Hub {
     config: HubConfig,
+    /// The text of `[operator] terms_file`, read when the hub is opened.
+    terms: Option<String>,
     db: Mutex<Connection>,
     blobs: BlobStore,
 }
@@ -338,11 +354,15 @@ impl Hub {
     }
 
     /// Opens the database and blobs in `dir` with `config` instead of `hub.toml` (the
-    /// directory must exist).
+    /// directory must exist), and reads the terms of use file (a missing one is no
+    /// terms; a larger one than [`MAX_TERMS_BYTES`] or one that is not UTF-8 is an
+    /// error).
     pub fn with_config(dir: &Path, config: HubConfig) -> Result<Self, HubError> {
         let conn = store::open(&dir.join(DATABASE_FILE))?;
+        let terms = read_terms(dir, &config.operator.terms_file)?;
         Ok(Self {
             config,
+            terms,
             db: Mutex::new(conn),
             blobs: BlobStore::new(dir.join("blobs")),
         })
@@ -351,6 +371,11 @@ impl Hub {
     /// The configuration.
     pub fn config(&self) -> &HubConfig {
         &self.config
+    }
+
+    /// The terms of use, if the hub has them.
+    pub fn terms(&self) -> Option<&str> {
+        self.terms.as_deref()
     }
 
     fn lock(&self) -> MutexGuard<'_, Connection> {
@@ -381,21 +406,98 @@ impl Hub {
         store::accounts(&self.lock())
     }
 
-    /// Deletes the publications not opened for `publication_expiry_days`; returns how
-    /// many.
-    pub fn expire(&self, now: i64) -> Result<usize, HubError> {
+    /// Deletes the publications not opened for `publication_expiry_days` and the
+    /// accounts idle for `account_expiry_days`; returns how many of each.
+    pub fn expire(&self, now: i64) -> Result<(usize, usize), HubError> {
         let days = self.config.limits.publication_expiry_days;
         let ids = store::expire(&self.lock(), days, now)?;
-        for id in &ids {
-            if let Err(e) = self.blobs.remove(id) {
-                tracing::warn!(error = %e, "cannot remove the blobs of an expired publication");
-            }
-        }
+        self.remove_blobs(&ids);
         if !ids.is_empty() {
             tracing::info!(count = ids.len(), "expired publications deleted");
         }
-        Ok(ids.len())
+        let days = self.config.accounts.account_expiry_days;
+        let (accounts, account_ids) = store::expire_accounts(&mut self.lock(), days, now)?;
+        self.remove_blobs(&account_ids);
+        if !accounts.is_empty() {
+            tracing::info!(count = accounts.len(), "idle accounts deleted");
+        }
+        Ok((ids.len(), accounts.len()))
     }
+
+    /// Deletes the account with the internal id `account` and everything it stores;
+    /// returns whether it existed.
+    pub fn delete_account(&self, account: i64) -> Result<bool, HubError> {
+        let Some(ids) = store::delete_account(&mut self.lock(), account)? else {
+            return Ok(false);
+        };
+        self.remove_blobs(&ids);
+        tracing::info!(account, "account deleted");
+        Ok(true)
+    }
+
+    /// The own quotas of the account `account` (`None`: no such account).
+    pub fn account_quotas(&self, account: i64) -> Result<Option<AccountQuotas>, HubError> {
+        store::account_quotas(&self.lock(), account)
+    }
+
+    /// Sets the own quotas of the account `account`; returns whether it exists.
+    pub fn set_account_quotas(
+        &self,
+        account: i64,
+        quotas: &AccountQuotas,
+    ) -> Result<bool, HubError> {
+        store::set_account_quotas(&self.lock(), account, quotas)
+    }
+
+    /// The bytes stored for all accounts (blobs and records).
+    pub fn total_bytes(&self) -> Result<u64, HubError> {
+        store::total_bytes(&self.lock())
+    }
+
+    fn remove_blobs(&self, ids: &[PublicationId]) {
+        for id in ids {
+            if let Err(e) = self.blobs.remove(id) {
+                tracing::warn!(error = %e, "cannot remove the blobs of a deleted publication");
+            }
+        }
+    }
+}
+
+/// The text of the terms file `name` in `dir` (`None`: no name, no file, or only
+/// whitespace).
+fn read_terms(dir: &Path, name: &str) -> Result<Option<String>, HubError> {
+    if name.is_empty() {
+        return Ok(None);
+    }
+    let path = dir.join(name);
+    let file = match std::fs::File::open(&path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(crate::Error::io(&path, e).into()),
+    };
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(
+        &mut std::io::Read::take(file, MAX_TERMS_BYTES + 1),
+        &mut bytes,
+    )
+    .map_err(|e| crate::Error::io(&path, e))?;
+    if bytes.len() as u64 > MAX_TERMS_BYTES {
+        return Err(crate::Error::io(
+            &path,
+            std::io::Error::other(format!(
+                "the terms file is larger than {MAX_TERMS_BYTES} bytes"
+            )),
+        )
+        .into());
+    }
+    let text = String::from_utf8(bytes).map_err(|_| {
+        crate::Error::io(
+            &path,
+            std::io::Error::other("the terms file is not UTF-8 text"),
+        )
+    })?;
+    let text = text.trim();
+    Ok((!text.is_empty()).then(|| text.to_owned()))
 }
 
 /// The shared state of the hub's handlers.
@@ -407,7 +509,11 @@ struct Inner {
     hosts: HostAllowlist,
     base: String,
     devices: DeviceLimiter,
-    public: PublicLimiter,
+    public: WindowLimiter,
+    new_accounts: WindowLimiter,
+    trusted_proxies: Vec<IpRange>,
+    /// Whether the hub is below `max_total_bytes`, and when that was checked.
+    accepting: Mutex<Option<(std::time::Instant, bool)>>,
     clock: Clock,
     slow_request: Duration,
 }
@@ -437,13 +543,22 @@ impl HubState {
             path => path.to_owned(),
         };
         let devices = DeviceLimiter::new(config.limits.requests_per_minute);
-        let public = PublicLimiter::new(config.limits.public_requests_per_hour);
+        let public = WindowLimiter::new(config.limits.public_requests_per_hour, HOUR);
+        let new_accounts =
+            WindowLimiter::new(config.accounts.new_accounts_per_address_per_day, DAY);
+        // Validated with the config.
+        let trusted_proxies = (config.server.trusted_proxies.iter())
+            .filter_map(|proxy| IpRange::parse(proxy))
+            .collect();
         Self(Arc::new(Inner {
             hub,
             hosts,
             base,
             devices,
             public,
+            new_accounts,
+            trusted_proxies,
+            accepting: Mutex::new(None),
             clock,
             slow_request: trace::SLOW_REQUEST,
         }))
@@ -473,6 +588,26 @@ impl HubState {
     pub fn display_url(&self) -> String {
         let server = self.config().server.as_server_config();
         crate::web::display_url(&server, &crate::web::Urls::new(&server.base_path))
+    }
+
+    /// Whether the hub accepts new data (below `max_total_bytes`); checked at most once
+    /// a minute, since `GET /api/info` asks without a token.
+    async fn accepting(&self) -> Result<bool, HubError> {
+        let max = self.config().limits.max_total_bytes;
+        if max == 0 {
+            return Ok(true);
+        }
+        let cached = *self.0.accepting.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((at, accepting)) = cached
+            && at.elapsed() < Duration::from_secs(60)
+        {
+            return Ok(accepting);
+        }
+        let total = self.db(|conn| store::total_bytes(conn)).await?;
+        let accepting = total < max;
+        *self.0.accepting.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some((std::time::Instant::now(), accepting));
+        Ok(accepting)
     }
 
     /// Runs `f` with the database on a blocking thread, in the request's span.
@@ -568,7 +703,7 @@ pub fn router(state: HubState) -> Router {
 }
 
 /// Serves the hub on `listener` until `shutdown` completes, deleting expired
-/// publications on start and daily.
+/// publications and idle accounts on start and daily.
 pub async fn serve(
     listener: std::net::TcpListener,
     state: HubState,
@@ -583,7 +718,7 @@ pub async fn serve(
                 let state = state.clone();
                 let run = tokio::task::spawn_blocking(move || state.hub().expire(state.now()));
                 if let Ok(Err(e)) = run.await {
-                    tracing::error!(error = %e, "cannot delete expired publications");
+                    tracing::error!(error = %e, "cannot delete expired publications or accounts");
                 }
             }
         })

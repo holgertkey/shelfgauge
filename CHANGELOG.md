@@ -19,6 +19,34 @@ Build numbers (`+NNN`) do not get their own sections.
   on the hub and removes its books, marks and keys; without a connection it warns
   about unsent changes first. The page opens offline.
 
+- **Running a public hub**: `[server] trusted_proxies` in `hub.toml` lets the hub
+  count its limits per client behind a reverse proxy (from `X-Forwarded-For`; an IPv6
+  address counts by its /64); with open registration a client address creates at
+  most `new_accounts_per_address_per_day` accounts (3); `max_total_bytes` caps what
+  all accounts store together (beyond it the hub takes no new books or marks, and
+  `/api/info` says `accepting: false`); `account_expiry_days` deletes accounts not
+  used for that long.
+- `shelfgauge hub quota <number>` gives one account its own quotas, and `shelfgauge
+  hub delete-account <number>` deletes an account with everything it stores.
+- `[operator]` in `hub.toml`: who runs the hub, a contact for abuse reports and a
+  terms of use file, shown at `/terms` and on the reader's **This device** page.
+- `shelfgauge hub check <url>` compares the reader app a hub serves, file by file,
+  with the one built into the program.
+- README: **Running a public hub** (server, HTTPS, a systemd unit, limits, terms,
+  backups, monitoring).
+
+### Changed
+
+- Behind a reverse proxy listed in `trusted_proxies`, the hub's per-address limits no
+  longer share one budget for all clients.
+- **Upgrading a hub with open registration**: the new limit of 3 accounts per client
+  address and day applies without a new `hub.toml` line. Behind a proxy on the same
+  machine without `trusted_proxies`, all clients share that budget, so the whole hub
+  takes 3 new accounts a day: set `trusted_proxies` (or
+  `new_accounts_per_address_per_day = 0`). Invite-only hubs are not affected.
+- IPv6 clients now share the per-address limits per /64 network, also when they
+  connect directly.
+
 ### Fixed
 
 - The reader installs as an app on Android: its manifest lists 192 and 512 pixel PNG

@@ -47,6 +47,21 @@ struct HomePage {
     base: String,
 }
 
+/// `/terms`.
+#[derive(Template)]
+#[template(path = "hub/terms.html")]
+struct TermsPage {
+    base: String,
+    /// Who runs the hub (may be empty).
+    name: String,
+    /// The terms' paragraphs (none: no terms).
+    paragraphs: Vec<String>,
+    /// The contact as written (may be empty).
+    contact: String,
+    /// A link for the contact: `mailto:` for an address, the URL for `https://`.
+    contact_href: Option<String>,
+}
+
 /// `/r/{id}`.
 #[derive(Template)]
 #[template(path = "hub/read.html")]
@@ -83,9 +98,50 @@ pub(super) fn routes(state: &HubState) -> Router<HubState> {
         .route(&state.path("/open"), get(page))
         .route(&state.path("/share"), post(share_fallback))
         .route(&state.path("/device"), get(page))
+        .route(&state.path("/terms"), get(terms))
         .route(&state.path("/assets/{*path}"), get(asset))
         .route(&state.path("/sw.js"), get(service_worker))
         .route(&state.path("/manifest.webmanifest"), get(web_manifest))
+}
+
+/// `GET /terms`: the terms of use and the operator's contact (not cached by the app:
+/// the current text comes from the hub).
+async fn terms(State(state): State<HubState>) -> Response {
+    let operator = &state.config().operator;
+    let paragraphs = state.hub().terms().map_or_else(Vec::new, |text| {
+        text.replace("\r\n", "\n")
+            .split("\n\n")
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .map(str::to_owned)
+            .collect()
+    });
+    let page = TermsPage {
+        base: state.path(""),
+        name: operator.name.clone(),
+        paragraphs,
+        contact: operator.contact.clone(),
+        contact_href: contact_href(&operator.contact),
+    };
+    match page.render() {
+        Ok(html) => ([(header::CACHE_CONTROL, "no-cache")], Html(html)).into_response(),
+        Err(_) => {
+            HubError::Io(std::io::Error::other("the terms page did not render")).into_response()
+        }
+    }
+}
+
+/// A link for an operator contact: `mailto:` for an e-mail address, the URL itself for
+/// an `https://` URL, none for anything else.
+fn contact_href(contact: &str) -> Option<String> {
+    let contact = contact.trim();
+    if contact.starts_with("https://") && !contact.contains(char::is_whitespace) {
+        return Some(contact.to_owned());
+    }
+    let (user, domain) = contact.split_once('@')?;
+    let plain =
+        |s: &str| !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || "._+-".contains(c));
+    (plain(user) && plain(domain) && domain.contains('.')).then(|| format!("mailto:{contact}"))
 }
 
 /// The Service Worker (`templates/hub/sw.js`).
@@ -132,16 +188,21 @@ fn shell_files() -> &'static (Vec<String>, String) {
     })
 }
 
-/// `GET /sw.js`: the Service Worker, scoped to the hub's base path.
-async fn service_worker(State(state): State<HubState>) -> Response {
+/// The Service Worker for the base path `base` (`""` or `/hub`).
+fn service_worker_text(base: &str) -> String {
     let (files, version) = shell_files();
-    let script = ServiceWorker {
-        base: state.path(""),
+    ServiceWorker {
+        base: base.to_owned(),
         version,
         files,
     }
     .render()
-    .expect("the Service Worker renders");
+    .expect("the Service Worker renders")
+}
+
+/// `GET /sw.js`: the Service Worker, scoped to the hub's base path.
+async fn service_worker(State(state): State<HubState>) -> Response {
+    let script = service_worker_text(&state.path(""));
     (
         [
             (
@@ -158,7 +219,21 @@ async fn service_worker(State(state): State<HubState>) -> Response {
 /// `GET /manifest.webmanifest`: the web app manifest, so the reader can be installed
 /// (on iOS, a home screen app keeps its data longer than a Safari tab).
 async fn web_manifest(State(state): State<HubState>) -> Response {
-    let base = state.path("");
+    (
+        [
+            (
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/manifest+json"),
+            ),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-cache")),
+        ],
+        manifest_text(&state.path("")),
+    )
+        .into_response()
+}
+
+/// The web app manifest for the base path `base`.
+fn manifest_text(base: &str) -> String {
     let manifest = serde_json::json!({
         "name": "shelfgauge",
         "short_name": "shelfgauge",
@@ -210,17 +285,48 @@ async fn web_manifest(State(state): State<HubState>) -> Response {
             },
         },
     });
-    (
-        [
-            (
-                header::CONTENT_TYPE,
-                HeaderValue::from_static("application/manifest+json"),
-            ),
-            (header::CACHE_CONTROL, HeaderValue::from_static("no-cache")),
-        ],
-        manifest.to_string(),
-    )
-        .into_response()
+    manifest.to_string()
+}
+
+/// Every file of the reader app as a hub with the base path `base` serves it: the
+/// path below the base and the bytes. What `shelfgauge hub check` compares; the
+/// reading view stands for every `/r/{id}` (the same page for each id).
+pub(crate) fn expected_files(base: &str) -> Vec<(String, Vec<u8>)> {
+    fn page(template: &impl Template) -> Vec<u8> {
+        template
+            .render()
+            .expect("the shell pages render")
+            .into_bytes()
+    }
+    let mut files = vec![
+        (
+            "/".to_owned(),
+            page(&HomePage {
+                base: base.to_owned(),
+            }),
+        ),
+        (
+            format!("/r/{}", PublicationId::new([0; 16])),
+            page(&read_page(base.to_owned())),
+        ),
+        ("/sw.js".to_owned(), service_worker_text(base).into_bytes()),
+        (
+            "/manifest.webmanifest".to_owned(),
+            manifest_text(base).into_bytes(),
+        ),
+    ];
+    for name in &shell_files().0 {
+        let file = HubAssets::get(name)
+            .or_else(|| SharedAssets::get(name))
+            .expect("listed files exist");
+        files.push((format!("/assets/{name}"), file.data.into_owned()));
+    }
+    files
+}
+
+/// The reader app's version: the Service Worker's `VERSION`.
+pub(crate) fn app_version() -> &'static str {
+    &shell_files().1
 }
 
 /// `POST /share` when no Service Worker took it (the app was never opened in this

@@ -119,7 +119,9 @@ pub enum Command {
     #[command(subcommand)]
     Profiles(ProfilesCommand),
     /// Run a hub: encrypted books and reading data for the phones and other devices of
-    /// shelfgauge libraries (`hub takedown`, `accounts`, `invite` manage it).
+    /// shelfgauge libraries (`hub takedown`, `accounts`, `invite`, `delete-account`,
+    /// `quota` manage it; `hub check <url>` compares a hub's reader app with this
+    /// build).
     Hub(HubArgs),
 }
 
@@ -146,10 +148,97 @@ pub enum HubCommand {
         /// The publication id (32 hex digits, from its /r/<id> link).
         id: String,
     },
-    /// List the accounts: internal id, age, usage (no secrets).
+    /// List the accounts: internal id, age, usage, own quotas (no secrets).
     Accounts,
     /// Create a one-time invite code for registering an account.
     Invite,
+    /// Check that the hub at URL serves exactly this build's reader app (run it with
+    /// the hub's version); needs no data directory.
+    Check {
+        /// The hub's address, e.g. https://hub.example.org.
+        url: String,
+    },
+    /// Delete an account with its devices, books and reading data (the number from
+    /// `hub accounts`).
+    DeleteAccount {
+        /// The account's internal number.
+        account: i64,
+    },
+    /// Show or set an account's own quotas, which replace the hub's `[quotas]`: a
+    /// number (bytes may end in KiB, MiB, GiB or TiB), 0 for no limit, or `default`
+    /// for the hub's value.
+    Quota {
+        /// The account's internal number.
+        account: i64,
+        /// Stored bytes.
+        #[arg(long, value_name = "SIZE", value_parser = parse_quota_bytes)]
+        max_bytes: Option<QuotaValue>,
+        /// Publications.
+        #[arg(long, value_name = "N", value_parser = parse_quota_count)]
+        max_publications: Option<QuotaValue>,
+        /// Devices and libraries.
+        #[arg(long, value_name = "N", value_parser = parse_quota_count)]
+        max_devices: Option<QuotaValue>,
+    },
+}
+
+/// A value of `shelfgauge hub quota`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuotaValue {
+    /// `default`: the hub's value.
+    Default,
+    /// A limit; 0 = no limit.
+    Limit(u64),
+}
+
+impl QuotaValue {
+    /// The account's own value: `None` for the hub's.
+    pub fn own(self) -> Option<u64> {
+        match self {
+            Self::Default => None,
+            Self::Limit(n) => Some(n),
+        }
+    }
+}
+
+/// Parses a count or `default`.
+fn parse_quota_count(text: &str) -> Result<QuotaValue, String> {
+    match text.trim() {
+        "default" => Ok(QuotaValue::Default),
+        n => n
+            .parse()
+            .map(QuotaValue::Limit)
+            .map_err(|_| format!("{text:?} is not a number or `default`")),
+    }
+}
+
+/// Parses a size (`500MiB`, `2GiB`, `1048576`) or `default`.
+fn parse_quota_bytes(text: &str) -> Result<QuotaValue, String> {
+    let trimmed = text.trim();
+    if trimmed == "default" {
+        return Ok(QuotaValue::Default);
+    }
+    let (number, unit) = trimmed
+        .find(|c: char| !c.is_ascii_digit())
+        .map_or((trimmed, ""), |i| trimmed.split_at(i));
+    let factor: u64 = match unit.trim().to_ascii_lowercase().as_str() {
+        "" | "b" => 1,
+        "kib" => 1 << 10,
+        "mib" => 1 << 20,
+        "gib" => 1 << 30,
+        "tib" => 1 << 40,
+        _ => {
+            return Err(format!(
+                "{text:?} is not a size (e.g. `500MiB`, `2GiB`) or `default`"
+            ));
+        }
+    };
+    number
+        .parse::<u64>()
+        .ok()
+        .and_then(|n| n.checked_mul(factor))
+        .map(QuotaValue::Limit)
+        .ok_or_else(|| format!("{text:?} is not a size (e.g. `500MiB`, `2GiB`) or `default`"))
 }
 
 /// `shelfgauge profiles` subcommands.
@@ -257,6 +346,27 @@ pub enum HubAction {
     Accounts,
     /// Create an invite code.
     Invite,
+    /// Compare a hub's reader app with this build's.
+    Check {
+        /// The hub's address as given.
+        url: String,
+    },
+    /// Delete an account.
+    DeleteAccount {
+        /// The internal id.
+        account: i64,
+    },
+    /// Show or change an account's own quotas (`None`: unchanged).
+    Quota {
+        /// The internal id.
+        account: i64,
+        /// Stored bytes.
+        max_bytes: Option<QuotaValue>,
+        /// Publications.
+        max_publications: Option<QuotaValue>,
+        /// Devices.
+        max_devices: Option<QuotaValue>,
+    },
 }
 
 /// What `shelfgauge profiles` does.
@@ -365,6 +475,21 @@ impl Cli {
                     Some(HubCommand::Takedown { id }) => HubAction::Takedown { id },
                     Some(HubCommand::Accounts) => HubAction::Accounts,
                     Some(HubCommand::Invite) => HubAction::Invite,
+                    Some(HubCommand::Check { url }) => HubAction::Check { url },
+                    Some(HubCommand::DeleteAccount { account }) => {
+                        HubAction::DeleteAccount { account }
+                    }
+                    Some(HubCommand::Quota {
+                        account,
+                        max_bytes,
+                        max_publications,
+                        max_devices,
+                    }) => HubAction::Quota {
+                        account,
+                        max_bytes,
+                        max_publications,
+                        max_devices,
+                    },
                 };
                 Invocation {
                     mode: Mode::Hub(action),
@@ -595,6 +720,39 @@ mod tests {
             Mode::Hub(HubAction::Invite)
         );
         assert!(parse(&["hub", "takedown"]).is_err());
+        assert_eq!(
+            parse(&["hub", "check", "https://hub.example.org"])
+                .unwrap()
+                .mode,
+            Mode::Hub(HubAction::Check {
+                url: "https://hub.example.org".into()
+            })
+        );
+        assert_eq!(
+            parse(&["hub", "delete-account", "7"]).unwrap().mode,
+            Mode::Hub(HubAction::DeleteAccount { account: 7 })
+        );
+        assert_eq!(
+            parse(&[
+                "hub",
+                "quota",
+                "7",
+                "--max-bytes",
+                "2GiB",
+                "--max-devices",
+                "default"
+            ])
+            .unwrap()
+            .mode,
+            Mode::Hub(HubAction::Quota {
+                account: 7,
+                max_bytes: Some(QuotaValue::Limit(2 << 30)),
+                max_publications: None,
+                max_devices: Some(QuotaValue::Default),
+            })
+        );
+        assert!(parse(&["hub", "quota", "7", "--max-bytes", "2GB"]).is_err());
+        assert!(parse(&["hub", "quota", "7", "--max-devices", "-1"]).is_err());
         assert_eq!(
             Cli::try_parse_from(["shelfgauge", "hub", "--log-format", "json"])
                 .unwrap()

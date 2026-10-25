@@ -40,6 +40,8 @@ use keys::AccountKey;
 ///
 /// let url = HubUrl::parse(" HTTPS://Hub.Example.org/sg/ ").unwrap();
 /// assert_eq!(url.to_string(), "https://hub.example.org/sg");
+/// assert_eq!(url.base_path(), "/sg");
+/// assert_eq!(HubUrl::parse("https://hub.example.org").unwrap().base_path(), "");
 /// assert!(HubUrl::parse("http://127.0.0.1:8743").is_ok());
 /// assert!(HubUrl::parse("http://hub.example.org").is_err());
 /// ```
@@ -116,6 +118,19 @@ impl HubUrl {
             .map_err(|_| HubUrlError("has an invalid path"))?;
         let path = if path == "/" { "" } else { path.as_str() };
         Ok(Self(format!("{scheme}://{authority}{path}")))
+    }
+
+    /// The path part of the URL: `""` or `/a/b` (the hub's `base_path`).
+    pub fn base_path(&self) -> &str {
+        let after_scheme = self.0.find("://").map_or(0, |i| i + 3);
+        self.0[after_scheme..]
+            .find('/')
+            .map_or("", |i| &self.0[after_scheme + i..])
+    }
+
+    /// The URL of `path` below the hub's base (`/sw.js`).
+    pub fn page(&self, path: &str) -> String {
+        format!("{}{path}", self.0)
     }
 
     /// The URL of the API route `route` (without `/api/`).
@@ -199,6 +214,15 @@ impl ClientError {
             Some("invalid_secret") => "The code is not valid (wrong, used or expired).".to_owned(),
             Some("quota_exceeded") => format!("The hub refused: {}.", self.hub_message()),
             Some("rate_limited") => "The hub is busy; try again later.".to_owned(),
+            Some("hub_full") => {
+                "The hub is full and takes no new books or marks for now; try again later."
+                    .to_owned()
+            }
+            Some("account_limit") => {
+                "This hub creates only a few accounts a day from one address; try again \
+                 tomorrow."
+                    .to_owned()
+            }
             Some("unauthorized") => {
                 "This library is no longer paired with the hub account (it was removed on \
                  another device)."
@@ -725,6 +749,22 @@ fn empty(response: ureq::http::Response<ureq::Body>) -> Result<(), ClientError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hub_error_codes_have_plain_texts() {
+        let error = |status: u16, code: &str| ClientError::Hub {
+            status,
+            code: code.to_owned(),
+            message: "the hub is full and accepts no new data for now".to_owned(),
+        };
+        assert!(
+            error(507, "hub_full")
+                .user_text()
+                .starts_with("The hub is full")
+        );
+        assert!(error(429, "account_limit").user_text().contains("tomorrow"));
+        assert!(error(429, "rate_limited").user_text().contains("busy"));
+    }
 
     #[test]
     fn hub_urls_are_normalized() {

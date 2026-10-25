@@ -23,6 +23,8 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use super::config::Registration;
+use super::limits::client_key;
 use super::store::{self, DeviceAuth, NewDevice, RecordChange};
 use super::{AccountId, HubError, HubState, Secret};
 use crate::publication::format::{BlobPath, Envelope, PublicationId, SUPPORTED_VERSIONS};
@@ -108,18 +110,32 @@ async fn require_device(State(state): State<HubState>, mut req: Request, next: N
     next.run(req).await
 }
 
-/// Middleware: the per-address budget of the routes without a token. A loopback peer
-/// (a reverse proxy on this machine) shares one budget with all others.
-async fn limit_public(State(state): State<HubState>, req: Request, next: Next) -> Response {
-    let address = peer_addr(&req)
-        .map(|a| a.ip().to_canonical())
-        .filter(|ip| !ip.is_loopback());
+/// The `X-Forwarded-For` header name.
+const X_FORWARDED_FOR: &str = "x-forwarded-for";
+
+/// Middleware: the per-address budget of the routes without a token, keyed by
+/// [`client_key`] (never logged).
+async fn limit_public(State(state): State<HubState>, mut req: Request, next: Next) -> Response {
+    let forwarded: Option<Vec<&str>> = (req.headers().get_all(X_FORWARDED_FOR).iter())
+        .map(|value| value.to_str().ok())
+        .collect();
+    let address = client_key(
+        peer_addr(&req).map(|a| a.ip()),
+        forwarded.as_deref(),
+        &state.0.trusted_proxies,
+    );
     if let Err(wait) = state.0.public.begin(address, Instant::now()) {
         tracing::debug!("rate limited a request without a token");
         return HubError::RateLimited(wait).into_response();
     }
+    req.extensions_mut().insert(ClientKey(address));
     next.run(req).await
 }
+
+/// The key of the request's client for the per-address limits (set by
+/// [`limit_public`]).
+#[derive(Debug, Clone, Copy)]
+struct ClientKey(Option<std::net::IpAddr>);
 
 /// The token of an `Authorization: Bearer <token>` header.
 fn bearer(headers: &HeaderMap) -> Option<Secret> {
@@ -176,14 +192,22 @@ fn issued(device: NewDevice) -> Response {
     (StatusCode::CREATED, Json(body)).into_response()
 }
 
-/// `GET /api/info`: what this hub supports and allows.
-async fn info(State(state): State<HubState>) -> Json<serde_json::Value> {
+/// `GET /api/info`: what this hub supports and allows, and whether it accepts new
+/// data (`accepting`: below `max_total_bytes`).
+async fn info(State(state): State<HubState>) -> Result<Json<serde_json::Value>, HubError> {
+    let accepting = state.accepting().await?;
     let config = state.config();
-    Json(json!({
+    Ok(Json(json!({
         "service": "shelfgauge-hub",
         "version": crate::VERSION,
         "formats": SUPPORTED_VERSIONS,
         "registration": config.accounts.registration.as_str(),
+        "accepting": accepting,
+        "operator": {
+            "name": config.operator.name,
+            "contact": config.operator.contact,
+            "terms": state.hub().terms().is_some(),
+        },
         "limits": {
             "max_blob_bytes": config.limits.max_blob_bytes,
             "max_record_bytes": MAX_RECORD_BYTES,
@@ -197,7 +221,7 @@ async fn info(State(state): State<HubState>) -> Json<serde_json::Value> {
             "max_publications": config.quotas.max_publications,
             "max_devices": config.quotas.max_devices,
         },
-    }))
+    })))
 }
 
 /// The body of `POST /api/account`.
@@ -212,9 +236,19 @@ struct NewAccount {
 /// `POST /api/account`: a new account and its first device token.
 async fn create_account(
     State(state): State<HubState>,
+    Extension(ClientKey(client)): Extension<ClientKey>,
     body: Result<Json<NewAccount>, JsonRejection>,
 ) -> Result<Response, HubError> {
     let body = json_body(body)?;
+    // Invite codes are their own limit; only open registration counts addresses.
+    let open = state.config().accounts.registration == Registration::Open;
+    if open {
+        state
+            .0
+            .new_accounts
+            .check(client, Instant::now())
+            .map_err(HubError::AccountLimit)?;
+    }
     let hash: [u8; 32] = decode(&body.recovery_hash, 32, "invalid recovery hash")?
         .try_into()
         .map_err(|_| HubError::BadRequest("invalid recovery hash"))?;
@@ -234,6 +268,9 @@ async fn create_account(
             )
         })
         .await?;
+    if open {
+        state.0.new_accounts.count(client);
+    }
     tracing::Span::current().record("account", device.account);
     tracing::info!(
         account = device.account,
@@ -248,15 +285,16 @@ async fn account(
     State(state): State<HubState>,
     Extension(auth): Extension<DeviceAuth>,
 ) -> Result<Json<serde_json::Value>, HubError> {
-    let (id, usage) = state
+    let defaults = state.config().quotas.clone();
+    let (id, usage, quotas) = state
         .db(move |conn| {
             Ok((
                 store::account_id(conn, auth.account)?,
                 store::usage(conn, auth.account)?,
+                store::effective_quotas(conn, auth.account, &defaults)?,
             ))
         })
         .await?;
-    let quotas = &state.config().quotas;
     Ok(Json(json!({
         "account": id.to_string(),
         "device": auth.device,
@@ -460,10 +498,13 @@ async fn put_blob(
         ));
     }
     let quotas = state.config().quotas.clone();
+    let total = state.config().limits.max_total_bytes;
     let now = state.now();
     let size = body.len() as u64;
     let reservation = state
-        .db(move |conn| store::reserve_blob(conn, auth.account, &id, path, size, &quotas, now))
+        .db(move |conn| {
+            store::reserve_blob(conn, auth.account, &id, path, size, &quotas, total, now)
+        })
         .await?;
     if let Err(e) = state
         .files(move |blobs| blobs.write(&id, path, &body))
@@ -632,10 +673,11 @@ async fn push(
         });
     }
     let quotas = state.config().quotas.clone();
+    let total = state.config().limits.max_total_bytes;
     let now = state.now();
     let count = changes.len();
     let seqs = state
-        .db(move |conn| store::push_records(conn, auth.account, &changes, &quotas, now))
+        .db(move |conn| store::push_records(conn, auth.account, &changes, &quotas, total, now))
         .await?;
     tracing::debug!(account = auth.account, count, "records pushed");
     let seq = seqs.last().copied();

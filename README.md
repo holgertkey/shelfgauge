@@ -473,7 +473,11 @@ are anonymous (no e-mail); a library registers one with a one-time **invite code
 from `shelfgauge hub invite` (valid 7 days), unless `[accounts] registration = "open"`.
 Other commands: `shelfgauge hub accounts` lists accounts by internal number with their
 usage (no secrets), `shelfgauge hub takedown <publication-id>` deletes a publication
-(the id from its `/r/<id>` link) and refuses that id from now on.
+(the id from its `/r/<id>` link) and refuses that id from now on, `shelfgauge hub
+delete-account <number>` deletes an account with everything it stores, and
+`shelfgauge hub quota <number> --max-bytes 2GiB` gives one account its own quotas
+(`--max-publications`, `--max-devices`; `0` is no limit, `default` the hub's value;
+without options it shows them).
 
 The hub listens on `127.0.0.1:8743` and has no TLS of its own: **put it behind a
 reverse proxy with HTTPS**, which phones also need for offline reading. With Caddy:
@@ -484,17 +488,29 @@ hub.example.org {
 }
 ```
 
-and `allowed_hosts = ["hub.example.org"]` in the `[server]` section of `hub.toml` (with
-nginx, pass `proxy_set_header Host $host;` as for a library). Settings in `hub.toml`:
+and in the `[server]` section of `hub.toml` `allowed_hosts = ["hub.example.org"]` and
+`trusted_proxies = ["127.0.0.1", "::1"]`, so the hub counts its limits per client
+instead of per proxy (with nginx, pass `proxy_set_header Host $host;` as for a library
+and `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`). Settings in
+`hub.toml`:
 
 - `[quotas]` per account: `max_bytes`, `max_publications`, `max_devices` (0 = no
   limit, the default);
 - `[limits]`: `max_blob_bytes` (one part or image of a book, 64 MiB),
-  `publication_expiry_days` (a book not opened for that many days is deleted; 0 =
-  never, the default), `requests_per_minute` per device (600) and
-  `public_requests_per_hour` (60) for registering, pairing and recovering per client
-  address;
-- `[accounts]`: `registration`, `max_accounts`, `invite_days`.
+  `max_total_bytes` (all accounts together; beyond it the hub takes no new books or
+  marks; 0 = no limit, the default), `publication_expiry_days` (a book not opened for
+  that many days is deleted; 0 = never, the default), `requests_per_minute` per
+  device (600) and `public_requests_per_hour` (60) for registering, pairing and
+  recovering per client address (an IPv6 address counts by its /64);
+- `[accounts]`: `registration`, `max_accounts`, `invite_days`,
+  `new_accounts_per_address_per_day` (3, with open registration),
+  `account_expiry_days` (an account none of whose libraries and devices made a
+  request for that many days is deleted; 0 = never, the default);
+- `[server] trusted_proxies`: addresses or ranges (`10.0.0.0/8`) of reverse proxies
+  whose `X-Forwarded-For` names the client;
+- `[operator]`: `name` and `contact` (an e-mail address or `https://` URL for abuse
+  reports) and `terms_file` (`terms.txt` in the data directory, plain text), shown at
+  `/terms` and on the reader's This device page.
 
 **Connecting a library**: set `url` in the `[hub]` section of the library's
 `config.toml` and restart. Then each profile opens **My profile → Phone and other
@@ -544,7 +560,8 @@ library, or a book from the shelf, removes it from the phone at its next connect
 **This device** (the button at the right of the top bar on My books) shows which library
 the phone is paired with, when it last synced and what waits to be sent (**Update
 now**), what it keeps offline (**Remove downloaded books** frees the space; they
-download again when opened), your account's usage on the hub and the hub's version.
+download again when opened), your account's usage on the hub, the hub's version, and
+who runs it with their contact and terms of use when the hub names them.
 **Forget this device** sends the marks made on the phone, unpairs it on the hub and
 removes its books, marks and keys; without a connection it asks first and warns about
 changes not sent yet, and the library lists the device until you remove it there.
@@ -561,10 +578,74 @@ Open file. Books protected by DRM are never exported. Each download is a new cop
 files downloaded earlier keep opening. Removing the book from the shelf removes the
 copy from the phone; opening the file again puts the book back.
 
-Behind a proxy on the same machine all clients share one budget for registering,
-pairing and recovering; add a rate limit in the proxy for a hub on the internet. The
-hub logs no tokens, secrets, account or publication ids; `--log-format json` suits a
-log collector.
+Without `trusted_proxies`, all clients behind a proxy on the same machine share one
+budget for registering, pairing and recovering, and with open registration also the 3
+new accounts a day (when upgrading an open hub to 0.20.0, set `trusted_proxies` or
+`new_accounts_per_address_per_day`). The hub logs no
+tokens, secrets, account or publication ids, nor client addresses; `--log-format json`
+suits a log collector.
+
+**Checking a hub**: `shelfgauge hub check https://hub.example.org` (no data directory
+needed) fetches every file of the reader app from the hub and compares it with the
+copy built into the program: with the same version as the hub, "All N files … match"
+means the hub serves the released reader unchanged. It shows what the hub serves now
+and to you, not what it serves to others, and not the copy a phone already keeps.
+
+### Running a public hub
+
+What a hub for people you do not know needs beyond the recipe above:
+
+- **A server**: a small VPS with local SSD and traffic included; books are stored
+  encrypted as they are uploaded (a plain-text book is 0.1–1.5 MB, an illustrated one
+  tens of MB).
+- **HTTPS**: Caddy as above (it gets and renews the certificate itself); a firewall
+  that lets in only 22, 80 and 443 (`ufw allow 22,80,443/tcp`).
+- **Its own user** (`useradd --system shelfgauge`, owner of the data directory) **and a
+  systemd unit**, `/etc/systemd/system/shelfgauge-hub.service`:
+
+  ```ini
+  [Unit]
+  Description=shelfgauge hub
+  After=network-online.target
+  Wants=network-online.target
+
+  [Service]
+  User=shelfgauge
+  ExecStart=/usr/local/bin/shelfgauge hub --data /srv/shelfgauge-hub --log-format json
+  Restart=on-failure
+  NoNewPrivileges=yes
+  ProtectSystem=strict
+  ProtectHome=yes
+  PrivateTmp=yes
+  ReadWritePaths=/srv/shelfgauge-hub
+
+  [Install]
+  WantedBy=multi-user.target
+  ```
+
+- **Limits in `hub.toml`** (a start; adjust to the disk): `registration = "open"`
+  (or `"invite"` for a closed beta), `max_accounts` set (never 0 on an open hub),
+  `new_accounts_per_address_per_day = 3`, `account_expiry_days = 365`;
+  `[quotas] max_bytes = 1073741824` (1 GiB), `max_publications = 300`,
+  `max_devices = 10`; `[limits] publication_expiry_days = 180` and `max_total_bytes`
+  at about 80 % of the free disk; `trusted_proxies` for the proxy.
+- **Terms and contact**: `[operator] name` and `contact`, and a `terms.txt` written by
+  you for your jurisdiction (this project gives no legal text). Points to cover: what
+  is stored (encrypted books and marks, device names, times of use), that the hub
+  cannot read them, the limits and when books and accounts are deleted, how to report
+  abuse and how takedowns work (`hub takedown <publication id>`), no warranty.
+- **Backups**: the database first, then the blobs (a blob without a database row is
+  harmless, the reverse is a broken book):
+  `sqlite3 /srv/shelfgauge-hub/hub.sqlite ".backup /backup/hub.sqlite"`, then
+  `rsync -a /srv/shelfgauge-hub/blobs/ /backup/blobs/` (or Litestream for the database
+  and the same `rsync`). Restore both, with `hub.toml` and `terms.txt`, into a data
+  directory and start the hub.
+- **Watching it**: an external check of `GET https://hub.example.org/api/info` (it
+  says `"accepting": false` when `max_total_bytes` is reached), disk space, and the
+  logs of the unit (`journalctl -u shelfgauge-hub`); keep proxy access logs short or
+  off (Caddy writes none unless `log` is set).
+- **Updates**: replace the binary and restart; the database migrates itself. Visitors
+  can compare the hub with a release using `shelfgauge hub check`.
 
 ## Changelog
 

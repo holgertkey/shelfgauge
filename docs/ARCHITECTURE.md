@@ -577,7 +577,8 @@ daemon logs to journald or the container log), no metrics endpoint.
   kind, public account ids and publication ids (`BookKey`, `PublicationId`, the hub's
   `Secret` and `AccountId` have redacted `Debug` output; checked for building and
   sealing a publication since 0.17.0 and for every hub route since Phase 24: the hub
-  logs route templates, accounts as `account = N`, and no bodies). Books
+  logs route templates, accounts as `account = N`, and no bodies; nor the client
+  addresses it reads from `X-Forwarded-For` behind a trusted proxy, since 0.20.0). Books
   are named by id or library-relative path, never by absolute path at `info` and
   above. Untrusted values (`Host`/`Origin` headers, paths from archives, parser
   messages) are logged with `?` (Debug escapes newlines and control characters) or as
@@ -837,11 +838,45 @@ Built in Phase 24 (0.18.0); the reader app (Phase 26) and the instance side (Pha
 - **Limits**: body limits per route (64 KiB JSON, 16 MiB / 500 records per push, 1 MiB
   per record, `max_blob_bytes` per blob), quotas checked inside the write transaction
   (a refused blob is not written, a refused push stores nothing), a token bucket per
-  device and a fixed hourly window per non-loopback address for the routes without a
-  token (loopback peers, a proxy on the same machine, share one budget; forwarded
-  headers are never read). Expiry (`publication_expiry_days`, last opening = the
-  last manifest fetch, written at most hourly) runs on start and daily; `hub
-  takedown` deletes a publication and remembers its id.
+  device and a fixed hourly window per client address for the routes without a
+  token. Expiry (`publication_expiry_days`, last opening = the last manifest fetch,
+  written at most hourly) runs on start and daily; `hub takedown` deletes a
+  publication and remembers its id.
+- **Public hub readiness** (0.20.0):
+  - *Client address* (`hub::limits::client_key`): the TCP peer; for a peer in
+    `[server] trusted_proxies` (addresses or CIDR ranges, empty by default) the
+    rightmost `X-Forwarded-For` entry that is not itself trusted (Caddy replaces a
+    client's value, nginx's `$proxy_add_x_forwarded_for` appends to it; both are
+    right this way). No usable value, or an untrusted loopback peer, gives the shared
+    budget, never the proxy's own address. IPv6 clients are keyed by their /64. This
+    is the hub's exception to "forwarded values are never read" (the library's rule,
+    above, is about reach, not budgets); the address is never logged.
+  - *Open registration*: `new_accounts_per_address_per_day` (3; counted only on
+    success, in memory; invite codes are not counted) answers `429 account_limit`
+    with `Retry-After`. `[limits] max_total_bytes` bounds blobs + records of all
+    accounts: a write that grows the total beyond it answers `507 hub_full` (a
+    replacement that does not grow, a smaller record and a deletion pass);
+    `GET /api/info` has `accepting` (cached for a minute, since the route has no
+    token). `[accounts] account_expiry_days` deletes an account none of whose devices
+    made a request for that long, with everything it stores (daily, with publication
+    expiry); `hub delete-account <n>` does it by hand. No proof of work (accounts are
+    bounded by these controls and `max_accounts`).
+  - *Own quotas*: migration 2 adds nullable `max_bytes`, `max_publications`,
+    `max_devices` to `accounts` (NULL = the hub's `[quotas]`, 0 = no limit), set with
+    `hub quota <n>`; `store::effective_quotas` is used by pairing, recovery, blob
+    reservation and push, and `GET /api/account` reports the effective values
+    (`/api/info` the hub's).
+  - *Operator*: `[operator]` `name`, `contact` (one line each), `terms_file` (a plain
+    UTF-8 file in the data directory, at most 64 KiB, read when the hub opens);
+    `GET /terms` renders it escaped, paragraphs on blank lines, with a link only for a
+    `mailto:` address or an `https://` URL, without the app script and not cached by
+    the worker. `/api/info` has `operator {name, contact, terms}`; the reader's This
+    device page shows them.
+  - *`hub check <url>`* (`hub::check`): renders the shell pages, the worker and the
+    manifest with the URL's base path, fetches every embedded file from the hub and
+    compares bytes and the start page's CSP. With the same version this proves what
+    the hub serves now to this client — not what it serves others or what a device
+    has cached.
 - **Layers**: the request trace (`request{id, method, route, account}`), the hardening
   headers with the §11 CSP (`script-src 'self' 'wasm-unsafe-eval'`, `img-src 'self'
   blob:`, no inline code) and `Referrer-Policy: no-referrer`, and the `Host` allowlist
@@ -857,8 +892,10 @@ Built in Phase 24 (0.18.0); the reader app (Phase 26) and the instance side (Pha
   "Reader app".
 - **Tests**: `tests/hub.rs` (router with a settable clock: invites, pairing expiry and
   single use, recovery, revocation, blob round trip, account isolation, quotas,
-  expiry, takedown, sync paging and tombstones, body limits, rate limits, `Host`,
-  shell, base path) and `tests/logging.rs`
+  expiry, takedown, sync paging and tombstones, body limits, rate limits, trusted
+  proxies, the account limit, a full hub, own quotas, account deletion and expiry,
+  terms, `Host`, shell, base path), `tests/hub_client.rs` (`hub check` against a
+  served and a tampered hub) and `tests/logging.rs`
   (`hub_secrets_and_publication_ids_are_never_logged`).
 
 ### Reader app (0.18.0)
