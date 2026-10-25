@@ -17,7 +17,7 @@ use crate::storage::{StorageError, migrations};
 
 /// Schema migrations of the hub database; index `i` upgrades version `i` to `i + 1`.
 /// Append only once a hub has been released.
-pub(crate) const MIGRATIONS: &[&str] = &[V1, V2];
+pub(crate) const MIGRATIONS: &[&str] = &[V1, V2, V3];
 
 /// Version 1.
 ///
@@ -103,6 +103,46 @@ const V2: &str = r#"
 ALTER TABLE accounts ADD COLUMN max_bytes INTEGER;
 ALTER TABLE accounts ADD COLUMN max_publications INTEGER;
 ALTER TABLE accounts ADD COLUMN max_devices INTEGER;
+"#;
+
+/// Version 3: the bytes of all blobs and records in one row, `hub_bytes`, kept by
+/// triggers (foreign key cascades fire them too), so `max_total_bytes` is checked
+/// without summing every row (440 ms for 2 million records, `.debug/perf-hub.md`).
+const V3: &str = r#"
+CREATE TABLE hub_bytes (
+    id    INTEGER PRIMARY KEY CHECK (id = 1),
+    bytes INTEGER NOT NULL
+);
+
+INSERT INTO hub_bytes (id, bytes) VALUES (1,
+    coalesce((SELECT sum(size) FROM blobs), 0)
+  + coalesce((SELECT sum(length(data)) FROM records), 0));
+
+CREATE TRIGGER blobs_added AFTER INSERT ON blobs BEGIN
+    UPDATE hub_bytes SET bytes = bytes + NEW.size WHERE id = 1;
+END;
+
+CREATE TRIGGER blobs_resized AFTER UPDATE OF size ON blobs BEGIN
+    UPDATE hub_bytes SET bytes = bytes - OLD.size + NEW.size WHERE id = 1;
+END;
+
+CREATE TRIGGER blobs_removed AFTER DELETE ON blobs BEGIN
+    UPDATE hub_bytes SET bytes = bytes - OLD.size WHERE id = 1;
+END;
+
+CREATE TRIGGER records_added AFTER INSERT ON records BEGIN
+    UPDATE hub_bytes SET bytes = bytes + coalesce(length(NEW.data), 0) WHERE id = 1;
+END;
+
+CREATE TRIGGER records_changed AFTER UPDATE OF data ON records BEGIN
+    UPDATE hub_bytes
+    SET bytes = bytes - coalesce(length(OLD.data), 0) + coalesce(length(NEW.data), 0)
+    WHERE id = 1;
+END;
+
+CREATE TRIGGER records_removed AFTER DELETE ON records BEGIN
+    UPDATE hub_bytes SET bytes = bytes - coalesce(length(OLD.data), 0) WHERE id = 1;
+END;
 "#;
 
 /// `last_seen_at` and `last_opened_at` are written at most this often (seconds).
@@ -383,14 +423,11 @@ pub fn effective_quotas(
         .over(defaults))
 }
 
-/// The bytes the hub stores for all accounts: blobs and records.
+/// The bytes the hub stores for all accounts: blobs and records (kept in
+/// `hub_bytes`, kept by triggers of schema version 3).
 pub fn total_bytes(conn: &Connection) -> Result<u64, HubError> {
-    let bytes: i64 = conn.query_row(
-        "SELECT coalesce((SELECT sum(size) FROM blobs), 0)
-              + coalesce((SELECT sum(length(data)) FROM records), 0)",
-        [],
-        |r| r.get(0),
-    )?;
+    let bytes: i64 =
+        conn.query_row("SELECT bytes FROM hub_bytes WHERE id = 1", [], |r| r.get(0))?;
     Ok(bytes as u64)
 }
 
@@ -785,26 +822,38 @@ pub fn takedown(conn: &Connection, id: &PublicationId, now: i64) -> Result<Optio
     Ok(account)
 }
 
-/// Deletes the publications not opened for `days` days (none if `days` is 0) and
-/// returns their ids (the caller removes the files).
-pub fn expire(conn: &Connection, days: u32, now: i64) -> Result<Vec<PublicationId>, HubError> {
+/// Deletes the publications not opened for `days` days (none if `days` is 0), at most
+/// `limit` of them, and returns their ids (the caller removes the files).
+pub fn expire(
+    conn: &Connection,
+    days: u32,
+    now: i64,
+    limit: usize,
+) -> Result<Vec<PublicationId>, HubError> {
     if days == 0 {
         return Ok(Vec::new());
     }
     let cutoff = now - i64::from(days) * DAY;
-    let mut stmt =
-        conn.prepare("DELETE FROM publications WHERE last_opened_at <= ?1 RETURNING public_id")?;
-    let ids = stmt.query_map([cutoff], |r| Ok(PublicationId::new(r.get(0)?)))?;
+    let mut stmt = conn.prepare(
+        "DELETE FROM publications
+         WHERE id IN (SELECT id FROM publications WHERE last_opened_at <= ?1 LIMIT ?2)
+         RETURNING public_id",
+    )?;
+    let ids = stmt.query_map(params![cutoff, limit as i64], |r| {
+        Ok(PublicationId::new(r.get(0)?))
+    })?;
     Ok(ids.collect::<Result<_, _>>()?)
 }
 
 /// Deletes the accounts none of whose devices (revoked ones included) made a request
-/// for `days` days (none if `days` is 0), with everything they store; returns the
-/// internal ids and the ids of their publications (the caller removes the files).
+/// for `days` days (none if `days` is 0), with everything they store, at most `limit`
+/// of them; returns the internal ids and the ids of their publications (the caller
+/// removes the files).
 pub fn expire_accounts(
     conn: &mut Connection,
     days: u32,
     now: i64,
+    limit: usize,
 ) -> Result<(Vec<i64>, Vec<PublicationId>), HubError> {
     if days == 0 {
         return Ok((Vec::new(), Vec::new()));
@@ -815,9 +864,10 @@ pub fn expire_accounts(
         let mut stmt = tx.prepare(
             "SELECT a.id FROM accounts a
              WHERE coalesce((SELECT max(last_seen_at) FROM devices WHERE account_id = a.id),
-                            a.created_at) <= ?1",
+                            a.created_at) <= ?1
+             LIMIT ?2",
         )?;
-        let rows = stmt.query_map([cutoff], |r| r.get(0))?;
+        let rows = stmt.query_map(params![cutoff, limit as i64], |r| r.get(0))?;
         rows.collect::<Result<_, _>>()?
     };
     let mut ids = Vec::new();
@@ -869,9 +919,8 @@ pub fn push_records(
 ) -> Result<Vec<i64>, HubError> {
     let tx = conn.transaction()?;
     let quotas = effective_quotas(&tx, account, defaults)?;
-    let checks = quotas.max_bytes > 0 || max_total_bytes > 0;
     let before = if max_total_bytes > 0 {
-        usage(&tx, account)?.bytes
+        total_bytes(&tx)?
     } else {
         0
     };
@@ -891,14 +940,15 @@ pub fn push_records(
         )?;
         seqs.push(seq);
     }
-    // Without limits, a push costs no usage query.
-    let after = if checks { usage(&tx, account)?.bytes } else { 0 };
-    if quotas.max_bytes > 0 && after > quotas.max_bytes {
+    if quotas.max_bytes > 0 && usage(&tx, account)?.bytes > quotas.max_bytes {
         return Err(HubError::Quota("bytes"));
     }
-    if max_total_bytes > 0 && after > before {
+    if max_total_bytes > 0 {
         // Deletions and changes that do not grow are let through on a full hub.
-        check_total(&tx, max_total_bytes)?;
+        let after = total_bytes(&tx)?;
+        if after > before && after > max_total_bytes {
+            return Err(HubError::Full);
+        }
     }
     tx.commit()?;
     Ok(seqs)
@@ -1255,10 +1305,10 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(
-            expire_accounts(&mut conn, 0, later + DAY).unwrap().0,
+            expire_accounts(&mut conn, 0, later + DAY, 10).unwrap().0,
             [0i64; 0]
         );
-        let (gone, ids) = expire_accounts(&mut conn, 30, later).unwrap();
+        let (gone, ids) = expire_accounts(&mut conn, 30, later, 10).unwrap();
         assert_eq!(gone, [idle.account]);
         assert_eq!(ids, [id]);
         assert_eq!(device_by_token(&conn, &idle.token, later).unwrap(), None);
@@ -1290,5 +1340,195 @@ mod tests {
         );
         assert_eq!(delete_account(&mut conn, device.account).unwrap(), None);
         assert!(accounts(&conn).unwrap().is_empty());
+    }
+
+    /// The bytes of all blobs and records, summed over every row.
+    fn summed_bytes(conn: &Connection) -> u64 {
+        conn.query_row(
+            "SELECT coalesce((SELECT sum(size) FROM blobs), 0)
+                  + coalesce((SELECT sum(length(data)) FROM records), 0)",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap() as u64
+    }
+
+    #[test]
+    fn the_byte_counter_follows_every_change() {
+        let mut conn = open_in_memory();
+        let one = account(&mut conn);
+        let two = account(&mut conn);
+        let quotas = QuotasConfig::default();
+        let check = |conn: &Connection, expected: u64| {
+            assert_eq!(total_bytes(conn).unwrap(), expected);
+            assert_eq!(summed_bytes(conn), expected);
+        };
+        let reserve = |conn: &mut Connection, account: i64, id: &PublicationId, n: u32, size| {
+            reserve_blob(conn, account, id, BlobPath::Part(n), size, &quotas, 0, 0).unwrap()
+        };
+        let push = |conn: &mut Connection, account: i64, changes: &[RecordChange]| {
+            push_records(conn, account, changes, &quotas, 0, 0).unwrap();
+        };
+        let a = PublicationId::new([1; 16]);
+        let b = PublicationId::new([2; 16]);
+        check(&conn, 0);
+        reserve(&mut conn, one.account, &a, 0, 10);
+        reserve(&mut conn, one.account, &a, 1, 20);
+        check(&conn, 30);
+        // Replaced larger, then smaller.
+        reserve(&mut conn, one.account, &a, 0, 15);
+        reserve(&mut conn, one.account, &a, 1, 5);
+        check(&conn, 20);
+        // A failed upload: a new blob is removed, a replacement gets its old size back.
+        let new = reserve(&mut conn, one.account, &a, 2, 7);
+        release_blob(&conn, new, BlobPath::Part(2)).unwrap();
+        let replaced = reserve(&mut conn, one.account, &a, 0, 100);
+        release_blob(&conn, replaced, BlobPath::Part(0)).unwrap();
+        check(&conn, 20);
+        // Records: new, changed, a tombstone, a record written again.
+        push(
+            &mut conn,
+            two.account,
+            &[change("x", &[0; 8]), change("y", &[0; 4])],
+        );
+        check(&conn, 32);
+        push(&mut conn, two.account, &[change("x", &[0; 3])]);
+        check(&conn, 27);
+        let tombstone = RecordChange {
+            data: None,
+            ..change("y", &[])
+        };
+        push(&mut conn, two.account, &[tombstone]);
+        check(&conn, 23);
+        push(&mut conn, two.account, &[change("y", &[0; 6])]);
+        check(&conn, 29);
+        // Deletions through foreign key cascades: a publication, an account.
+        reserve(&mut conn, two.account, &b, 0, 50);
+        check(&conn, 79);
+        delete_publication(&conn, two.account, &b).unwrap();
+        check(&conn, 29);
+        delete_account(&mut conn, one.account).unwrap();
+        check(&conn, 9);
+        delete_account(&mut conn, two.account).unwrap();
+        check(&conn, 0);
+    }
+
+    #[test]
+    fn migration_3_counts_what_is_already_stored() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::storage::configure(&conn).unwrap();
+        migrations::apply(&mut conn, &MIGRATIONS[..2]).unwrap();
+        let device = account(&mut conn);
+        reserve_blob(
+            &mut conn,
+            device.account,
+            &PublicationId::new([1; 16]),
+            BlobPath::Part(0),
+            40,
+            &QuotasConfig::default(),
+            0,
+            0,
+        )
+        .unwrap();
+        push_records(
+            &mut conn,
+            device.account,
+            &[change("x", &[0; 2])],
+            &QuotasConfig::default(),
+            0,
+            0,
+        )
+        .unwrap();
+        migrations::apply(&mut conn, MIGRATIONS).unwrap();
+        assert_eq!(total_bytes(&conn).unwrap(), 42);
+    }
+
+    #[test]
+    fn expiry_deletes_at_most_its_limit_per_call() {
+        let mut conn = open_in_memory();
+        // `account` creates all three at 1000.
+        let ids: Vec<i64> = (0..3).map(|_| account(&mut conn).account).collect();
+        for (n, account) in ids.iter().enumerate() {
+            reserve_blob(
+                &mut conn,
+                *account,
+                &PublicationId::new([n as u8; 16]),
+                BlobPath::Part(0),
+                1,
+                &QuotasConfig::default(),
+                0,
+                1000,
+            )
+            .unwrap();
+        }
+        let later = 1000 + 30 * DAY;
+        assert_eq!(expire(&conn, 30, later, 2).unwrap().len(), 2);
+        assert_eq!(expire(&conn, 30, later, 2).unwrap().len(), 1);
+        assert!(expire(&conn, 30, later, 2).unwrap().is_empty());
+        let (first, _) = expire_accounts(&mut conn, 30, later, 2).unwrap();
+        let (second, _) = expire_accounts(&mut conn, 30, later, 2).unwrap();
+        assert_eq!([first, second].concat(), ids);
+        assert!(accounts(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_account_list_matches_each_accounts_usage() {
+        let mut conn = open_in_memory();
+        let quotas = QuotasConfig::default();
+        let empty = account(&mut conn);
+        let full = account(&mut conn);
+        let id = PublicationId::new([9; 16]);
+        reserve_blob(
+            &mut conn,
+            full.account,
+            &id,
+            BlobPath::Part(0),
+            30,
+            &quotas,
+            0,
+            0,
+        )
+        .unwrap();
+        reserve_blob(
+            &mut conn,
+            full.account,
+            &id,
+            BlobPath::Manifest,
+            5,
+            &quotas,
+            0,
+            0,
+        )
+        .unwrap();
+        push_records(
+            &mut conn,
+            full.account,
+            &[change("x", &[0; 7])],
+            &quotas,
+            0,
+            0,
+        )
+        .unwrap();
+        let pairing = create_pairing(&conn, full.account, 0).unwrap();
+        let phone = pair(&mut conn, &pairing, &quotas, None, 0).unwrap();
+        revoke_device(&conn, full.account, phone.device, 0).unwrap();
+        let own = AccountQuotas {
+            max_bytes: Some(100),
+            max_publications: None,
+            max_devices: Some(0),
+        };
+        set_account_quotas(&conn, full.account, &own).unwrap();
+        let list = accounts(&conn).unwrap();
+        assert_eq!(list.len(), 2);
+        for (summary, account) in list.iter().zip([empty.account, full.account]) {
+            assert_eq!(summary.id, account);
+            assert_eq!(summary.usage, usage(&conn, account).unwrap());
+            assert_eq!(
+                summary.quotas,
+                account_quotas(&conn, account).unwrap().unwrap()
+            );
+        }
+        assert_eq!(list[1].usage.bytes, 42);
+        assert_eq!(list[1].usage.devices, 1);
     }
 }

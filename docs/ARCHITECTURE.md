@@ -855,11 +855,14 @@ Built in Phase 24 (0.18.0); the reader app (Phase 26) and the instance side (Pha
     success, in memory; invite codes are not counted) answers `429 account_limit`
     with `Retry-After`. `[limits] max_total_bytes` bounds blobs + records of all
     accounts: a write that grows the total beyond it answers `507 hub_full` (a
-    replacement that does not grow, a smaller record and a deletion pass);
+    replacement that does not grow, a smaller record and a deletion pass); the total
+    is one row, `hub_bytes`, kept by triggers on `blobs` and `records` (migration 3;
+    foreign key cascades fire them too), so a check reads one number;
     `GET /api/info` has `accepting` (cached for a minute, since the route has no
     token). `[accounts] account_expiry_days` deletes an account none of whose devices
     made a request for that long, with everything it stores (daily, with publication
-    expiry); `hub delete-account <n>` does it by hand. No proof of work (accounts are
+    expiry; both in transactions of 20 with a short pause between, so requests are
+    answered meanwhile); `hub delete-account <n>` does it by hand. No proof of work (accounts are
     bounded by these controls and `max_accounts`).
   - *Own quotas*: migration 2 adds nullable `max_bytes`, `max_publications`,
     `max_devices` to `accounts` (NULL = the hub's `[quotas]`, 0 = no limit), set with

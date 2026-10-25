@@ -305,6 +305,12 @@ type Clock = Arc<dyn Fn() -> i64 + Send + Sync>;
 /// The largest terms of use file read, in bytes.
 pub const MAX_TERMS_BYTES: u64 = 64 * 1024;
 
+/// Publications or accounts deleted per transaction by [`Hub::expire`].
+const EXPIRY_BATCH: usize = 20;
+
+/// The pause between two expiry transactions, so waiting requests get the database.
+const EXPIRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(10);
+
 /// An opened hub data directory: its config, database and blobs.
 pub struct Hub {
     config: HubConfig,
@@ -408,20 +414,40 @@ impl Hub {
 
     /// Deletes the publications not opened for `publication_expiry_days` and the
     /// accounts idle for `account_expiry_days`; returns how many of each.
+    ///
+    /// Works in transactions of `EXPIRY_BATCH` and lets requests in between: one
+    /// transaction for 1000 idle accounts kept the hub from answering for 12 s
+    /// (`.debug/perf-hub.md`).
     pub fn expire(&self, now: i64) -> Result<(usize, usize), HubError> {
         let days = self.config.limits.publication_expiry_days;
-        let ids = store::expire(&self.lock(), days, now)?;
-        self.remove_blobs(&ids);
-        if !ids.is_empty() {
-            tracing::info!(count = ids.len(), "expired publications deleted");
+        let mut publications = 0;
+        loop {
+            let ids = store::expire(&self.lock(), days, now, EXPIRY_BATCH)?;
+            self.remove_blobs(&ids);
+            publications += ids.len();
+            if ids.len() < EXPIRY_BATCH {
+                break;
+            }
+            std::thread::sleep(EXPIRY_PAUSE);
+        }
+        if publications > 0 {
+            tracing::info!(count = publications, "expired publications deleted");
         }
         let days = self.config.accounts.account_expiry_days;
-        let (accounts, account_ids) = store::expire_accounts(&mut self.lock(), days, now)?;
-        self.remove_blobs(&account_ids);
-        if !accounts.is_empty() {
-            tracing::info!(count = accounts.len(), "idle accounts deleted");
+        let mut accounts = 0;
+        loop {
+            let (gone, ids) = store::expire_accounts(&mut self.lock(), days, now, EXPIRY_BATCH)?;
+            self.remove_blobs(&ids);
+            accounts += gone.len();
+            if gone.len() < EXPIRY_BATCH {
+                break;
+            }
+            std::thread::sleep(EXPIRY_PAUSE);
         }
-        Ok((ids.len(), accounts.len()))
+        if accounts > 0 {
+            tracing::info!(count = accounts, "idle accounts deleted");
+        }
+        Ok((publications, accounts))
     }
 
     /// Deletes the account with the internal id `account` and everything it stores;
