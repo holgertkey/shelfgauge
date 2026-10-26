@@ -1128,7 +1128,7 @@ unchanged (its golden test must not change). TXT and `.fbz` followed in 0.9.0, H
 
 ### Book files (0.19.0)
 
-A publication in one file (decisions in `.debug/sg-v2devplan.md`, Phase 27):
+A publication in one file (decisions in `.debug/docs/sg-v2devplan.md`, Phase 27):
 
 - **Container** (`shelfgauge_core::publication::container`): a zip of stored entries
   in a fixed order — `mimetype` (no extra field, so the type is at byte 38), `sg.json`,
