@@ -1214,9 +1214,11 @@ The repository is a Cargo workspace of three crates with one version
 `shelfgauge::config::{ReaderConfig, SplitMode}`), so code and tests use one path for
 both. The app depends on the core with `path` and an exact `version = "=X.Y.Z"` (one
 line in `[workspace.dependencies]`; Cargo refuses to build while it differs from the
-workspace version). The release workflow publishes with `cargo publish --workspace`,
-the core first. The core's tracing targets are `shelfgauge_core::…`, which the
-`shelfgauge=…` log filters cover by prefix.
+workspace version). The release workflow publishes the crates one by one, the core first,
+skipping a version crates.io already has and waiting for each in the index before the
+next (the index can lag far longer than Cargo's own one-minute wait).
+The core's tracing targets are `shelfgauge_core::…`, which the `shelfgauge=…` log
+filters cover by prefix.
 
 ## Planned tech stack
 
