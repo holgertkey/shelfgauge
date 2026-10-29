@@ -3,9 +3,15 @@
 // src/publication/seal.rs, crates/shelfgauge-core/src/publication/ and
 // src/hub_client/keys.rs; tests/fixtures/publication/ holds the shared vectors.
 
-// The publication format and record versions this reader opens.
-export const FORMAT_VERSION = 1;
+// The publication format and record versions this reader opens. Format 2 (0.21) has a
+// plaintext header in each blob: the manifest's holds the book key sealed under the
+// publishing library's key (see KeyHeader in crates/shelfgauge-core).
+export const FORMAT_VERSION = 2;
 export const RECORD_VERSION = 1;
+// The key scope this reader knows; another one needs a newer shelfgauge.
+export const LIBRARY_SCOPE = "library";
+// The largest blob header.
+const MAX_HEADER_LEN = 4096;
 
 const NONCE_LEN = 12;
 const TAG_LEN = 16;
@@ -74,9 +80,59 @@ export function macKey(raw) {
   return crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
 }
 
-/** The associated data of a publication blob: version, publication id, path. */
-export function blobAssociatedData(version, publicationId, path) {
-  return concat(u16(version), publicationId, encoder.encode(path));
+/**
+ * The associated data of a publication blob: version, publication id, path, a zero
+ * byte, the plaintext header.
+ */
+export function blobAssociatedData(version, publicationId, path, header = new Uint8Array(0)) {
+  return concat(u16(version), publicationId, encoder.encode(path), new Uint8Array([0]), header);
+}
+
+/**
+ * A sealed blob taken apart: `{ version, header, nonce, ciphertext }`; throws for an
+ * unknown version (with a message for the person) and a malformed blob.
+ */
+export function envelope(data) {
+  if (data.length < 4) {
+    throw new Error("truncated");
+  }
+  const version = (data[0] << 8) | data[1];
+  if (version !== FORMAT_VERSION) {
+    throw new Error(`unsupported version ${version}; ${version < FORMAT_VERSION ? "made by an older shelfgauge" : "a newer shelfgauge may be needed"}`);
+  }
+  const headerLen = (data[2] << 8) | data[3];
+  if (headerLen > MAX_HEADER_LEN || data.length < 4 + headerLen + NONCE_LEN + TAG_LEN) {
+    throw new Error("truncated");
+  }
+  return {
+    version,
+    header: data.subarray(4, 4 + headerLen),
+    nonce: data.subarray(4 + headerLen, 4 + headerLen + NONCE_LEN),
+    ciphertext: data.subarray(4 + headerLen + NONCE_LEN),
+  };
+}
+
+/**
+ * The key header of a manifest blob (not yet authenticated: the manifest's tag checks
+ * it when it is opened): `{ library, key_scope, key_owner, key_id, book_key }`.
+ */
+export function keyHeader(manifest) {
+  const header = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(envelope(manifest).header));
+  if (typeof header.library !== "string" || typeof header.key_scope !== "string"
+    || typeof header.key_owner !== "string" || !Number.isInteger(header.key_id)
+    || typeof header.book_key !== "string") {
+    throw new Error("a bad manifest header");
+  }
+  return header;
+}
+
+/**
+ * The book key (an AES key) of publication `idHex` from its key header with the
+ * library key generation (an AES key) the header names.
+ */
+export async function bookKeyFromHeader(header, libraryKey, idHex) {
+  const raw = await openRecord(libraryKey, "book_key", idHex, unbase64url(header.book_key));
+  return aesKey(raw);
 }
 
 /** The associated data of a record: "sg-record", version, kind, 0, id. */
@@ -141,16 +197,32 @@ export async function inflate(data, limit = INFLATE_LIMIT) {
 
 /**
  * Opens blob `path` ("manifest", "p/<n>", "i/<n>") of publication `publicationId`
- * (16 bytes) with its book key (an AES key): decrypt, unpad, inflate.
+ * (16 bytes) with its book key (an AES key): decrypt (the header authenticated),
+ * unpad, inflate.
  */
 export async function openBlob(bookKey, publicationId, path, blob) {
-  const padded = await decrypt(
+  const e = envelope(blob);
+  const plain = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: e.nonce, additionalData: blobAssociatedData(e.version, publicationId, path, e.header) },
     bookKey,
-    blob,
-    (version) => blobAssociatedData(version, publicationId, path),
-    [FORMAT_VERSION],
+    e.ciphertext,
   );
-  return inflate(unpad(padded));
+  return inflate(unpad(new Uint8Array(plain)));
+}
+
+/** Opens an invite's payload with its one-time key (an AES key): the parsed JSON. */
+export async function openInvite(oneTimeKey, sealed) {
+  return JSON.parse(new TextDecoder().decode(await openRecord(oneTimeKey, "invite", "", sealed)));
+}
+
+/** Seals the raw account key (32 bytes) under a password's wrapping key (the bundle). */
+export function sealBundle(wrappingKey, accountKeyRaw) {
+  return sealRecord(wrappingKey, "bundle", "", accountKeyRaw);
+}
+
+/** Opens a bundle with the wrapping key: the raw account key. */
+export function openBundle(wrappingKey, sealed) {
+  return openRecord(wrappingKey, "bundle", "", sealed);
 }
 
 /** Opens record `id` of `kind` with the account key (an AES key). */

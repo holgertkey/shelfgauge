@@ -98,6 +98,9 @@ pub(super) fn routes(state: &HubState) -> Router<HubState> {
         .route(&state.path("/open"), get(page))
         .route(&state.path("/share"), post(share_fallback))
         .route(&state.path("/device"), get(page))
+        // Signing in with an address and a password, and redeeming an invite (Phase 30).
+        .route(&state.path("/signin"), get(page))
+        .route(&state.path("/invite"), get(page))
         .route(&state.path("/terms"), get(terms))
         .route(&state.path("/assets/{*path}"), get(asset))
         .route(&state.path("/sw.js"), get(service_worker))

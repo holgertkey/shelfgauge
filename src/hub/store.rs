@@ -1430,6 +1430,21 @@ pub fn devices(conn: &Connection, account: i64) -> Result<Vec<DeviceInfo>, HubEr
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
+/// Sets the sealed name of the device `device` of `account`; false if there is no
+/// such device.
+pub fn set_device_name(
+    conn: &Connection,
+    account: i64,
+    device: i64,
+    name: Option<&[u8]>,
+) -> Result<bool, HubError> {
+    let changed = conn.execute(
+        "UPDATE devices SET name = ?3 WHERE id = ?1 AND account_id = ?2",
+        params![device, account, name],
+    )?;
+    Ok(changed > 0)
+}
+
 /// Removes the device `device` of `account` (its token stops working); false if there
 /// is no such device.
 pub fn remove_device(conn: &Connection, account: i64, device: i64) -> Result<bool, HubError> {

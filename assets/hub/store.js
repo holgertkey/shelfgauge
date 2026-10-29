@@ -1,19 +1,24 @@
 // The hub reader's state in this browser and its calls to the hub.
 //
-// IndexedDB "shelfgauge-hub":
-// - "state": "pairing" → { account, device, token, aes, mac } (aes and mac are
-//   non-extractable CryptoKeys of the account key: scripts can use them, not read
-//   them), "seq" → the cursor of the last pull, "synced_at" → when a pull last
-//   reached the hub's newest record (ms), "offline:<publication>" → every blob of it
-//   is cached;
+// A browser holds the accounts of one person, one per library (Phase 30): the
+// registry database "shelfgauge-reader" has
+// - "accounts": { account, library, library_name, handle, name, role, device, token,
+//   aes, mac, keys: { <key_id>: AES CryptoKey }, devices_seen, password_seen,
+//   added_at } — aes and mac are non-extractable CryptoKeys of the account key, keys
+//   the library key generations (from `library_key` records or an invite);
+// - "app": "current" → the account shown, "old_state" → the state of 0.18–0.20 was
+//   deleted (a notice).
+// Each account has its own database "shelfgauge-account-<account>":
+// - "state": "seq" → the cursor of the last pull, "synced_at" → when a pull last
+//   reached the hub's newest record (ms), "password_changed" → the last password change
+//   the hub told, "offline:<publication>" → every blob of it is cached;
 // - "records": the account's sync records, still encrypted: { kind, id, seq, data }
 //   (data a Uint8Array, null for a record the hub deleted); changes made here are
 //   written here first;
 // - "outbox": { kind, id } of the records changed here and not pushed yet;
 // - "copies": books opened from book files (bookfile.js): { publication,
-//   content_key, title, authors, book_key (sealed under the account key, as in the
-//   file's sg.json), imported_at }; "files": their sealed blobs { publication,
-//   path, blob }.
+//   content_key, title, authors, key_id, imported_at }; "files": their sealed blobs
+//   { publication, path, blob }.
 // Plaintext is never stored: records are opened when a page needs them.
 //
 // Merging follows the instance (src/hub_client/merge.rs): per record the newer
@@ -23,8 +28,11 @@
 // tests/fixtures/publication/record_plaintexts.json), since ties compare bytes.
 import * as c from "./crypto.js";
 
-const DB_NAME = "shelfgauge-hub";
-const DB_VERSION = 3;
+const REGISTRY = "shelfgauge-reader";
+const REGISTRY_VERSION = 1;
+const ACCOUNT_VERSION = 1;
+// The database of 0.18–0.20 (one paired account), deleted on the first start.
+const OLD_DB = "shelfgauge-hub";
 // The most records in one push, and the largest record the hub takes.
 const PUSH_BATCH = 500;
 const MAX_RECORD_BYTES = 1024 * 1024;
@@ -32,26 +40,13 @@ const MAX_RECORD_BYTES = 1024 * 1024;
 /** The hub's base path ("" at the root), from the page. */
 export const base = document.body.dataset.base || "";
 
-let dbPromise = null;
+const databases = new Map();
 
-function db() {
-  if (!dbPromise) {
-    dbPromise = new Promise((resolve, reject) => {
-      const open = indexedDB.open(DB_NAME, DB_VERSION);
-      open.onupgradeneeded = (event) => {
-        const d = open.result;
-        if (event.oldVersion < 1) {
-          d.createObjectStore("state");
-          d.createObjectStore("records", { keyPath: ["kind", "id"] });
-        }
-        if (event.oldVersion < 2) {
-          d.createObjectStore("outbox", { keyPath: ["kind", "id"] });
-        }
-        if (event.oldVersion < 3) {
-          d.createObjectStore("copies", { keyPath: "publication" });
-          d.createObjectStore("files", { keyPath: ["publication", "path"] });
-        }
-      };
+function openDb(name, version, upgrade) {
+  if (!databases.has(name)) {
+    databases.set(name, new Promise((resolve, reject) => {
+      const open = indexedDB.open(name, version);
+      open.onupgradeneeded = (event) => upgrade(open.result, event.oldVersion);
       open.onsuccess = () => {
         const d = open.result;
         // A newer version of the app (another tab) upgrades the database: this tab
@@ -65,9 +60,34 @@ function db() {
       open.onerror = () => reject(open.error);
       // An older tab holds the database open and did not let go.
       open.onblocked = () => reject(new Error("Close the other shelfgauge tabs and reload this page."));
-    });
+    }));
   }
-  return dbPromise;
+  return databases.get(name);
+}
+
+function registry() {
+  return openDb(REGISTRY, REGISTRY_VERSION, (d, old) => {
+    if (old < 1) {
+      d.createObjectStore("accounts", { keyPath: "account" });
+      d.createObjectStore("app");
+    }
+  });
+}
+
+function accountDbName(account) {
+  return `shelfgauge-account-${account}`;
+}
+
+function accountDb(account) {
+  return openDb(accountDbName(account), ACCOUNT_VERSION, (d, old) => {
+    if (old < 1) {
+      d.createObjectStore("state");
+      d.createObjectStore("records", { keyPath: ["kind", "id"] });
+      d.createObjectStore("outbox", { keyPath: ["kind", "id"] });
+      d.createObjectStore("copies", { keyPath: "publication" });
+      d.createObjectStore("files", { keyPath: ["publication", "path"] });
+    }
+  });
 }
 
 function done(request) {
@@ -77,8 +97,8 @@ function done(request) {
   });
 }
 
-async function tx(stores, mode, fn) {
-  const t = (await db()).transaction(stores, mode);
+async function run(database, stores, mode, fn) {
+  const t = (await database).transaction(stores, mode);
   const finished = new Promise((resolve, reject) => {
     t.oncomplete = resolve;
     t.onerror = () => reject(t.error);
@@ -89,41 +109,151 @@ async function tx(stores, mode, fn) {
   return result;
 }
 
-/** The pairing of this browser, or null. */
-export function pairing() {
-  return tx(["state"], "readonly", (t) => done(t.objectStore("state").get("pairing"))).then((p) => p || null);
+/** A transaction on the database of account `p`. */
+function tx(p, stores, mode, fn) {
+  return run(accountDb(p.account), stores, mode, fn);
 }
 
-/** Forgets the pairing and everything synced (revoked token, or another account). */
-export async function forget() {
-  await dropBlobs(() => true);
-  return tx(["state", "records", "outbox", "copies", "files"], "readwrite", (t) => {
-    for (const name of ["state", "records", "outbox", "copies", "files"]) {
-      t.objectStore(name).clear();
-    }
+/** A transaction on the registry. */
+function reg(stores, mode, fn) {
+  return run(registry(), stores, mode, fn);
+}
+
+// ---------- The accounts of this browser ----------
+
+/** Every account held here, oldest first. */
+export async function accounts() {
+  const all = await reg(["accounts"], "readonly", (t) => done(t.objectStore("accounts").getAll()));
+  return all.sort((a, b) => a.added_at - b.added_at);
+}
+
+/** The account with this public id, or null. */
+export async function account(id) {
+  return (await reg(["accounts"], "readonly", (t) => done(t.objectStore("accounts").get(id)))) || null;
+}
+
+/** The account shown (the last chosen, else the oldest), or null without one. */
+export async function current() {
+  const all = await accounts();
+  const chosen = await reg(["app"], "readonly", (t) => done(t.objectStore("app").get("current")));
+  return all.find((a) => a.account === chosen) || all[0] || null;
+}
+
+/** Shows account `id` from now on. */
+export function setCurrent(id) {
+  return reg(["app"], "readwrite", (t) => t.objectStore("app").put(id, "current"));
+}
+
+/** Stores account `p` (new or changed) and shows it. */
+export async function saveAccount(p) {
+  await reg(["accounts", "app"], "readwrite", (t) => {
+    t.objectStore("accounts").put(p);
+    t.objectStore("app").put(p.account, "current");
   });
+  return p;
 }
 
-/** Thrown when the hub no longer accepts this device's token. */
+/** Changes fields of account `p` in the registry; the account as stored now. */
+export async function updateAccount(p, fields) {
+  const now = Object.assign({}, (await account(p.account)) || p, fields);
+  await reg(["accounts"], "readwrite", (t) => t.objectStore("accounts").put(now));
+  return now;
+}
+
+/**
+ * Forgets account `p` here: its records, outbox, book file copies, downloaded
+ * publications and keys. Other accounts stay.
+ */
+export async function forget(p) {
+  const publications = new Set();
+  try {
+    for (const item of await shelf(p)) {
+      publications.add(item.publication);
+    }
+    for (const copy of await copies(p)) {
+      publications.add(copy.publication);
+    }
+  } catch (e) {
+    // Its database is broken or gone: only the registry row is left to delete.
+  }
+  await dropBlobs((id) => publications.has(id));
+  await reg(["accounts"], "readwrite", (t) => t.objectStore("accounts").delete(p.account));
+  const name = accountDbName(p.account);
+  const opened = databases.get(name);
+  databases.delete(name);
+  if (opened) {
+    (await opened).close();
+  }
+  await done(indexedDB.deleteDatabase(name));
+}
+
+/**
+ * Deletes the state of shelfgauge 0.18–0.20 (its accounts no longer exist): the old
+ * database and every downloaded publication. True when there was some, once.
+ */
+export async function dropOldState() {
+  const existed = await new Promise((resolve) => {
+    let created = false;
+    const open = indexedDB.open(OLD_DB);
+    open.onupgradeneeded = () => {
+      created = true;
+    };
+    open.onsuccess = () => {
+      open.result.close();
+      resolve(!created);
+    };
+    open.onerror = () => resolve(false);
+  });
+  await done(indexedDB.deleteDatabase(OLD_DB));
+  if (!existed) {
+    return false;
+  }
+  await dropBlobs(() => true);
+  await reg(["app"], "readwrite", (t) => t.objectStore("app").put(Date.now(), "old_state"));
+  return true;
+}
+
+/** Whether the old state was deleted and its notice not dismissed. */
+export async function oldStateNotice() {
+  return Boolean(await reg(["app"], "readonly", (t) => done(t.objectStore("app").get("old_state"))));
+}
+
+/** Dismisses the notice of the deleted old state. */
+export function dismissOldState() {
+  return reg(["app"], "readwrite", (t) => t.objectStore("app").delete("old_state"));
+}
+
+/** Thrown when the hub no longer accepts an account's token (signed out, removed). */
 export class Unpaired extends Error {}
 
 /** Thrown when the hub is out of reach behind its proxy (a 5xx answer). */
 export class Unreachable extends Error {}
 
-/** A call to the hub's API with the device token. */
+/** Thrown when the hub is full (`507 hub_full`): changes wait here. */
+export class HubFull extends Error {}
+
+/** A call to the hub's API, with a token if given. */
 export async function api(path, options = {}, token) {
   const headers = Object.assign({}, options.headers);
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
   const response = await fetch(`${base}/api/${path}`, Object.assign({}, options, { headers, cache: "no-store" }));
-  if (response.status === 401) {
-    throw new Unpaired("This device is no longer paired.");
+  if (response.status === 401 && token) {
+    throw new Unpaired("This device is no longer signed in.");
+  }
+  if (response.status === 507) {
+    throw new HubFull("The hub is full: your marks wait on this device.");
   }
   if (response.status >= 500) {
     throw new Unreachable(`The hub is not available (${response.status}).`);
   }
   return response;
+}
+
+/** A JSON body for `api`. */
+export function json(method, body) {
+  return { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
 }
 
 /** A short name for this browser, e.g. "Chrome on Android" (shown in the library). */
@@ -137,8 +267,55 @@ export function deviceName() {
 }
 
 /**
- * Pairs this browser with the pairing code of a QR link (`<secret>.<account key>`).
- * Throws an Error with a message for the reader.
+ * Registers a token just issued for an account whose raw key is `raw` (32 bytes,
+ * zeroed here): its account and library from `GET /api/account`, the key as
+ * non-extractable CryptoKeys, `keys` ({ key_id: raw key }) as the first library key
+ * generations, and this device's sealed name. The account is shown from now on.
+ */
+export async function register(issued, raw, keys = {}) {
+  const aes = await c.aesKey(raw);
+  const mac = await c.macKey(raw);
+  raw.fill(0);
+  const response = await api("account", {}, issued.token);
+  if (!response.ok) {
+    throw new Error(`The hub did not answer (${response.status}).`);
+  }
+  const info = await response.json();
+  const imported = {};
+  for (const [keyId, key] of Object.entries(keys)) {
+    imported[keyId] = await c.aesKey(key);
+    key.fill(0);
+  }
+  const previous = await account(info.account);
+  const p = await saveAccount({
+    account: info.account,
+    library: info.library,
+    library_name: previous ? previous.library_name : "",
+    handle: info.handle,
+    name: info.name,
+    role: info.role,
+    device: issued.device,
+    token: issued.token,
+    aes,
+    mac,
+    keys: Object.assign({}, previous ? previous.keys : {}, imported),
+    devices_seen: previous ? previous.devices_seen : null,
+    password_seen: previous ? previous.password_seen : null,
+    added_at: previous ? previous.added_at : Date.now(),
+  });
+  // A best effort: the library shows the name in the account's devices.
+  try {
+    const name = c.base64url(await c.sealDeviceName(aes, deviceName()));
+    await api(`devices/${issued.device}/name`, json("PUT", { name }), issued.token);
+  } catch (e) {
+    // Unnamed until the next sign-in.
+  }
+  return p;
+}
+
+/**
+ * Pairs this browser with the owner account of a library by the pairing code of a QR
+ * link (`<secret>.<account key>`). Throws an Error with a message for the reader.
  */
 export async function pair(code) {
   const dot = code.indexOf(".");
@@ -152,20 +329,13 @@ export async function pair(code) {
   if (dot < 1 || !raw || raw.length !== 32 || !/^[A-Za-z0-9_-]+$/.test(secret)) {
     throw new Error("This pairing link is incomplete. Scan the QR code again, or copy the whole link.");
   }
-  // Non-extractable from here on; the raw bytes are dropped.
   const aes = await c.aesKey(raw);
-  const mac = await c.macKey(raw);
   const name = c.base64url(await c.sealDeviceName(aes, deviceName()));
-  raw.fill(0);
-  const response = await api("pair", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ secret, device_name: name }),
-  });
+  const response = await api("pair", json("POST", { secret, device_name: name }));
   if (response.status === 403) {
     const answer = await response.json().catch(() => ({}));
     throw new Error(answer.error === "quota_exceeded"
-      ? "Your account has as many devices as this hub allows. Remove one in your library first."
+      ? "This account has as many devices as the hub allows: remove one in My profile on the library’s computer."
       : "This pairing code has expired or was used already. Show a new one in your library.");
   }
   if (response.status === 429) {
@@ -174,18 +344,39 @@ export async function pair(code) {
   if (!response.ok) {
     throw new Error(`The hub refused the pairing (${response.status}).`);
   }
-  const issued = await response.json();
-  const previous = await pairing();
-  await tx(["state", "records", "outbox", "copies", "files"], "readwrite", (t) => {
-    const state = t.objectStore("state");
-    if (!previous || previous.account !== issued.account) {
-      state.clear();
-      for (const name of ["records", "outbox", "copies", "files"]) {
-        t.objectStore(name).clear();
+  return register(await response.json(), raw);
+}
+
+/** The library key generation `keyId` of account `p` (an AES key), or null. */
+export function libraryKey(p, keyId) {
+  return (p.keys && p.keys[keyId]) || null;
+}
+
+/**
+ * Takes the library key generations of the account's `library_key` records into the
+ * registry (the library writes them; this reader never does). The account as stored
+ * now.
+ */
+export async function takeLibraryKeys(p) {
+  const found = {};
+  for (const { id, value } of await records(p, "library_key")) {
+    try {
+      if (id !== `k${value.key_id}` || libraryKey(p, value.key_id)) {
+        continue;
       }
+      const raw = c.unbase64url(value.key);
+      if (raw.length === 32) {
+        found[value.key_id] = await c.aesKey(raw);
+        raw.fill(0);
+      }
+    } catch (e) {
+      // A broken record: ignored.
     }
-    state.put({ account: issued.account, device: issued.device, token: issued.token, aes, mac }, "pairing");
-  });
+  }
+  if (!Object.keys(found).length) {
+    return p;
+  }
+  return updateAccount(p, { keys: Object.assign({}, p.keys, found) });
 }
 
 /** Whether `(time, bytes)` of `a` is greater than that of `b`. */
@@ -251,7 +442,7 @@ export async function remoteWins(key, remote, local) {
  * records store. Returns the number of records that changed here.
  */
 export async function pull(p) {
-  let seq = (await tx(["state"], "readonly", (t) => done(t.objectStore("state").get("seq")))) || 0;
+  let seq = (await tx(p, ["state"], "readonly", (t) => done(t.objectStore("state").get("seq")))) || 0;
   let changed = 0;
   for (;;) {
     const response = await api(`sync?since=${seq}`, {}, p.token);
@@ -265,7 +456,7 @@ export async function pull(p) {
     // Decisions need decrypting, which cannot happen inside a transaction: decide
     // first, then write only where the local record is still what was compared.
     const keys = incoming.map((r) => [r.kind, r.id]);
-    const [locals, pending] = await tx(["records", "outbox"], "readonly", (t) => Promise.all([
+    const [locals, pending] = await tx(p, ["records", "outbox"], "readonly", (t) => Promise.all([
       Promise.all(keys.map((k) => done(t.objectStore("records").get(k)))),
       Promise.all(keys.map((k) => done(t.objectStore("outbox").get(k)))),
     ]));
@@ -278,7 +469,7 @@ export async function pull(p) {
       }
       take.push({ remote, local: local ? local.data : undefined, pending: Boolean(pending[i]) });
     }
-    await tx(["state", "records", "outbox"], "readwrite", async (t) => {
+    await tx(p, ["state", "records", "outbox"], "readwrite", async (t) => {
       const records = t.objectStore("records");
       const outbox = t.objectStore("outbox");
       const now = await Promise.all(take.map(({ remote }) => done(records.get([remote.kind, remote.id]))));
@@ -299,6 +490,9 @@ export async function pull(p) {
       if (!answer.more) {
         t.objectStore("state").put(Date.now(), "synced_at");
       }
+      if (answer.password_changed) {
+        t.objectStore("state").put(answer.password_changed, "password_changed");
+      }
     });
     seq = answer.seq;
     if (!answer.more) {
@@ -317,11 +511,11 @@ const KEEPALIVE_BYTES = 60 * 1024;
  * hidden or left) small pushes outlive the page.
  */
 export async function push(p, { keepalive = false } = {}) {
-  const entries = await tx(["outbox"], "readonly", (t) => done(t.objectStore("outbox").getAll()));
+  const entries = await tx(p, ["outbox"], "readonly", (t) => done(t.objectStore("outbox").getAll()));
   let pushed = 0;
   for (let at = 0; at < entries.length; at += PUSH_BATCH) {
     const batch = entries.slice(at, at + PUSH_BATCH);
-    const records = (await tx(["records"], "readonly", (t) =>
+    const records = (await tx(p, ["records"], "readonly", (t) =>
       Promise.all(batch.map((e) => done(t.objectStore("records").get([e.kind, e.id]))))))
       .filter((r) => r && r.data && r.data.length <= MAX_RECORD_BYTES);
     if (!records.length) {
@@ -338,7 +532,7 @@ export async function push(p, { keepalive = false } = {}) {
       throw new Error(`push: ${response.status}`);
     }
     const answer = await response.json();
-    await tx(["records", "outbox"], "readwrite", async (t) => {
+    await tx(p, ["records", "outbox"], "readwrite", async (t) => {
       const store = t.objectStore("records");
       const now = await Promise.all(records.map((r) => done(store.get([r.kind, r.id]))));
       records.forEach((r, i) => {
@@ -353,26 +547,31 @@ export async function push(p, { keepalive = false } = {}) {
   return pushed;
 }
 
-/** Whether changes made here wait to be pushed. */
-export async function pending() {
-  return (await waiting()) > 0;
+/** Whether changes made here to account `p` wait to be pushed. */
+export async function pending(p) {
+  return (await waiting(p)) > 0;
 }
 
-/** The number of records changed here and not pushed yet. */
-export function waiting() {
-  return tx(["outbox"], "readonly", (t) => done(t.objectStore("outbox").count()));
+/** The number of records of account `p` changed here and not pushed yet. */
+export function waiting(p) {
+  return tx(p, ["outbox"], "readonly", (t) => done(t.objectStore("outbox").count()));
 }
 
-/** When a pull last brought this device up to date (ms), or null. */
-export async function syncedAt() {
-  return (await tx(["state"], "readonly", (t) => done(t.objectStore("state").get("synced_at")))) || null;
+/** When a pull last brought account `p` up to date here (ms), or null. */
+export async function syncedAt(p) {
+  return (await tx(p, ["state"], "readonly", (t) => done(t.objectStore("state").get("synced_at")))) || null;
+}
+
+/** The last password change the hub told for account `p` ({ at, via, device }), or null. */
+export async function passwordChanged(p) {
+  return (await tx(p, ["state"], "readonly", (t) => done(t.objectStore("state").get("password_changed")))) || null;
 }
 
 /**
- * Forgets this device: the marks made here go out first, then the hub revokes the
- * device, then everything here is forgotten. With `offline`, nothing is sent and the
- * device is forgotten here only (the library still lists it until removed there).
- * Throws what the hub calls throw (an Unpaired token is forgotten all the same).
+ * Signs this device out of account `p`: the marks made here go out first, then the
+ * hub removes the device, then the account is forgotten here. With `offline`, nothing
+ * is sent and the account is forgotten here only. Throws what the hub calls throw (a
+ * token the hub no longer knows is forgotten all the same).
  */
 export async function forgetDevice(p, { offline = false } = {}) {
   if (!offline) {
@@ -388,7 +587,7 @@ export async function forgetDevice(p, { offline = false } = {}) {
       }
     }
   }
-  await forget();
+  await forget(p);
 }
 
 /**
@@ -407,7 +606,7 @@ export function canonical(value) {
 export async function write(p, kind, id, value) {
   const plain = new TextEncoder().encode(canonical(value));
   const data = await c.sealRecord(p.aes, kind, id, plain);
-  await tx(["records", "outbox"], "readwrite", (t) => {
+  await tx(p, ["records", "outbox"], "readwrite", (t) => {
     t.objectStore("records").put({ kind, id, seq: null, data });
     t.objectStore("outbox").put({ kind, id });
   });
@@ -415,7 +614,7 @@ export async function write(p, kind, id, value) {
 
 /** The opened record `id` of `kind`, or null. */
 export async function get(p, kind, id) {
-  const r = await tx(["records"], "readonly", (t) => done(t.objectStore("records").get([kind, id])));
+  const r = await tx(p, ["records"], "readonly", (t) => done(t.objectStore("records").get([kind, id])));
   if (!r || !r.data) {
     return null;
   }
@@ -428,7 +627,7 @@ export async function get(p, kind, id) {
 
 /** The opened records of `kind` (deleted and unreadable ones left out). */
 export async function records(p, kind) {
-  const all = await tx(["records"], "readonly", (t) =>
+  const all = await tx(p, ["records"], "readonly", (t) =>
     done(t.objectStore("records").getAll(IDBKeyRange.bound([kind, ""], [kind, "￿"]))));
   const out = [];
   for (const r of all) {
@@ -490,8 +689,8 @@ export async function dropBlobs(drop) {
   }
 }
 
-/** The publications with a cached manifest and every part (readable offline). */
-export async function offline() {
+/** The publications of account `p` with a cached manifest and every part. */
+export async function offline(p) {
   const found = new Set();
   if (!("caches" in self)) {
     return found;
@@ -505,7 +704,7 @@ export async function offline() {
   }
   const complete = new Set();
   for (const id of found) {
-    if (await tx(["state"], "readonly", (t) => done(t.objectStore("state").get(`offline:${id}`)))) {
+    if (await tx(p, ["state"], "readonly", (t) => done(t.objectStore("state").get(`offline:${id}`)))) {
       complete.add(id);
     }
   }
@@ -521,12 +720,18 @@ export async function cached(id, path) {
 }
 
 /**
- * Deletes every downloaded hub publication (they download again when opened). Book
- * file copies stay.
+ * Deletes every downloaded hub publication (they download again when opened), for
+ * every account held here. Book file copies stay.
  */
 export async function removeDownloads() {
   await dropBlobs(() => true);
-  await tx(["state"], "readwrite", async (t) => {
+  for (const p of await accounts()) {
+    await forgetOffline(p);
+  }
+}
+
+async function forgetOffline(p) {
+  await tx(p, ["state"], "readwrite", async (t) => {
     const state = t.objectStore("state");
     for (const key of await done(state.getAllKeys())) {
       if (typeof key === "string" && key.startsWith("offline:")) {
@@ -557,9 +762,9 @@ export async function storageInfo() {
   return info;
 }
 
-/** Notes that every blob of publication `id` is cached. */
-export function markOffline(id) {
-  return tx(["state"], "readwrite", (t) => t.objectStore("state").put(true, `offline:${id}`));
+/** Notes that every blob of publication `id` of account `p` is cached. */
+export function markOffline(p, id) {
+  return tx(p, ["state"], "readwrite", (t) => t.objectStore("state").put(true, `offline:${id}`));
 }
 
 /** Fetches blob `path` of publication `id` (raw ciphertext); null if it is gone. */
@@ -583,7 +788,7 @@ export async function blob(p, id, path) {
  */
 export async function mergeSnapshot(p, incoming, { revive }) {
   const keys = incoming.map((r) => [r.kind, r.id]);
-  const locals = await tx(["records"], "readonly", (t) =>
+  const locals = await tx(p, ["records"], "readonly", (t) =>
     Promise.all(keys.map((k) => done(t.objectStore("records").get(k)))));
   const take = [];
   for (let i = 0; i < incoming.length; i++) {
@@ -599,7 +804,7 @@ export async function mergeSnapshot(p, incoming, { revive }) {
       take.push({ remote, local: local ? local.data : undefined, push: false });
     }
   }
-  await tx(["records", "outbox"], "readwrite", async (t) => {
+  await tx(p, ["records", "outbox"], "readwrite", async (t) => {
     const records = t.objectStore("records");
     const now = await Promise.all(take.map(({ remote }) => done(records.get([remote.kind, remote.id]))));
     take.forEach(({ remote, local, push }, i) => {
@@ -615,9 +820,9 @@ export async function mergeSnapshot(p, incoming, { revive }) {
   });
 }
 
-/** Keeps a book file's copy: its row and its sealed blobs (`[{ path, blob }]`). */
-export function saveCopy(copy, blobs) {
-  return tx(["copies", "files"], "readwrite", (t) => {
+/** Keeps a book file's copy of account `p`: its row and its sealed blobs. */
+export function saveCopy(p, copy, blobs) {
+  return tx(p, ["copies", "files"], "readwrite", (t) => {
     t.objectStore("copies").put(copy);
     const files = t.objectStore("files");
     for (const { path, blob } of blobs) {
@@ -626,29 +831,29 @@ export function saveCopy(copy, blobs) {
   });
 }
 
-/** The books opened from files on this device. */
-export function copies() {
-  return tx(["copies"], "readonly", (t) => done(t.objectStore("copies").getAll()));
+/** The books of account `p` opened from files on this device. */
+export function copies(p) {
+  return tx(p, ["copies"], "readonly", (t) => done(t.objectStore("copies").getAll()));
 }
 
-/** The copy of publication `id`, or null. */
-export function copy(id) {
-  return tx(["copies"], "readonly", (t) => done(t.objectStore("copies").get(id))).then((c) => c || null);
+/** The copy of publication `id` of account `p`, or null. */
+export function copy(p, id) {
+  return tx(p, ["copies"], "readonly", (t) => done(t.objectStore("copies").get(id))).then((x) => x || null);
 }
 
-/** The sealed blob at `path` of copy `id`; null if it is not here. */
-export async function copyBlob(id, path) {
-  const row = await tx(["files"], "readonly", (t) => done(t.objectStore("files").get([id, path])));
+/** The sealed blob at `path` of copy `id` of account `p`; null if it is not here. */
+export async function copyBlob(p, id, path) {
+  const row = await tx(p, ["files"], "readonly", (t) => done(t.objectStore("files").get([id, path])));
   return row ? new Uint8Array(await row.blob.arrayBuffer()) : null;
 }
 
-/** Deletes the copies (and their blobs) that `drop(copy)` says. */
-export async function dropCopies(drop) {
-  const gone = (await copies()).filter(drop).map((c) => c.publication);
+/** Deletes the copies of account `p` (and their blobs) that `drop(copy)` says. */
+export async function dropCopies(p, drop) {
+  const gone = (await copies(p)).filter(drop).map((x) => x.publication);
   if (!gone.length) {
     return;
   }
-  await tx(["copies", "files"], "readwrite", (t) => {
+  await tx(p, ["copies", "files"], "readwrite", (t) => {
     const files = t.objectStore("files");
     for (const id of gone) {
       t.objectStore("copies").delete(id);

@@ -338,8 +338,15 @@ async fn file_books_neither_expire_nor_are_deleted_on_the_hub() {
     assert_eq!(lib.shelf_action(book, "remove").await, "removed");
     assert!(lib.shelf().is_empty());
     let phone = lib.phone(&hub).await;
+    // The book's records are deleted; the library key the account holds stays.
     let records = hub.records(&phone.token).await;
-    assert!(records.iter().all(|(_, _, data)| data.is_none()));
+    assert!(
+        records
+            .iter()
+            .filter(|(kind, _, _)| kind != "library_key")
+            .all(|(_, _, data)| data.is_none()),
+        "{records:?}"
+    );
 
     // Exporting again puts it back on the shelf.
     lib.export(book).await;

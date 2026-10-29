@@ -77,7 +77,8 @@ pub fn library(conn: &Connection) -> Result<Option<HubLibrary>, StorageError> {
 }
 
 /// Stores the library created on `hub_url` with its first key generation and the
-/// owner profile's account, in one transaction.
+/// owner profile's account, in one transaction. The owner account gets the key as a
+/// record at its first sync, as any account (its phone pairs without an invite).
 #[allow(clippy::too_many_arguments)]
 pub fn save_library(
     conn: &Connection,
@@ -109,9 +110,8 @@ pub fn save_library(
         params![library_key.as_bytes().as_slice(), now],
     )?;
     tx.execute(
-        "INSERT INTO hub_accounts (profile_id, role, account_id, account_key, name, keys_sent,
-             created_at)
-         VALUES (?1, 'owner', ?2, ?3, ?4, 1, ?5)",
+        "INSERT INTO hub_accounts (profile_id, role, account_id, account_key, name, created_at)
+         VALUES (?1, 'owner', ?2, ?3, ?4, ?5)",
         params![
             owner.0,
             owner_account.as_bytes().as_slice(),
@@ -966,7 +966,10 @@ mod tests {
         assert_eq!(owner.role, Role::Owner);
         assert_eq!(owner.account, Some(AccountId::new([9; 16])));
         assert_eq!(owner.name.as_deref(), Some("admin"));
-        assert_eq!(owner.keys_sent, 1);
+        assert_eq!(
+            owner.keys_sent, 0,
+            "the key reaches its phone at the first sync"
+        );
         assert!(owner.on_hub());
         assert_eq!(current_library_key(&conn).unwrap().unwrap().0, 1);
         assert_eq!(

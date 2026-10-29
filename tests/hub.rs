@@ -2263,6 +2263,9 @@ async fn the_reader_shell_tells_nothing_about_publications() {
         StatusCode::NOT_FOUND
     );
     assert_eq!(hub.get("/pair", None).await.status, StatusCode::OK);
+    for page in ["/signin", "/invite"] {
+        assert_eq!(hub.get(page, None).await.status, StatusCode::OK, "{page}");
+    }
     assert_eq!(hub.get("/", None).await.status, StatusCode::OK);
     let css = hub.get("/assets/hub.css", None).await;
     assert_eq!(css.status, StatusCode::OK);
@@ -2493,7 +2496,7 @@ async fn book_files_open_through_the_installed_app() {
         let page = String::from_utf8(open.body).unwrap();
         assert!(page.contains(r#"id="hub-app""#), "{page}");
         let sw = String::from_utf8(hub.get(&format!("{prefix}/sw.js"), None).await.body).unwrap();
-        assert!(sw.contains("pair|open|device|r"), "{sw}");
+        assert!(sw.contains("pair|open|device|signin|invite|r"), "{sw}");
         assert!(sw.contains("`${BASE}/share`"), "{sw}");
 
         // A share no Service Worker took: the body is not read, the shelf says so.
@@ -2529,4 +2532,39 @@ fn a_hub_is_created_only_when_asked() {
     let reopened = Hub::open(&data, false).unwrap();
     assert!(!reopened.created);
     assert_eq!(reopened.hub.config(), &HubConfig::default());
+}
+
+#[tokio::test]
+async fn a_signed_in_device_names_itself_only() {
+    let hub = TestHub::open();
+    let lib = hub.library("smiths").await;
+    let olga = hub.member(&lib, "olga", 1).await;
+    let phone = issued(&hub.login("olga@smiths", 1).await);
+    let name = |id: i64, token: String| {
+        let hub = &hub;
+        async move {
+            hub.send(
+                Method::PUT,
+                &format!("/api/devices/{id}/name"),
+                Some(&token),
+                json!({ "name": b64(b"sealed phone name") }),
+            )
+            .await
+        }
+    };
+    assert_eq!(
+        name(phone.id, phone.token.clone()).await.status,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        name(olga.id, phone.token.clone()).await.status,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        name(phone.id, lib.token.clone()).await.status,
+        StatusCode::FORBIDDEN
+    );
+    let devices = hub.get("/api/devices", Some(&olga.token)).await.json();
+    assert_eq!(devices["devices"][1]["name"], b64(b"sealed phone name"));
+    assert_eq!(devices["devices"][0]["name"], serde_json::Value::Null);
 }

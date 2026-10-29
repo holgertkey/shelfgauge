@@ -1,19 +1,25 @@
-// Opening book files (`.sgbook`, concept §11 "Book files") on a paired device.
+// Opening book files (`.sgbook`, concept §11 "Book files") on a device signed in to
+// the library they come from.
 //
 // The file is untrusted: the WASM module (the instance's container reader) checks its
 // layout from the first bytes, the end record and the central directory only, and the
 // entries are cut out of the File by offset, so a large file never sits in memory.
-// Then, in this order and before anything is decrypted: sg.json's versions, the
-// account (another account's file is refused without trying its key) and the key id;
-// only then the book key (sealed under the account key) and the manifest. Every check
-// works offline: nothing here calls the hub. The copy is kept sealed in IndexedDB
+// Then, in this order and before anything is decrypted: sg.json's versions (a file of
+// 0.19–0.20 is "made by an older shelfgauge"), the library (the account of that
+// library here; another library's file is refused without trying a key) and the
+// generation of its key; only then the book key from the manifest's header (sealed
+// under the library key) and the manifest. The snapshot is merged only into the
+// account that made the file. Every check works offline unless a newer library key
+// must be pulled. The copy is kept sealed in IndexedDB
 // (store.js "copies" and "files") and opened like a hub publication.
 //
 // The Rust reference of these checks is src/hub_client/book_file.rs (`open`).
 import * as c from "./crypto.js";
 import * as store from "./store.js";
 
-const CONTAINER_VERSION = 1;
+const CONTAINER_VERSION = 2;
+// The book files of 0.19–0.20 (their keys no longer exist).
+const OLD_CONTAINER_VERSION = 1;
 const MIME = "application/vnd.shelfgauge.book";
 const END_LEN = 22;
 // No blob is larger than this (the hub's own limit is 64 MiB by default).
@@ -78,8 +84,9 @@ function checkFields(sg) {
   const fine = sg && typeof sg === "object"
     && Number.isInteger(sg.format) && Number.isInteger(sg.format_version) && Number.isInteger(sg.key_id)
     && typeof sg.publication === "string" && /^[0-9a-f]{32}$/.test(sg.publication)
+    && typeof sg.library === "string" && /^[0-9a-f]{32}$/.test(sg.library)
     && typeof sg.account === "string" && /^[0-9a-f]{32}$/.test(sg.account)
-    && typeof sg.book_key === "string" && typeof sg.mime === "string"
+    && typeof sg.key_scope === "string" && typeof sg.mime === "string"
     && (sg.snapshot === undefined || Array.isArray(sg.snapshot));
   if (!fine) {
     throw new BookFileError("The book file is damaged (its sg.json is incomplete).");
@@ -87,38 +94,40 @@ function checkFields(sg) {
 }
 
 /**
- * Checks book file `file` (a File or Blob) for pairing `p` and keeps a copy on this
- * device. Returns `{ publication, contentKey }`. Throws a BookFileError with a
- * message for the reader.
+ * Checks book file `file` (a File or Blob), finds the account of its library here and
+ * keeps a copy for it on this device. Returns `{ publication, contentKey }`. Throws a
+ * BookFileError with a message for the reader.
  */
-export async function importFile(p, file) {
+export async function importFile(file) {
   const { entries, sg } = await layout(file);
+  if (sg && sg.format === OLD_CONTAINER_VERSION) {
+    throw new BookFileError("This book file was made by an older shelfgauge; get it again from your library.");
+  }
   checkFields(sg);
-  if (sg.format !== CONTAINER_VERSION || sg.format_version !== c.FORMAT_VERSION) {
+  if (sg.format !== CONTAINER_VERSION || sg.format_version !== c.FORMAT_VERSION || sg.key_scope !== c.LIBRARY_SCOPE) {
     throw new BookFileError("This book file needs a newer version of the reader. Update shelfgauge on your hub, then open the file again.");
   }
   if (sg.mime !== MIME) {
     throw new BookFileError("The book file is damaged (another media type).");
   }
-  if (sg.account !== p.account) {
-    throw new BookFileError("This book file belongs to another account. Books open only on devices paired with the library they come from.");
+  let p = (await store.accounts()).find((a) => a.library === sg.library);
+  if (!p) {
+    throw new BookFileError("This book file is from a library this device is not signed in to. Sign in with the address your library's admin gave you.");
   }
-  if (sg.key_id !== (p.keyId || 1)) {
-    throw new BookFileError("This book file was made with another key of your account. Pair this device again in your library, then open the file again.");
+  if (!store.libraryKey(p, sg.key_id)) {
+    // A newer generation: it may have arrived on the hub already.
+    try {
+      await store.pull(p);
+      p = await store.takeLibraryKeys(p);
+    } catch (e) {
+      // Offline: the check below says so.
+    }
   }
-  // From here on the file is the account's own (or forged without its key, which
-  // fails to open below).
+  const libraryKey = store.libraryKey(p, sg.key_id);
+  if (!libraryKey) {
+    throw new BookFileError("This book file needs a newer library key: connect to the internet to update, then open it again.");
+  }
   const id = sg.publication;
-  let raw;
-  try {
-    raw = await c.openRecord(p.aes, "file_key", id, c.unbase64url(sg.book_key));
-  } catch (e) {
-    raw = null;
-  }
-  if (!raw || raw.length !== 32) {
-    throw new BookFileError("The book file is damaged (its key does not open).");
-  }
-  const key = await c.aesKey(raw);
   const slice = (name) => {
     const e = entries.get(name);
     return e ? file.slice(e.offset, e.offset + e.size) : null;
@@ -127,14 +136,24 @@ export async function importFile(p, file) {
   if (!manifestBlob) {
     throw new BookFileError("The book file is damaged (no manifest).");
   }
+  const manifest = await bytes(manifestBlob);
+  let key;
+  try {
+    const header = c.keyHeader(manifest);
+    if (header.library !== sg.library || header.key_id !== sg.key_id || header.key_scope !== sg.key_scope) {
+      throw new Error("another key");
+    }
+    key = await c.bookKeyFromHeader(header, libraryKey, id);
+  } catch (e) {
+    throw new BookFileError("The book file is damaged (its key does not open).");
+  }
   let summary;
   try {
     const m = await wasm();
-    const reader = new m.Reader(await c.openBlob(key, c.unhex(id), "manifest", await bytes(manifestBlob)));
+    const reader = new m.Reader(await c.openBlob(key, c.unhex(id), "manifest", manifest));
     summary = JSON.parse(reader.summary());
     reader.free();
   } catch (e) {
-    raw.fill(0);
     throw new BookFileError("The book file is damaged (its contents do not open).");
   }
   const paths = ["manifest"];
@@ -144,23 +163,23 @@ export async function importFile(p, file) {
   for (const path of paths) {
     const blob = slice(path);
     if (!blob || blob.size > MAX_BLOB) {
-      raw.fill(0);
       throw new BookFileError("The book file is damaged (a part is missing).");
     }
     blobs.push({ path, blob });
   }
   const contentKey = summary.content_key;
-  await store.saveCopy({
+  await store.saveCopy(p, {
     publication: id,
     content_key: contentKey,
     title: summary.title || "",
     authors: (summary.authors || []).join(", "),
-    book_key: sg.book_key,
+    key_id: sg.key_id,
     imported_at: Date.now(),
   }, blobs);
   // One copy per book: an earlier file of the same book (still openable by opening
   // it again) gives way to this one.
-  await store.dropCopies((copy) => copy.content_key === contentKey && copy.publication !== id);
+  await store.dropCopies(p, (copy) => copy.content_key === contentKey && copy.publication !== id);
+  await store.setCurrent(p.account);
   await store.navigatorPersist();
 
   // The marks at export time, then the book on the shelf if it is not there (opening
@@ -175,8 +194,9 @@ export async function importFile(p, file) {
       }
     }
   }
+  // The marks of the person who made the file: only into their own account.
   const kinds = new Set(["shelf_item", "annotation", "position"]);
-  const usable = snapshot.filter((r) => kinds.has(r.kind));
+  const usable = sg.account === p.account ? snapshot.filter((r) => kinds.has(r.kind)) : [];
   await store.mergeSnapshot(p, usable, { revive: false });
   const shelved = (await store.shelf(p)).some((i) => i.content_key === contentKey);
   if (!shelved) {
@@ -192,7 +212,7 @@ export async function importFile(p, file) {
     const contentBytes = c.unbase64url(contentKey);
     await store.write(p, "shelf_item", await c.shelfId(p.mac, contentBytes), {
       authors: (summary.authors || []).join(", "),
-      book_key: c.base64url(raw),
+      book_key: null,
       content_key: contentKey,
       format_version: c.FORMAT_VERSION,
       instance: typeof instance === "string" ? instance : "",
@@ -204,6 +224,5 @@ export async function importFile(p, file) {
     // Marks deleted when the book left the shelf come back with it.
     await store.mergeSnapshot(p, usable.filter((r) => r.kind !== "shelf_item"), { revive: true });
   }
-  raw.fill(0);
   return { publication: id, contentKey };
 }

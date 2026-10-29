@@ -1556,3 +1556,26 @@ async fn the_card_asks_for_the_upload_progress() {
         "{during}"
     );
 }
+
+#[tokio::test]
+async fn the_owners_phone_gets_the_library_key_and_opens_a_book_with_it() {
+    let hub = TestHub::start().await;
+    let lib = Lib::registered(&hub).await;
+    let book = lib.book("book.txt");
+    assert_eq!(lib.publish(book).await, "published");
+    let id = lib.shelf()[0].publication.unwrap().to_string();
+    let phone = lib.phone(&hub).await;
+    lib.sync().await;
+    let record = phone.record(&hub, "library_key", "k1").await;
+    assert_eq!(record["key_id"], 1);
+    let key = AccountKey::new(
+        URL_SAFE_NO_PAD
+            .decode(record["key"].as_str().unwrap())
+            .unwrap()
+            .try_into()
+            .unwrap(),
+    );
+    let (_, manifest) = hub.blob(&phone.token, &id, "manifest").await;
+    let (key_id, _) = book_key_of(&manifest, &id, &[(1, key)]);
+    assert_eq!(key_id, 1);
+}

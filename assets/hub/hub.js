@@ -1,13 +1,17 @@
-// The hub's reader app: pairing this browser (`/pair#<secret>.<account key>`), the
-// shelf (`/`, with "Open file" for book files) and the reading view
-// (`/r/<publication id>?part=<n>`), of a hub publication or of a book file's copy
-// kept on this device (bookfile.js).
+// The hub's reader app: signing in (`/signin`, an address `name@library` and a
+// password), redeeming an invite (`/invite#<secret>.<one-time key>`), pairing the
+// owner's phone (`/pair#<secret>.<account key>`, or a book link with
+// `#pair=<secret>.<key>`), the shelf of each library this browser is signed in to
+// (`/`, with a switcher, All shelves and "Open file" for book files), My account
+// (`/device`) and the reading view (`/r/<publication id>?part=<n>`) of a hub
+// publication or of a book file's copy kept on this device (bookfile.js).
 //
 // Books arrive as encrypted blobs; crypto.js opens them, the WASM module
 // (pkg/shelfgauge.js, the instance's own renderer) turns them into escaped HTML, and
 // the page is then the instance's reading page: reader.js runs on it unchanged, with
 // `window.shelfgaugeSource` giving it the pages of other parts. Text from records or
 // the manifest goes into the page as text only (`textContent`), never as markup.
+import * as account from "./account.js";
 import * as bookfile from "./bookfile.js";
 import * as c from "./crypto.js";
 import * as store from "./store.js";
@@ -35,14 +39,53 @@ function unreachable(e) {
   return !navigator.onLine || e instanceof TypeError || e instanceof store.Unreachable;
 }
 
-/** Where the reader learns how to pair this browser. */
-function unpairedHelp() {
+/** Where the reader learns how to sign this browser in. */
+function signedOutHelp() {
   return [
-    el("h1", {}, "This device is not paired"),
-    el("p", {}, "Books on this hub open only on devices paired with their library's account."),
-    el("p", {}, "On the computer with your library, open My profile → Phone and other devices, choose Pair a device, and scan the QR code with this device (or open its link here)."),
-    el("p", { class: "muted" }, "Paired before? The browser may have cleared this site's data (Safari does after a week without a visit, unless the app is on the home screen). Pair again; your marks are kept in your library."),
+    el("h1", {}, "This device is not signed in"),
+    el("p", {}, "Books on this hub open only on the devices of their library's members."),
+    el("p", {}, el("a", { class: "button primary", href: `${base}/signin` }, "Sign in"),
+      " with the address your library's admin gave you (like grandma@smiths) and your password."),
+    el("p", { class: "muted" }, "Invited? Open the invite link you got. The library's owner pairs their phone with the QR code on the library's computer."),
+    el("p", { class: "muted" }, "Signed in before? The browser may have cleared this site's data (Safari does after a week without a visit, unless the app is on the home screen). Sign in again; your marks are kept in your library."),
   ];
+}
+
+// A message shown once on the next page (an account was dropped).
+const FLASH = "shelfgauge-flash";
+
+function setFlash(text) {
+  try {
+    sessionStorage.setItem(FLASH, text);
+  } catch (e) {
+    // Not shown then.
+  }
+}
+
+function takeFlash() {
+  try {
+    const text = sessionStorage.getItem(FLASH);
+    sessionStorage.removeItem(FLASH);
+    return text;
+  } catch (e) {
+    return null;
+  }
+}
+
+/** The library's name of account `p` for the person ("your library" if unknown). */
+function libraryName(p) {
+  return p.library_name || `@${p.handle}`;
+}
+
+/**
+ * Forgets account `p` here because the hub no longer knows its token (signed out,
+ * removed, left or expired: the hub does not say which), with the one message, and
+ * reloads.
+ */
+async function dropAccount(p) {
+  await store.forget(p).catch((e) => console.error(e));
+  setFlash(`This device is no longer signed in to ${libraryName(p)}: it was signed out, or the account was removed or expired. Sign in again if you still belong to it.`);
+  location.reload();
 }
 
 // Offline: the Service Worker keeps the app and the books read here. A new version
@@ -86,8 +129,8 @@ async function pairPage() {
   const code = location.hash.slice(1);
   history.replaceState(null, "", location.pathname);
   if (!code) {
-    const p = await store.pairing();
-    show(...(p ? [el("h1", {}, "This device is paired"), el("p", {}, el("a", { href: `${base}/` }, "My books"))] : unpairedHelp()));
+    const p = await store.current();
+    show(...(p ? [el("h1", {}, "This device is signed in"), el("p", {}, el("a", { href: `${base}/` }, "My books"))] : signedOutHelp()));
     return;
   }
   show(el("h1", {}, "Pairing this device…"));
@@ -136,46 +179,206 @@ function bookItem(item) {
   return li;
 }
 
-function renderShelf(items, status) {
+/** A notice above the shelf, with a button that dismisses it if `dismiss` is given. */
+function notice(text, { error = false, action = null, dismiss = null } = {}) {
+  const node = el("div", { class: `notice hub-notice${error ? " error" : ""}`, role: "status" }, el("span", {}, text));
+  if (action) {
+    node.append(" ", action);
+  }
+  if (dismiss) {
+    const button = el("button", { type: "button", class: "hub-notice-dismiss" }, "Dismiss");
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      await dismiss();
+      node.remove();
+    });
+    node.append(" ", button);
+  }
+  return node;
+}
+
+/** The library switcher (shown with two or more accounts) and All shelves. */
+function switcher(all, p, showingAll) {
+  if (all.length < 2) {
+    return null;
+  }
+  const select = el("select", { class: "hub-library-switch", "aria-label": "Library" });
+  for (const a of all) {
+    const option = el("option", { value: a.account }, libraryName(a));
+    if (!showingAll && p && a.account === p.account) {
+      option.selected = true;
+    }
+    select.append(option);
+  }
+  const allOption = el("option", { value: "all" }, "All shelves");
+  allOption.selected = showingAll;
+  select.append(allOption);
+  select.addEventListener("change", async () => {
+    if (select.value === "all") {
+      location.assign(`${base}/?all=1`);
+    } else {
+      await store.setCurrent(select.value);
+      location.assign(`${base}/`);
+    }
+  });
+  return el("div", { class: "hub-libraries" }, select);
+}
+
+function renderShelf(items, status, { head = [], showLibrary = false } = {}) {
   const reading = items
     .filter((i) => i.position && i.position.progress < 1000)
     .sort((a, b) => b.position.updated_at - a.position.updated_at);
   const rest = items
     .filter((i) => !reading.includes(i))
     .sort((a, b) => (a.title || "").localeCompare(b.title || ""));
-  const nodes = [el("h1", {}, "My books")];
+  const nodes = [el("h1", {}, "My books"), ...head.filter(Boolean)];
   if (status) {
     nodes.push(el("p", { class: "muted hub-sync", role: "status" }, status));
   }
   nodes.push(openFileForm());
   if (!items.length) {
-    nodes.push(el("p", { class: "hint" }, "No books yet. In your library, choose Open on phone on a book's page to put it here, or Download book file and open the file here."));
+    nodes.push(el("p", { class: "hint" }, "No books yet. Open a book link your library sent you, or a book file with Open file. The library's admin sends books with Read on phone on a book's page."));
   }
+  const item = (i) => {
+    const li = bookItem(i);
+    if (showLibrary && i.library) {
+      li.append(el("span", { class: "muted hub-book-library" }, i.library));
+    }
+    return li;
+  };
   if (reading.length) {
-    nodes.push(el("h2", {}, "Currently reading"), el("ul", { class: "hub-books" }, ...reading.map(bookItem)));
+    nodes.push(el("h2", {}, "Currently reading"), el("ul", { class: "hub-books" }, ...reading.map(item)));
   }
   if (rest.length) {
     if (reading.length) {
       nodes.push(el("h2", {}, "On the shelf"));
     }
-    nodes.push(el("ul", { class: "hub-books" }, ...rest.map(bookItem)));
+    nodes.push(el("ul", { class: "hub-books" }, ...rest.map(item)));
   }
   show(...nodes);
 }
 
-/** The shelf with each book's offline state and its book file copy here, if any. */
+/** The shelf of account `p` with each book's offline state and its book file copy here. */
 async function shelfItems(p) {
   const items = await store.shelf(p);
-  const offline = await store.offline().catch(() => new Set());
-  const copies = await store.copies().catch(() => []);
+  const offline = await store.offline(p).catch(() => new Set());
+  const copies = await store.copies(p).catch(() => []);
   for (const item of items) {
     item.offline = offline.has(item.publication);
+    item.library = libraryName(p);
     // The newest copy of the book.
     item.copy = copies
       .filter((copy) => copy.content_key === item.content_key)
       .sort((a, b) => b.imported_at - a.imported_at)[0] || null;
   }
   return items;
+}
+
+/**
+ * Brings account `p` up to date: pushes, pulls, takes new library keys, drops the
+ * copies of books that left its shelf. The account as stored now.
+ */
+async function syncAccount(p) {
+  await store.push(p);
+  await store.pull(p);
+  p = await store.takeLibraryKeys(p);
+  const shelved = new Set((await store.shelf(p)).map((i) => i.content_key));
+  await store.dropCopies(p, (copy) => !shelved.has(copy.content_key)).catch((e) => console.error(e));
+  return p;
+}
+
+/** Drops the downloaded blobs of publications no account here has on its shelf. */
+async function dropUnshelved(all) {
+  const kept = new Set();
+  for (const a of all) {
+    for (const i of await store.shelf(a).catch(() => [])) {
+      kept.add(i.publication);
+    }
+  }
+  await store.dropBlobs((id) => !kept.has(id)).catch((e) => console.error(e));
+}
+
+/** The notices of account `p`: a new device, a password changed elsewhere. */
+async function accountNotices(p) {
+  const nodes = [];
+  try {
+    for (const d of await account.newDevices(p)) {
+      nodes.push(notice(`New device added to your account at ${libraryName(p)}: ${d.name || "an unnamed device"} — not you? Remove it in My account.`, {
+        error: true,
+        action: el("a", { href: `${base}/device` }, "My account"),
+        dismiss: () => account.seeDevices(p),
+      }));
+    }
+  } catch (e) {
+    if (e instanceof store.Unpaired) {
+      throw e;
+    }
+  }
+  const changed = await account.passwordNotice(p);
+  if (changed) {
+    const how = changed.via === "reset" ? `with a link from ${libraryName(p)}` : changed.via === "library" ? "on the library's computer" : "on another device";
+    nodes.push(notice(`Your password at ${libraryName(p)} was changed ${how} — not you? Ask the library's admin to reset it and sign out all devices.`, {
+      error: true,
+      dismiss: () => account.seePasswordChange(p),
+    }));
+  }
+  return nodes;
+}
+
+async function shelfPage() {
+  acceptDrops();
+  const flash = takeFlash();
+  const old = await store.oldStateNotice();
+  const all = await store.accounts();
+  const showingAll = new URLSearchParams(location.search).has("all") && all.length > 1;
+  const head = [];
+  if (flash) {
+    head.push(notice(flash, { error: true }));
+  }
+  if (old) {
+    head.push(notice("shelfgauge 0.21 uses new accounts: this device forgot the old pairing and its books. Ask your library's admin for an invite.", {
+      dismiss: () => store.dismissOldState(),
+    }));
+  }
+  if (!all.length) {
+    show(...head, ...signedOutHelp());
+    return;
+  }
+  let p = await store.current();
+  head.push(switcher(all, p, showingAll));
+  const items = async () => {
+    if (!showingAll) {
+      return shelfItems(p);
+    }
+    const lists = await Promise.all(all.map((a) => shelfItems(a)));
+    return lists.flat();
+  };
+  renderShelf(await items(), "Updating…", { head, showLibrary: showingAll });
+  let status = "";
+  for (const a of showingAll ? all : [p]) {
+    try {
+      const synced = await syncAccount(a);
+      if (!showingAll) {
+        p = synced;
+        head.push(...await accountNotices(p));
+      }
+    } catch (e) {
+      if (e instanceof store.Unpaired) {
+        await dropAccount(a);
+        return;
+      }
+      if (e instanceof store.HubFull) {
+        status = "The hub is full: your marks wait on this device.";
+        continue;
+      }
+      if (!unreachable(e)) {
+        console.error(e);
+      }
+      status = "Offline: showing the books as of the last update. Books marked offline open.";
+    }
+  }
+  await dropUnshelved(all);
+  renderShelf(await items(), status, { head, showLibrary: showingAll });
 }
 
 // ---- Book files ----------------------------------------------------------------
@@ -214,14 +417,13 @@ function setFileStatus(text, error = false) {
 
 /** Opens a book file: keeps a copy here and opens the book. */
 async function openBookFile(file) {
-  const p = await store.pairing();
-  if (!p) {
-    show(...unpairedHelp());
+  if (!(await store.accounts()).length) {
+    show(...signedOutHelp());
     return;
   }
   setFileStatus(`Opening ${file.name}…`);
   try {
-    const { publication } = await bookfile.importFile(p, file);
+    const { publication } = await bookfile.importFile(file);
     setFileStatus("");
     location.assign(`${base}/r/${publication}`);
   } catch (e) {
@@ -247,39 +449,6 @@ function acceptDrops() {
       openBookFile(file);
     }
   });
-}
-
-async function shelfPage() {
-  acceptDrops();
-  const p = await store.pairing();
-  if (!p) {
-    show(...unpairedHelp());
-    return;
-  }
-  renderShelf(await shelfItems(p), "Updating…");
-  try {
-    // Marks made offline go out from here too.
-    await store.push(p);
-    await store.pull(p);
-    // Copies of books that left the shelf (or were republished) go; so do book
-    // file copies of books no longer on the shelf.
-    const items = await store.shelf(p);
-    const kept = new Set(items.map((i) => i.publication));
-    await store.dropBlobs((id) => !kept.has(id)).catch((e) => console.error(e));
-    const shelved = new Set(items.map((i) => i.content_key));
-    await store.dropCopies((copy) => !shelved.has(copy.content_key)).catch((e) => console.error(e));
-    renderShelf(await shelfItems(p), "");
-  } catch (e) {
-    if (e instanceof store.Unpaired) {
-      await store.forget();
-      show(...unpairedHelp());
-      return;
-    }
-    if (!unreachable(e)) {
-      console.error(e);
-    }
-    renderShelf(await shelfItems(p), "Offline: showing the books as of the last update. Books marked offline open.");
-  }
 }
 
 // ---- This device ---------------------------------------------------------------
@@ -358,35 +527,153 @@ function hubSection(info) {
   return el("section", { class: "hub-device-hub" }, el("h2", {}, "Hub"), facts(pairs));
 }
 
-/** `/device`: what this device is paired with, its sync, what it keeps, unpairing. */
+/** A password field with its label. */
+function passwordField(label, autocomplete = "current-password") {
+  const input = el("input", { type: "password", autocomplete, required: "" });
+  return { input, node: el("label", { class: "field" }, el("span", {}, label), input) };
+}
+
+/** A text field with its label. */
+function textField(label, value = "", attrs = {}) {
+  const input = el("input", Object.assign({ type: "text", autocomplete: "off", spellcheck: "false" }, attrs));
+  input.value = value;
+  return { input, node: el("label", { class: "field" }, el("span", {}, label), input) };
+}
+
+/**
+ * A small form: `fields` (from passwordField/textField), a submit button and a status
+ * line; `action()` returns a message for the person, or throws one.
+ */
+function smallForm(title, fields, button, action, { danger = false } = {}) {
+  const status = el("p", { class: "hub-form-status", role: "status" });
+  const submit = el("button", { type: "submit", class: danger ? "danger" : "" }, button);
+  const form = el("form", { class: "hub-form" }, ...(title ? [el("h3", {}, title)] : []), ...fields.map((f) => f.node), submit, status);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    submit.disabled = true;
+    status.classList.remove("error");
+    status.textContent = "Working…";
+    // Argon2 blocks this page for a moment on a phone: paint first.
+    await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+    try {
+      status.textContent = (await action()) || "Done.";
+    } catch (e) {
+      if (!(e instanceof account.Refused) && !unreachable(e)) {
+        console.error(e);
+      }
+      status.textContent = unreachable(e) ? "The hub cannot be reached; try again with a connection." : e.message;
+      status.classList.add("error");
+    }
+    submit.disabled = false;
+  });
+  return form;
+}
+
+/** My account for account `p`: the address, devices, name, password, leaving. */
+async function accountSection(p) {
+  const section = el("section", { class: "hub-account" },
+    el("h2", {}, libraryName(p)),
+    facts([["Your address", `${p.name}@${p.handle}`], ["This device", store.deviceName()]]));
+  const list = el("ul", { class: "device-list hub-devices" }, el("li", { class: "muted" }, "Asking the hub…"));
+  section.append(el("h3", {}, "Your devices"), list);
+  const owner = p.role === "owner";
+  const fill = async () => {
+    try {
+      const devices = await account.devices(p);
+      list.replaceChildren(...devices.map((d) => {
+        const li = el("li", {},
+          el("strong", {}, d.name || "Unnamed device"),
+          d.current ? el("span", { class: "muted" }, " (this device)") : "",
+          el("span", { class: "muted" }, ` · added ${new Date(d.created_at * 1000).toLocaleDateString()} · last seen ${new Date(d.last_seen_at * 1000).toLocaleDateString()}`));
+        if (!d.current && !owner) {
+          const pw = passwordField("Your password");
+          li.append(smallForm(null, [pw], "Remove", async () => {
+            await account.removeDevice(p, pw.input.value, d.id);
+            await fill();
+            return "Removed.";
+          }));
+        }
+        return li;
+      }));
+      await account.seeDevices(p);
+    } catch (e) {
+      if (e instanceof store.Unpaired) {
+        await dropAccount(p);
+        return;
+      }
+      list.replaceChildren(el("li", { class: "muted" }, "Offline: the hub is not reachable."));
+    }
+  };
+  if (owner) {
+    section.append(el("p", { class: "muted" }, "This is the library's own account: its devices, name and password are managed on the library's computer (My profile → Phone and reading through the hub)."));
+  } else {
+    const nameField = textField("New name", p.name, { maxlength: "32" });
+    const namePw = passwordField("Your password");
+    const oldPw = passwordField("Current password");
+    const newPw = passwordField("New password", "new-password");
+    const leavePw = passwordField("Your password");
+    section.append(
+      smallForm("Change your name", [nameField, namePw], "Change name", async () => {
+        p = await account.changeName(p, namePw.input.value, nameField.input.value);
+        return `Your address is now ${p.name}@${p.handle}.`;
+      }),
+      smallForm("Change your password", [oldPw, newPw], "Change password", async () => {
+        const min = (await account.rules()).min_chars;
+        if ([...newPw.input.value].length < min) {
+          throw new account.Refused(`Use at least ${min} characters; a few words are easy to remember.`, "bad_request");
+        }
+        p = await account.changePassword(p, oldPw.input.value, newPw.input.value);
+        return "Your password is changed; your other devices stay signed in and are told.";
+      }),
+      smallForm("Leave the library", [leavePw], "Leave library", async () => {
+        if (!confirm(`Leave ${libraryName(p)}? Your account there is deleted with your marks on the hub, and this device forgets the library's books.`)) {
+          return "Not left.";
+        }
+        await account.leave(p, leavePw.input.value);
+        location.assign(`${base}/device`);
+        return "Left.";
+      }, { danger: true }),
+    );
+  }
+  const signOut = el("button", { type: "button" }, "Sign out of this library");
+  signOut.addEventListener("click", async () => {
+    if (!confirm(`Sign this device out of ${libraryName(p)}? Its books and marks are removed from this device; your account stays. Marks made here are sent first.`)) {
+      return;
+    }
+    try {
+      await store.forgetDevice(p);
+    } catch (e) {
+      const n = await store.waiting(p);
+      const lost = n ? ` ${n} ${n === 1 ? "change" : "changes"} made here will be lost.` : "";
+      if (!confirm(`The hub is not reachable.${lost} Sign out anyway?`)) {
+        return;
+      }
+      await store.forgetDevice(p, { offline: true });
+    }
+    location.assign(`${base}/device`);
+  });
+  section.append(el("div", { class: "hub-device-actions" }, signOut));
+  fill();
+  return section;
+}
+
+/** `/device`: My account per library, this device's storage, the hub. */
 async function devicePage() {
   const info = await store.api("info").then((r) => (r.ok ? r.json() : null)).catch(() => null);
-  const p = await store.pairing();
-  if (!p) {
-    show(...unpairedHelp(), hubSection(info));
-    return;
-  }
-  const libraries = [...new Set((await store.shelf(p)).map((i) => i.instance).filter(Boolean))];
-  const name = el("span", {}, store.deviceName());
-  const since = el("span", {}, "unknown (offline)");
-  const synced = el("span");
-  const waiting = el("span");
-  const syncStatus = el("p", { class: "muted hub-device-status", role: "status" });
+  const all = await store.accounts();
   const offlineBooks = el("span");
   const fileBooks = el("span");
   const used = el("span");
   const kept = el("span");
-  const account = el("div", {}, el("p", { class: "muted" }, "Asking the hub…"));
-
-  const refreshSync = async () => {
-    const at = await store.syncedAt();
-    synced.textContent = at ? ago(at) : "not yet";
-    const n = await store.waiting();
-    waiting.textContent = n ? `${n} ${n === 1 ? "change" : "changes"} made here, not sent yet` : "none";
-  };
   const refreshLocal = async () => {
-    offlineBooks.textContent = String((await store.offline().catch(() => new Set())).size);
-    fileBooks.textContent = String((await store.copies().catch(() => [])).length);
+    let offline = 0;
+    let files = 0;
+    for (const a of all) {
+      offline += (await store.offline(a).catch(() => new Set())).size;
+      files += (await store.copies(a).catch(() => [])).length;
+    }
+    offlineBooks.textContent = String(offline);
+    fileBooks.textContent = String(files);
     const storage = await store.storageInfo();
     used.textContent = storage.usage === null ? "unknown"
       : storage.quota ? `${formatBytes(storage.usage)} of ${formatBytes(storage.quota)} the browser allows` : formatBytes(storage.usage);
@@ -394,30 +681,6 @@ async function devicePage() {
       : storage.persisted ? "yes, kept when space runs low"
       : "may be cleared when space runs low; on an iPhone or iPad, add the reader to the home screen";
   };
-
-  const update = el("button", { type: "button", class: "hub-device-update" }, "Update now");
-  update.addEventListener("click", async () => {
-    update.disabled = true;
-    syncStatus.textContent = "Updating…";
-    try {
-      await store.push(p);
-      await store.pull(p);
-      syncStatus.textContent = "Up to date.";
-    } catch (e) {
-      if (e instanceof store.Unpaired) {
-        await store.forget();
-        location.reload();
-        return;
-      }
-      if (!unreachable(e)) {
-        console.error(e);
-      }
-      syncStatus.textContent = "Offline: the hub is not reachable. Changes made here are sent when it is.";
-    }
-    await refreshSync();
-    update.disabled = false;
-  });
-
   const removeDownloads = el("button", { type: "button", class: "hub-device-remove" }, "Remove downloaded books");
   const localStatus = el("p", { class: "muted hub-device-local-status", role: "status" });
   removeDownloads.addEventListener("click", async () => {
@@ -428,52 +691,29 @@ async function devicePage() {
     localStatus.textContent = "Downloaded books removed.";
     await refreshLocal();
   });
-
-  const forgetButton = el("button", { type: "button", class: "danger hub-device-forget" }, "Forget this device");
-  const forgetStatus = el("p", { class: "hub-device-forget-status", role: "status" });
-  forgetButton.addEventListener("click", async () => {
-    if (!confirm("Forget this device? Your books, marks and keys are removed from it, and the hub stops accepting it. Pair it again in your library to read here.")) {
+  const sections = [];
+  for (const a of all) {
+    sections.push(await accountSection(a));
+  }
+  const signOutAll = el("button", { type: "button", class: "danger" }, "Sign out of all");
+  signOutAll.addEventListener("click", async () => {
+    if (!confirm("Sign this device out of every library? Hand it over only after this: one browser is one person.")) {
       return;
     }
-    forgetButton.disabled = true;
-    forgetStatus.textContent = "Forgetting…";
-    try {
-      await store.forgetDevice(p);
-    } catch (e) {
-      if (!unreachable(e)) {
-        console.error(e);
-        forgetStatus.textContent = e.message;
-        forgetStatus.classList.add("error");
-        forgetButton.disabled = false;
-        return;
-      }
-      const n = await store.waiting();
-      const lost = n ? ` ${n} ${n === 1 ? "change" : "changes"} made on this device (marks, the reading position) have not reached your library and will be lost.` : "";
-      if (!confirm(`The hub is not reachable.${lost} Forget this device anyway? Your library will list it until you remove it there (My profile → Phone and other devices).`)) {
-        forgetStatus.textContent = "";
-        forgetButton.disabled = false;
-        return;
-      }
-      await store.forgetDevice(p, { offline: true });
+    for (const a of all) {
+      await store.forgetDevice(a).catch(() => store.forgetDevice(a, { offline: true }));
     }
-    show(el("h1", {}, "This device was forgotten"),
-      el("p", {}, "Its books, marks and keys are gone from it. To read here again, pair it in your library: My profile → Phone and other devices → Pair a device."));
+    location.assign(`${base}/`);
   });
-
   show(
-    el("h1", {}, "This device"),
-    el("section", { class: "hub-device-pairing" },
-      el("p", { class: "hub-device-title" },
-        document.querySelector(".device-link svg").cloneNode(true),
-        libraries.length
-          ? `Paired with your library ${libraries.map((l) => `“${l}”`).join(", ")}.`
-          : "Paired with your library's account."),
-      facts([["This device", name], ["Paired since", since]])),
-    el("section", { class: "hub-device-sync" },
-      el("h2", {}, "Sync"),
-      facts([["Last updated", synced], ["Waiting", waiting]]),
-      el("div", { class: "hub-device-actions" }, update),
-      syncStatus),
+    el("h1", {}, "My account"),
+    ...(all.length ? sections : signedOutHelp()),
+    el("section", { class: "hub-add-library" },
+      el("h2", {}, "Another library"),
+      el("p", { class: "muted" }, "In another library too? Sign in with that library's address; this device then holds both. One browser is one person: sign out of all before handing it over."),
+      el("div", { class: "hub-device-actions" },
+        el("a", { class: "button", href: `${base}/signin` }, "Add a library"),
+        ...(all.length ? [signOutAll] : []))),
     el("section", { class: "hub-device-local" },
       el("h2", {}, "On this device"),
       facts([
@@ -484,51 +724,145 @@ async function devicePage() {
       ]),
       el("div", { class: "hub-device-actions" }, removeDownloads),
       localStatus),
-    el("section", { class: "hub-device-account" },
-      el("h2", {}, "Your account on the hub"),
-      account,
-      el("p", { class: "muted" }, "Your devices are managed in your library: My profile → Phone and other devices.")),
     hubSection(info),
-    el("section", { class: "hub-device-danger" },
-      el("h2", {}, "Forget this device"),
-      el("p", { class: "muted" }, "Removes your books, marks and keys from this device and unpairs it. Marks made here are sent to your library first."),
-      el("div", { class: "hub-device-actions" }, forgetButton),
-      forgetStatus),
   );
-  await Promise.all([refreshSync(), refreshLocal()]);
+  await refreshLocal();
+}
 
-  try {
-    const [mine, list] = await Promise.all([
-      store.api("account", {}, p.token).then((r) => (r.ok ? r.json() : Promise.reject(new Error(`account: ${r.status}`)))),
-      store.api("devices", {}, p.token).then((r) => (r.ok ? r.json() : Promise.reject(new Error(`devices: ${r.status}`)))),
-    ]);
-    const current = (list.devices || []).find((d) => d.current);
-    if (current) {
-      if (typeof current.name === "string") {
-        name.textContent = await c.openDeviceName(p.aes, c.unbase64url(current.name)).catch(() => store.deviceName());
+/** Where the browser runs inside a messenger (its storage is not the browser's own). */
+function inAppBrowser() {
+  const ua = navigator.userAgent;
+  return /FBAN|FBAV|Instagram|Line\/|Telegram|WhatsApp|; wv\)|MicroMessenger|VKClient/.test(ua);
+}
+
+function inAppNotice() {
+  return inAppBrowser()
+    ? notice("This page is open inside an app. Open the link in Chrome or Safari instead, so that your books stay in your browser: the menu (⋮ or ⋯) → Open in browser.", { error: true })
+    : null;
+}
+
+/** `/signin`: an address and a password; at the device limit, a device to remove. */
+function signinPage(after = null) {
+  const address = textField("Your address", "", { autocomplete: "username", placeholder: "grandma@smiths", inputmode: "email" });
+  const pw = passwordField("Password");
+  const choice = el("div", { class: "hub-device-choice" });
+  let retry = null;
+  const form = smallForm(null, [address, pw], "Sign in", async () => {
+    let p;
+    try {
+      if (retry) {
+        const picked = choice.querySelector("input[name=remove]:checked");
+        if (!picked) {
+          throw new account.Refused("Choose a device to remove.", "bad_request");
+        }
+        p = await retry(Number(picked.value));
+      } else {
+        p = await account.signIn(address.input.value, pw.input.value);
       }
-      if (Number.isFinite(current.created_at)) {
-        since.textContent = new Date(current.created_at * 1000).toLocaleDateString();
+    } catch (e) {
+      if (e instanceof account.Refused && e.code === "device_limit" && e.devices) {
+        retry = e.retry;
+        choice.replaceChildren(el("p", {}, "Choose a device to remove (an old phone, a browser you no longer use):"),
+          ...e.devices.map((d, n) => el("label", { class: "check" },
+            el("input", Object.assign({ type: "radio", name: "remove", value: String(d.id) }, n === 0 ? { checked: "" } : {})),
+            ` Device added ${new Date(d.created_at * 1000).toLocaleDateString()}, last seen ${new Date(d.last_seen_at * 1000).toLocaleDateString()}`)));
       }
+      throw e;
     }
-    const usage = mine.usage || {};
-    const quotas = mine.quotas || {};
-    account.replaceChildren(facts([
-      ["Space used", ofQuota(usage.bytes, quotas.max_bytes, formatBytes)],
-      ["Books on the hub", ofQuota(usage.publications, quotas.max_publications)],
-      ["Devices, your library included", ofQuota(usage.devices, quotas.max_devices)],
-    ]));
-  } catch (e) {
-    if (e instanceof store.Unpaired) {
-      await store.forget();
-      show(...unpairedHelp(), hubSection(info));
-      return;
-    }
-    if (!unreachable(e)) {
-      console.error(e);
-    }
-    account.replaceChildren(el("p", { class: "muted" }, "Offline: the hub is not reachable."));
+    await syncAccount(p).catch(() => p);
+    navigator.storage && navigator.storage.persist && navigator.storage.persist().catch(() => {});
+    location.assign(after || `${base}/`);
+    return "Signed in.";
+  });
+  form.insertBefore(choice, form.querySelector("button"));
+  show(
+    el("h1", {}, "Sign in"),
+    ...[inAppNotice()].filter(Boolean),
+    el("p", {}, "With the address your library's admin gave you, like grandma@smiths, and your password."),
+    form,
+    el("p", { class: "muted" }, "Forgot your password? Ask your library's admin for a new link (Reset password)."),
+  );
+}
+
+/** `/invite#<secret>.<one-time key>`: create an account, or set a new password. */
+async function invitePage() {
+  const fragment = location.hash.slice(1);
+  // The link is a key: out of the address bar and the history at once.
+  history.replaceState(null, "", location.pathname);
+  if (!fragment) {
+    show(el("h1", {}, "Open the whole invite link"), el("p", {}, "The link you got ends in a long code after #. Open it again as it came."));
+    return;
   }
+  show(el("h1", {}, "Opening your invite…"));
+  let preview;
+  try {
+    preview = await account.previewInvite(fragment);
+  } catch (e) {
+    show(el("h1", {}, "This invite does not open"), el("p", { class: "error" }, unreachable(e) ? "The hub cannot be reached; open the link again with a connection." : e.message));
+    return;
+  }
+  const library = preview.payload.library_name || `@${preview.handle}`;
+  const min = (await account.rules()).min_chars;
+  const pw = passwordField(`Password (at least ${min} characters)`, "new-password");
+  const repeat = passwordField("Repeat it", "new-password");
+  const check = () => {
+    if ([...pw.input.value].length < min) {
+      throw new account.Refused(`Use at least ${min} characters; a few words are easy to remember.`, "bad_request");
+    }
+    if (pw.input.value !== repeat.input.value) {
+      throw new account.Refused("The two passwords differ.", "bad_request");
+    }
+  };
+  if (preview.kind === "reset") {
+    show(
+      el("h1", {}, `A new password for ${preview.name}@${preview.handle}`),
+      ...[inAppNotice()].filter(Boolean),
+      el("p", {}, `${library} sent you this link to set a new password. Your address, books and marks stay.`),
+      smallForm(null, [pw, repeat], "Set password", async () => {
+        check();
+        const p = await account.redeemInvite(preview, { password: pw.input.value });
+        await syncAccount(p).catch(() => p);
+        location.assign(`${base}/`);
+        return "Done.";
+      }),
+    );
+    return;
+  }
+  const name = textField("Your name in the address", "", { maxlength: "32", placeholder: "grandma" });
+  const display = textField("Your name in the library", preview.payload.profile_name, { maxlength: "32" });
+  const color = el("select", {});
+  ["Teal", "Orange", "Purple", "Green", "Red", "Blue", "Brown", "Pink"].forEach((label, n) => color.append(el("option", { value: String(n) }, label)));
+  const colorField = { input: color, node: el("label", { class: "field" }, el("span", {}, "Colour"), color) };
+  const address = el("p", { class: "muted" }, `Your address: …@${preview.handle}`);
+  name.input.addEventListener("input", () => {
+    address.textContent = `Your address: ${name.input.value.trim().toLowerCase() || "…"}@${preview.handle}`;
+  });
+  show(
+    el("h1", {}, `Join ${library}`),
+    ...[inAppNotice()].filter(Boolean),
+    el("p", {}, `${library} invites you to read its books on this device and on any other you sign in on.`),
+    el("ul", {},
+      el("li", {}, "Every member of the library can open every book the library sends to the hub."),
+      el("li", {}, "Your notes and reading places sync between your devices. The library's admin could technically read your notes in this library and can reset your password; nobody else can."),
+      el("li", {}, "The hub stores everything encrypted and never sees your password.")),
+    smallForm(null, [name, display, colorField, pw, repeat], "Create account", async () => {
+      const normalized = await account.normalizeName(name.input.value);
+      if (!normalized) {
+        throw new account.Refused("Your name has 3 to 32 Latin letters, digits, dots, dashes or underscores, like grandma or olga.s.", "bad_request");
+      }
+      check();
+      const p = await account.redeemInvite(preview, {
+        name: normalized,
+        password: pw.input.value,
+        displayName: display.input.value.trim() || preview.payload.profile_name,
+        color: Number(color.value),
+      });
+      await syncAccount(p).catch(() => p);
+      location.assign(`${base}/`);
+      return "Done.";
+    }),
+    address,
+  );
 }
 
 // ---- Reading view --------------------------------------------------------------
@@ -556,7 +890,7 @@ class Book {
   }
 
   async open(path) {
-    const sealed = this.copy ? await store.copyBlob(this.id, path) : await store.blob(this.p, this.id, path);
+    const sealed = this.copy ? await store.copyBlob(this.p, this.id, path) : await store.blob(this.p, this.id, path);
     if (!sealed) {
       throw new Error("gone");
     }
@@ -630,7 +964,7 @@ class Book {
         return;
       }
     }
-    await store.markOffline(this.id);
+    await store.markOffline(this.p, this.id);
   }
 
   /** A `blob:` URL of image `imageId`, or null. */
@@ -840,8 +1174,8 @@ class Sync {
 
   failed(e) {
     if (e instanceof store.Unpaired) {
-      store.forget().then(() => location.reload());
-    } else if (!unreachable(e)) {
+      dropAccount(this.p);
+    } else if (!unreachable(e) && !(e instanceof store.HubFull)) {
       console.error(e);
     }
   }
@@ -1006,52 +1340,124 @@ function startReader(book, item, p) {
   document.head.append(script);
 }
 
+/** The account here whose book file copy, shelf item or library has publication `id`. */
+async function findAccount(id) {
+  const all = await store.accounts();
+  for (const p of all) {
+    const copy = await store.copy(p, id).catch(() => null);
+    if (copy) {
+      return { p, copy, sealed: await store.copyBlob(p, id, "manifest") };
+    }
+  }
+  for (const p of all) {
+    if ((await store.shelf(p).catch(() => [])).some((i) => i.publication === id)) {
+      return { p, copy: null, sealed: await store.blob(p, id, "manifest") };
+    }
+  }
+  // A link of a book not on the shelf yet: the hub answers only the library's members.
+  for (const p of all) {
+    try {
+      const sealed = await store.blob(p, id, "manifest");
+      if (sealed) {
+        return { p, copy: null, sealed };
+      }
+    } catch (e) {
+      if (e instanceof store.Unpaired) {
+        await store.forget(p);
+        continue;
+      }
+      throw e;
+    }
+  }
+  return null;
+}
+
+/** The book key of a manifest of account `p` from its header, syncing once for a newer key. */
+async function bookKey(p, id, sealed) {
+  let header;
+  try {
+    header = c.keyHeader(sealed);
+  } catch (e) {
+    if (/older shelfgauge/.test(e.message)) {
+      return { message: ["This book was made by an older shelfgauge", "Ask your library to send it again."] };
+    }
+    throw e;
+  }
+  if (header.key_scope !== c.LIBRARY_SCOPE) {
+    return { message: ["This book needs a newer shelfgauge", "Your hub's reader app is older than the library that sent this book."] };
+  }
+  let key = store.libraryKey(p, header.key_id);
+  if (!key) {
+    try {
+      p = await syncAccount(p);
+    } catch (e) {
+      if (e instanceof store.Unpaired) {
+        throw e;
+      }
+    }
+    key = store.libraryKey(p, header.key_id);
+  }
+  if (!key) {
+    return { message: ["This book needs a newer library key", "Connect to the internet to update, then open it again."] };
+  }
+  return { p, key: await c.bookKeyFromHeader(header, key, id) };
+}
+
 async function readerPage(id) {
-  const p = await store.pairing();
-  if (!p) {
-    readerMessage(...unpairedHelp().map((node) => node.textContent));
-    return;
+  // `#pair=<secret>.<key>`: the owner's QR code that also pairs a new phone.
+  const pairing = location.hash.startsWith("#pair=") ? location.hash.slice(6) : null;
+  if (pairing) {
+    history.replaceState(null, "", location.pathname + location.search);
   }
   try {
-    // A book file's copy on this device first: it needs no hub.
-    const copy = await store.copy(id);
-    let item;
-    let key;
-    let sealed;
-    if (copy) {
-      item = (await store.shelf(p)).find((i) => i.content_key === copy.content_key)
-        || { title: copy.title, authors: copy.authors, content_key: copy.content_key, publication: id };
-      const raw = await c.openRecord(p.aes, "file_key", id, c.unbase64url(copy.book_key));
-      key = await c.aesKey(raw);
-      raw.fill(0);
-      sealed = await store.copyBlob(id, "manifest");
-    } else {
-      item = (await store.shelf(p)).find((i) => i.publication === id);
-      if (!item) {
-        await store.pull(p).catch((e) => {
-          if (e instanceof store.Unpaired) {
-            throw e;
-          }
-        });
-        item = (await store.shelf(p)).find((i) => i.publication === id);
-      }
-      if (!item) {
-        readerMessage("This book is not on your shelf", "It may have been removed from the shelf in your library.");
+    let found = await findAccount(id);
+    if (!found && pairing) {
+      readerMessage("Pairing this device…");
+      try {
+        await store.pair(pairing);
+      } catch (e) {
+        readerMessage("This device was not paired", e.message);
         return;
       }
-      const other = (await store.copies()).find((x) => x.content_key === item.content_key);
+      const p = await store.current();
+      await syncAccount(p).catch(() => p);
+      found = await findAccount(id);
+    }
+    if (!found) {
+      if (!(await store.accounts()).length) {
+        readerMessage(...signedOutHelp().map((node) => node.textContent));
+      } else {
+        // The hub answers alike for a deleted book and another library's (it tells
+        // nothing about publications a device may not read).
+        readerMessage("This book does not open here",
+          "Its library may have deleted it, or it is from a library this device is not signed in to. In that case sign in with the address your library's admin gave you: My account → Add a library.");
+      }
+      return;
+    }
+    if (!found.sealed) {
+      const fileItem = (await store.shelf(found.p)).find((i) => i.publication === id && i.kind === "file");
+      if (fileItem) {
+        readerMessage(`Open the book file of “${fileItem.title}”`, "This book is on your shelf as a book file: the hub has no copy. Open the file on this device with Open file on My books.");
+        return;
+      }
+      readerMessage("This book is no longer on the hub", "It was not opened for a long time, or the library deleted it. Ask the library to send it again.");
+      return;
+    }
+    const opened = await bookKey(found.p, id, found.sealed);
+    if (opened.message) {
+      readerMessage(...opened.message);
+      return;
+    }
+    const p = opened.p;
+    const key = opened.key;
+    const sealed = found.sealed;
+    const copy = found.copy;
+    let item = (await store.shelf(p)).find((i) => (copy ? i.content_key === copy.content_key : i.publication === id));
+    if (!copy && item) {
+      // A book file's copy of the same book on this device opens without the hub.
+      const other = (await store.copies(p)).find((x) => x.publication !== id && x.content_key === item.content_key);
       if (other) {
         location.replace(`${base}/r/${other.publication}${location.search}${location.hash}`);
-        return;
-      }
-      if (item.kind === "file") {
-        readerMessage(`Open the book file of “${item.title}”`, "This book is on your shelf as a book file: the hub has no copy. Open the file on this device with Open file on My books (download it from the book's page in your library if it is not here).");
-        return;
-      }
-      key = await c.aesKey(c.unbase64url(item.book_key));
-      sealed = await store.blob(p, id, "manifest");
-      if (!sealed) {
-        readerMessage(`“${item.title}” is no longer on the hub`, "It was not opened for a long time, or it was removed. Choose Open on phone on the book's page in your library to publish it again.");
         return;
       }
     }
@@ -1059,6 +1465,24 @@ async function readerPage(id) {
     await wasm.default();
     const reader = new wasm.Reader(await c.openBlob(key, c.unhex(id), "manifest", sealed));
     const book = new Book(p, id, key, reader, copy);
+    if (!item) {
+      // A member opening a link: the book goes on their shelf (the library's
+      // publication; the book key stays in its header).
+      item = {
+        authors: (book.summary.authors || []).join(", "),
+        book_key: null,
+        content_key: book.summary.content_key,
+        format_version: c.FORMAT_VERSION,
+        instance: p.library_name || p.handle,
+        kind: copy ? "file" : "upload",
+        publication: id,
+        title: book.summary.title || "",
+        updated_at: Math.floor(Date.now() / 1000),
+      };
+      const contentKey = c.unbase64url(item.content_key);
+      await store.write(p, "shelf_item", await c.shelfId(p.mac, contentKey), item);
+      store.push(p).catch(() => {});
+    }
     if (book.summary.content_key !== item.content_key) {
       // Marks would be filed under another book.
       readerMessage("This book could not be opened", "Its shelf entry does not match the published book. Publish it again from your library.");
@@ -1116,8 +1540,10 @@ async function readerPage(id) {
     }
   } catch (e) {
     if (e instanceof store.Unpaired) {
-      await store.forget();
-      readerMessage(...unpairedHelp().map((node) => node.textContent));
+      const p = await store.current();
+      if (p) {
+        await dropAccount(p);
+      }
       return;
     }
     console.error(e);
@@ -1165,8 +1591,14 @@ async function takeShared() {
   openBookFile(new File([await response.blob()], name));
 }
 
+// The state of 0.18–0.20 goes before anything else reads the accounts.
+await store.dropOldState().catch((e) => console.error(e));
 if (route === "/pair") {
   pairPage();
+} else if (route === "/signin") {
+  signinPage();
+} else if (route === "/invite") {
+  invitePage();
 } else if (route.startsWith("/r/")) {
   readerPage(route.slice(3));
 } else if (route === "/device") {

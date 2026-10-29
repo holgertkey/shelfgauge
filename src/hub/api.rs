@@ -106,6 +106,7 @@ pub(super) fn routes(state: &HubState) -> Router<HubState> {
         .route(&state.path("/api/name"), post(change_name))
         .route(&state.path("/api/devices"), get(devices))
         .route(&state.path("/api/devices/{id}"), delete(remove_device))
+        .route(&state.path("/api/devices/{id}/name"), put(rename_device))
         .route(&state.path("/api/library"), delete(delete_library))
         .route(&state.path("/api/library/handle"), post(change_handle))
         .route(&state.path("/api/library/accounts"), get(members))
@@ -919,6 +920,34 @@ async fn remove_device(
         return Err(HubError::NotFound);
     }
     tracing::info!(account = device.account, device = id, "device removed");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The body of `PUT /api/devices/{id}/name`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeviceNameBody {
+    name: Option<String>,
+}
+
+/// `PUT /api/devices/{id}/name`: the calling device names itself (sealed under the
+/// account key, which a device signing in learns only after the sign-in); another
+/// device's name is not changed.
+async fn rename_device(
+    State(state): State<HubState>,
+    Extension(auth): Extension<Auth>,
+    Path(id): Path<String>,
+    body: Result<Json<DeviceNameBody>, JsonRejection>,
+) -> Result<StatusCode, HubError> {
+    let device = device_only(auth)?;
+    let id: i64 = id.parse().map_err(|_| HubError::NotFound)?;
+    if id != device.device {
+        return Err(HubError::Forbidden("a device names only itself"));
+    }
+    let name = device_name(json_body(body)?.name.as_deref())?;
+    state
+        .db(move |conn| store::set_device_name(conn, device.account, id, name.as_deref()))
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
