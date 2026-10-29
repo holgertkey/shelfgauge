@@ -544,10 +544,12 @@ function textField(label, value = "", attrs = {}) {
  * A small form: `fields` (from passwordField/textField), a submit button and a status
  * line; `action()` returns a message for the person, or throws one.
  */
-function smallForm(title, fields, button, action, { danger = false } = {}) {
+function smallForm(title, fields, button, action, { danger = false, username = null } = {}) {
   const status = el("p", { class: "hub-form-status", role: "status" });
   const submit = el("button", { type: "submit", class: danger ? "danger" : "" }, button);
-  const form = el("form", { class: "hub-form" }, ...(title ? [el("h3", {}, title)] : []), ...fields.map((f) => f.node), submit, status);
+  // The account's address for password managers (and the browser's form checks).
+  const user = username ? [el("input", { type: "text", autocomplete: "username", value: username, hidden: "", tabindex: "-1", "aria-hidden": "true" })] : [];
+  const form = el("form", { class: "hub-form" }, ...(title ? [el("h3", {}, title)] : []), ...user, ...fields.map((f) => f.node), submit, status);
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     submit.disabled = true;
@@ -591,7 +593,7 @@ async function accountSection(p) {
             await account.removeDevice(p, pw.input.value, d.id);
             await fill();
             return "Removed.";
-          }));
+          }, { username: `${p.name}@${p.handle}` }));
         }
         return li;
       }));
@@ -616,7 +618,7 @@ async function accountSection(p) {
       smallForm("Change your name", [nameField, namePw], "Change name", async () => {
         p = await account.changeName(p, namePw.input.value, nameField.input.value);
         return `Your address is now ${p.name}@${p.handle}.`;
-      }),
+      }, { username: `${p.name}@${p.handle}` }),
       smallForm("Change your password", [oldPw, newPw], "Change password", async () => {
         const min = (await account.rules()).min_chars;
         if ([...newPw.input.value].length < min) {
@@ -624,7 +626,7 @@ async function accountSection(p) {
         }
         p = await account.changePassword(p, oldPw.input.value, newPw.input.value);
         return "Your password is changed; your other devices stay signed in and are told.";
-      }),
+      }, { username: `${p.name}@${p.handle}` }),
       smallForm("Leave the library", [leavePw], "Leave library", async () => {
         if (!confirm(`Leave ${libraryName(p)}? Your account there is deleted with your marks on the hub, and this device forgets the library's books.`)) {
           return "Not left.";
@@ -632,7 +634,7 @@ async function accountSection(p) {
         await account.leave(p, leavePw.input.value);
         location.assign(`${base}/device`);
         return "Left.";
-      }, { danger: true }),
+      }, { danger: true, username: `${p.name}@${p.handle}` }),
     );
   }
   const signOut = el("button", { type: "button" }, "Sign out of this library");
@@ -824,7 +826,7 @@ async function invitePage() {
         await syncAccount(p).catch(() => p);
         location.assign(`${base}/`);
         return "Done.";
-      }),
+      }, { username: `${preview.name}@${preview.handle}` }),
     );
     return;
   }
@@ -1546,7 +1548,9 @@ async function readerPage(id) {
       }
       return;
     }
-    console.error(e);
+    if (!unreachable(e)) {
+      console.error(e);
+    }
     readerMessage("The book could not be opened", unreachable(e) ? "The hub cannot be reached, and this book is not saved on this device yet." : String(e.message || e));
   }
 }
@@ -1592,7 +1596,10 @@ async function takeShared() {
 }
 
 // The state of 0.18–0.20 goes before anything else reads the accounts.
-await store.dropOldState().catch((e) => console.error(e));
+await Promise.race([
+  store.dropOldState().catch((e) => console.error(e)),
+  new Promise((resolve) => setTimeout(resolve, 2000)),
+]);
 if (route === "/pair") {
   pairPage();
 } else if (route === "/signin") {

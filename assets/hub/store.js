@@ -187,29 +187,41 @@ export async function forget(p) {
   await done(indexedDB.deleteDatabase(name));
 }
 
+/** Resolves with `request`'s result, or with `fallback` after `ms` (a blocked request). */
+function within(request, ms, fallback) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), ms);
+    request.onsuccess = () => {
+      clearTimeout(timer);
+      resolve(request.result);
+    };
+    request.onerror = () => {
+      clearTimeout(timer);
+      resolve(fallback);
+    };
+  });
+}
+
 /**
  * Deletes the state of shelfgauge 0.18–0.20 (its accounts no longer exist): the old
  * database and every downloaded publication. True when there was some, once.
+ *
+ * The old database is never opened here (opening creates one), only looked up by
+ * name; its deletion waits for other pages of this site to let go of it, so it is
+ * not waited for long: a later start finishes it.
  */
 export async function dropOldState() {
-  const existed = await new Promise((resolve) => {
-    let created = false;
-    const open = indexedDB.open(OLD_DB);
-    open.onupgradeneeded = () => {
-      created = true;
-    };
-    open.onsuccess = () => {
-      open.result.close();
-      resolve(!created);
-    };
-    open.onerror = () => resolve(false);
-  });
-  await done(indexedDB.deleteDatabase(OLD_DB));
-  if (!existed) {
+  if (!indexedDB.databases) {
+    // Firefox before 126: the old state stays until the browser clears it.
+    return false;
+  }
+  const names = (await indexedDB.databases()).map((d) => d.name);
+  if (!names.includes(OLD_DB)) {
     return false;
   }
   await dropBlobs(() => true);
   await reg(["app"], "readwrite", (t) => t.objectStore("app").put(Date.now(), "old_state"));
+  await within(indexedDB.deleteDatabase(OLD_DB), 1000, null);
   return true;
 }
 
