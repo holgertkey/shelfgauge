@@ -220,15 +220,24 @@ impl Publication {
     }
 
     /// Every blob compressed, padded and encrypted for publication `id` under `key`,
-    /// each with a fresh random nonce.
+    /// each with a fresh random nonce; the manifest carries `header` (a
+    /// [`KeyHeader`](format::KeyHeader)), the other blobs none.
     pub fn seal(
         &self,
         id: &PublicationId,
         key: &BookKey,
+        header: &[u8],
     ) -> Result<Vec<(BlobPath, Vec<u8>)>, getrandom::Error> {
         self.blobs()
             .into_iter()
-            .map(|(path, plain)| Ok((path, seal(id, key, path, &plain)?)))
+            .map(|(path, plain)| {
+                let header = if path == BlobPath::Manifest {
+                    header
+                } else {
+                    &[]
+                };
+                Ok((path, seal(id, key, path, header, &plain)?))
+            })
             .collect()
     }
 }

@@ -83,8 +83,34 @@
       <span class="avatar pc-{{ profile.color }}" aria-hidden="true">{{ profile.initials }}</span>
       <div class="profile-facts">
         <strong>{{ profile.name }}</strong>
+        {%- if profile.hub_only %}
+        <span class="muted">reads through the hub</span>
+        {%- else %}
         <span class="muted">{% if profile.admin %}admin{% else %}reader{% endif %}{% if profile.owner %}, owner{% endif %} · {% if profile.has_pin %}PIN{% else %}no PIN{% endif %}{% if profile.has_password %} · password{% else if profiles.auth %} · on this computer only{% endif %} · last seen {{ profile.last_seen }}</span>
+        {%- endif %}
+        {%- if let Some(hub) = profile.hub %}
+        <span class="muted">Hub: {{ hub.text }}</span>
+        {%- endif %}
       </div>
+      {%- if let Some(hub) = profile.hub %}
+      {%- if !profile.owner %}
+      <div class="profile-hub-actions">
+        {%- if hub.can_invite %}
+        <form action="{{ layout.urls.manage_profile(profile.id, "invite") }}" method="post" class="inline-form">
+          <button type="submit">{% if hub.gone %}Invite again{% else %}Invite to the hub{% endif %}</button>
+        </form>
+        {%- endif %}
+        {%- if hub.on_hub %}
+        <form action="{{ layout.urls.manage_profile(profile.id, "reset") }}" method="post" class="inline-form">
+          <button type="submit">Reset password</button>
+        </form>
+        <form action="{{ layout.urls.manage_profile(profile.id, "sign-out") }}" method="post" class="inline-form">
+          <button type="submit">Sign out all devices</button>
+        </form>
+        {%- endif %}
+      </div>
+      {%- endif %}
+      {%- endif %}
       <details class="profile-edit">
         <summary>Edit</summary>
         <div class="profile-actions">
@@ -130,6 +156,21 @@
     </li>
     {%- endfor %}
   </ul>
+  {%- if profiles.can_add && profiles.hub %}
+  <form class="settings-form add-profile" action="{{ profiles.add_action }}" method="post">
+    <h3>Invite someone</h3>
+    <p class="hint">For a person who reads on their own phone or computer, at home or far away: they get a link, choose their address and password, and read every book this library sends to the hub. Removing them later is deleting their profile.</p>
+    <input type="hidden" name="hub_invite" value="1">
+    <div class="field">
+      <label for="invite-name">Name</label>
+      <input type="text" id="invite-name" name="name" maxlength="32" required autocomplete="off" aria-describedby="invite-name-hint">
+      <p class="hint" id="invite-name-hint">How you call them here, e.g. Grandma; they may change it.</p>
+    </div>
+    <div class="form-actions">
+      <button type="submit" class="primary">Invite someone</button>
+    </div>
+  </form>
+  {%- endif %}
   {%- if profiles.can_add %}
   <form class="settings-form add-profile" action="{{ profiles.add_action }}" method="post">
     <h3>Add a profile</h3>

@@ -86,7 +86,7 @@ fn same_name(a: &str, b: &str) -> bool {
 const COLUMNS: &str = "p.id, p.name, p.color, p.role, p.pin_hash IS NOT NULL, p.share_activity, \
     p.settings, p.created_at, \
     (SELECT max(last_seen_at) FROM profile_sessions s WHERE s.profile_id = p.id), \
-    p.password_hash IS NOT NULL";
+    p.password_hash IS NOT NULL, p.hub_only";
 
 fn profile_row(row: &Row<'_>) -> rusqlite::Result<Profile> {
     let role: String = row.get(3)?;
@@ -102,6 +102,7 @@ fn profile_row(row: &Row<'_>) -> rusqlite::Result<Profile> {
         created_at: row.get(7)?,
         last_seen_at: row.get(8)?,
         has_password: row.get(9)?,
+        hub_only: row.get(10)?,
     })
 }
 
@@ -112,6 +113,33 @@ pub fn list(conn: &Connection) -> Result<Vec<Profile>, StorageError> {
     ))?;
     let rows = stmt.query_map([], profile_row)?;
     Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// The profiles a person picks on the computer or logs in to: all but those made by a
+/// hub invite ([`Profile::hub_only`]).
+pub fn list_local(conn: &Connection) -> Result<Vec<Profile>, StorageError> {
+    let mut profiles = list(conn)?;
+    profiles.retain(|p| !p.hub_only);
+    Ok(profiles)
+}
+
+/// The number of profiles a person picks on the computer ([`list_local`]): with one,
+/// nobody is asked who is reading.
+pub fn count_local(conn: &Connection) -> Result<usize, StorageError> {
+    Ok(conn.query_row(
+        "SELECT count(*) FROM profiles WHERE hub_only = 0",
+        [],
+        |row| row.get::<_, i64>(0),
+    )? as usize)
+}
+
+/// Marks profile `id` as made by a hub invite (or not).
+pub fn set_hub_only(conn: &Connection, id: ProfileId, hub_only: bool) -> Result<(), StorageError> {
+    conn.execute(
+        "UPDATE profiles SET hub_only = ?2 WHERE id = ?1",
+        rusqlite::params![id, hub_only],
+    )?;
+    Ok(())
 }
 
 /// The number of profiles.

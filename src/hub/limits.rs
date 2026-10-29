@@ -3,12 +3,15 @@
 //! - [`DeviceLimiter`]: a token bucket per device token, the main control: up to
 //!   `requests_per_minute` requests at once, refilled at that rate.
 //! - [`WindowLimiter`]: a fixed window per client address: one hour for the routes
-//!   without a token (account, pair, recover), one day for the accounts created with
-//!   open registration. Keyed by [`client_key`]: the peer, or
+//!   without a token (sign-in, invites, pairing, new libraries), one day for the
+//!   libraries created with open registration. Keyed by [`client_key`]: the peer, or
 //!   for a peer in `[server] trusted_proxies` the client it names in
 //!   `X-Forwarded-For`. Requests from an untrusted loopback peer (a reverse proxy on
 //!   this machine that is not listed) share one budget. An IPv6 client is counted by
 //!   its /64, the block one subscriber usually gets.
+//!
+//! - [`LoginLimiter`]: failed password checks per address (or account) and per client
+//!   address, answered with a growing delay, never a lock, on the hub's clock.
 //!
 //! Client addresses are never logged. The clock is passed in, so tests need not wait.
 
@@ -263,6 +266,101 @@ impl WindowLimiter {
     }
 }
 
+/// What failed password checks are counted by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum LoginKey {
+    /// The SHA-256 of an address `name@handle` (normalized) tried at sign-in.
+    Address([u8; 32]),
+    /// The internal id of an account whose current password a device confirms.
+    Account(i64),
+    /// A client address ([`client_key`]).
+    Client(IpAddr),
+}
+
+impl LoginKey {
+    /// Failures without a delay.
+    fn free(self) -> u32 {
+        match self {
+            Self::Address(_) | Self::Account(_) => 3,
+            // A family signs in from one home address.
+            Self::Client(_) => 10,
+        }
+    }
+}
+
+/// The longest delay after failed password checks, in seconds: knowing someone's
+/// address slows their sign-in down at worst this much, never locks it.
+pub(crate) const MAX_LOGIN_DELAY: i64 = 900;
+
+/// Failures are forgotten after this long without one (seconds).
+const LOGIN_MEMORY: i64 = 86_400;
+
+#[derive(Debug, Clone, Copy)]
+struct Strikes {
+    failures: u32,
+    until: i64,
+    last: i64,
+}
+
+/// Failed password checks per [`LoginKey`]: after a few free ones each failure makes
+/// the key wait twice as long as the last, up to [`MAX_LOGIN_DELAY`]. Checked before
+/// any hashing; a success clears its address or account. Times are Unix seconds.
+#[derive(Debug, Default)]
+pub(crate) struct LoginLimiter {
+    strikes: Mutex<HashMap<LoginKey, Strikes>>,
+}
+
+impl LoginLimiter {
+    /// `Err` with the wait when any of `keys` must still wait at `now`.
+    pub(crate) fn check(&self, keys: &[LoginKey], now: i64) -> Result<(), Duration> {
+        let map = self.strikes.lock().unwrap_or_else(|e| e.into_inner());
+        let wait = (keys.iter())
+            .filter_map(|key| map.get(key))
+            .map(|strikes| strikes.until - now)
+            .max()
+            .unwrap_or(0);
+        if wait > 0 {
+            Err(Duration::from_secs(wait as u64))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Counts a failure of each of `keys` at `now`.
+    pub(crate) fn fail(&self, keys: &[LoginKey], now: i64) {
+        let mut map = self.strikes.lock().unwrap_or_else(|e| e.into_inner());
+        if map.len() >= PRUNE_AT {
+            map.retain(|_, s| now - s.last < LOGIN_MEMORY);
+        }
+        for key in keys {
+            let strikes = map.entry(*key).or_insert(Strikes {
+                failures: 0,
+                until: now,
+                last: now,
+            });
+            if now - strikes.last >= LOGIN_MEMORY {
+                strikes.failures = 0;
+            }
+            strikes.failures += 1;
+            strikes.last = now;
+            let over = strikes.failures.saturating_sub(key.free());
+            if over > 0 {
+                let delay = 1i64
+                    .checked_shl(over - 1)
+                    .unwrap_or(MAX_LOGIN_DELAY)
+                    .min(MAX_LOGIN_DELAY);
+                strikes.until = now + delay;
+            }
+        }
+    }
+
+    /// Clears the failures of `key` (a correct password for it).
+    pub(crate) fn succeed(&self, key: LoginKey) {
+        let mut map = self.strikes.lock().unwrap_or_else(|e| e.into_inner());
+        map.remove(&key);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -400,5 +498,40 @@ mod tests {
         let c = client_key(Some(ip("2001:db8:1:3::1")), None, &[]);
         assert_eq!(a, b);
         assert_ne!(a, c);
+    }
+
+    #[test]
+    fn failed_logins_slow_down_and_never_lock() {
+        let limiter = LoginLimiter::default();
+        let address = LoginKey::Address([1; 32]);
+        let other = LoginKey::Address([2; 32]);
+        let mut now = 1000;
+        for _ in 0..3 {
+            limiter.check(&[address], now).unwrap();
+            limiter.fail(&[address], now);
+        }
+        limiter.check(&[address], now).unwrap();
+        let mut waits = Vec::new();
+        for _ in 0..13 {
+            limiter.fail(&[address], now);
+            let wait = limiter.check(&[address], now).unwrap_err().as_secs() as i64;
+            waits.push(wait);
+            now += wait;
+            // Once the wait is over the key may try again.
+            limiter.check(&[address], now).unwrap();
+        }
+        assert_eq!(&waits[..5], [1, 2, 4, 8, 16]);
+        assert_eq!(*waits.last().unwrap(), MAX_LOGIN_DELAY);
+        limiter.check(&[other], 1000).unwrap();
+        // A success clears it; a day without failures forgets them.
+        limiter.fail(&[address], now);
+        limiter.succeed(address);
+        limiter.check(&[address], now).unwrap();
+        for _ in 0..4 {
+            limiter.fail(&[other], now);
+        }
+        assert!(limiter.check(&[address, other], now).is_err());
+        limiter.fail(&[other], now + LOGIN_MEMORY + 1);
+        limiter.check(&[other], now + LOGIN_MEMORY + 1).unwrap();
     }
 }

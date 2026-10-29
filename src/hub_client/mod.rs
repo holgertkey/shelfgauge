@@ -1,14 +1,16 @@
-//! The instance's side of the hub (`docs/ARCHITECTURE.md`, "V2: hub"): a profile's
-//! hub account, its devices, publications and sync records.
+//! The instance's side of the hub (`docs/ARCHITECTURE.md`, "V2: hub"): the library on
+//! its hub, its members' accounts, publications and sync records.
 //!
 //! [`HubUrl`] checks a hub's address (HTTPS, plain HTTP only on loopback);
 //! [`HubClient`] calls its API with blocking HTTP (`ureq` with rustls and the
-//! platform's trust store; call it on a blocking thread); [`keys`] holds the account
-//! key and the record crypto; [`store`] the hub tables of `userdata.sqlite`.
+//! platform's trust store; call it on a blocking thread) with the library's token,
+//! which names a member's account when it syncs one; [`keys`] holds the keys and the
+//! record crypto; [`store`] the hub tables of `userdata.sqlite`.
 //!
-//! Never logged: device tokens, pairing secrets, recovery codes, account keys, book
-//! keys, public account ids and publication ids (also not inside URLs: client errors
-//! never carry the request URL).
+//! Never logged: tokens, pairing and invite secrets, invite links, account and
+//! library keys, book keys, passwords and the keys derived from them, addresses and
+//! handles, public ids and publication ids (also not inside URLs: client errors never
+//! carry the request URL).
 
 pub mod book_file;
 pub mod keys;
@@ -138,15 +140,26 @@ impl HubUrl {
         format!("{}/api/{route}", self.0)
     }
 
-    /// The link of a publication: it opens only on the account's paired devices.
+    /// The link of a publication: it opens on the devices of the library's members.
     pub fn book_link(&self, id: &PublicationId) -> String {
         format!("{}/r/{id}", self.0)
     }
 
-    /// The pairing link of a device: the secret and the account key travel in the
-    /// fragment, which browsers never send to a server.
+    /// The pairing link of the owner's phone: the secret and the account key travel in
+    /// the fragment, which browsers never send to a server.
     pub fn pair_link(&self, secret: &Secret, key: &AccountKey) -> String {
         format!("{}/pair#{}.{}", self.0, secret.as_str(), key.to_text())
+    }
+
+    /// The link of a member invite: the secret and the one-time key that opens its
+    /// payload, in the fragment.
+    pub fn invite_link(&self, secret: &Secret, one_time: &AccountKey) -> String {
+        format!(
+            "{}/invite#{}.{}",
+            self.0,
+            secret.as_str(),
+            one_time.to_text()
+        )
     }
 }
 
@@ -197,7 +210,7 @@ impl ClientError {
         }
     }
 
-    /// Whether the device token is no longer valid (revoked on the hub).
+    /// Whether the token is no longer valid (the library or account is gone).
     pub fn is_unauthorized(&self) -> bool {
         matches!(self, Self::Hub { status: 401, .. })
     }
@@ -207,9 +220,13 @@ impl ClientError {
     pub fn user_text(&self) -> String {
         match self.code() {
             Some("invite_required") => {
-                "The hub needs a valid invite code (its operator creates one with \
-                 shelfgauge hub invite)."
+                "The hub needs a valid invite code to add a library (its operator creates \
+                 one with shelfgauge hub invite)."
                     .to_owned()
+            }
+            Some("handle_taken") => "This name is taken on the hub; choose another one.".to_owned(),
+            Some("name_taken") => {
+                "This name is taken in the library; choose another one.".to_owned()
             }
             Some("invalid_secret") => "The code is not valid (wrong, used or expired).".to_owned(),
             Some("quota_exceeded") => format!("The hub refused: {}.", self.hub_message()),
@@ -218,14 +235,13 @@ impl ClientError {
                 "The hub is full and takes no new books or marks for now; try again later."
                     .to_owned()
             }
-            Some("account_limit") => {
-                "This hub creates only a few accounts a day from one address; try again \
+            Some("library_limit") => {
+                "This hub adds only a few libraries a day from one address; try again \
                  tomorrow."
                     .to_owned()
             }
             Some("unauthorized") => {
-                "This library is no longer paired with the hub account (it was removed on \
-                 another device)."
+                "The hub no longer knows this library (it was deleted there, or it expired)."
                     .to_owned()
             }
             _ => self.to_string(),
@@ -275,10 +291,36 @@ pub struct HubInfo {
     pub version: String,
     /// The publication format versions the hub accepts.
     pub formats: VersionRange,
-    /// `invite` or `open`.
+    /// `invite` or `open`: whether a library needs a hub invite code.
     pub registration: String,
     /// Size limits.
     pub limits: HubLimits,
+    /// The Argon2id parameters for new passwords (absent before 0.21).
+    #[serde(default)]
+    pub passwords: Option<HubPasswords>,
+    /// Who runs the hub (absent before 0.20).
+    #[serde(default)]
+    pub operator: Option<HubOperator>,
+}
+
+/// The operator in [`HubInfo`].
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct HubOperator {
+    /// Who runs the hub; empty = not said.
+    pub name: String,
+    /// An e-mail address or URL; empty = none.
+    pub contact: String,
+    /// Whether the hub has terms of use (at `/terms`).
+    pub terms: bool,
+}
+
+/// The password parameters in [`HubInfo`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct HubPasswords {
+    /// Memory in KiB.
+    pub memory_kib: u32,
+    /// Iterations.
+    pub iterations: u32,
 }
 
 /// The limits in [`HubInfo`].
@@ -294,25 +336,18 @@ pub struct HubLimits {
     pub publication_expiry_days: u32,
 }
 
-/// A device token issued by the hub (registration, recovery).
+/// A library just created on the hub.
 #[derive(Debug, Clone)]
-pub struct Issued {
-    /// The account's public id.
-    pub account: AccountId,
-    /// The device's id on the hub.
-    pub device: i64,
-    /// The device token.
+pub struct CreatedLibrary {
+    /// The library's public id.
+    pub library: AccountId,
+    /// The library's token.
     pub token: Secret,
+    /// The owner account's public id.
+    pub owner: AccountId,
 }
 
-#[derive(Deserialize)]
-struct IssuedBody {
-    account: String,
-    device: i64,
-    token: String,
-}
-
-/// A pairing secret for a new device.
+/// A pairing secret for the owner's phone.
 #[derive(Debug, Clone)]
 pub struct Pairing {
     /// The one-time secret.
@@ -321,19 +356,28 @@ pub struct Pairing {
     pub expires_at: i64,
 }
 
-/// A device of the account as the hub lists it.
+/// A member invite just created on the hub.
+#[derive(Debug, Clone)]
+pub struct CreatedInvite {
+    /// Its public id (the account it creates keeps it).
+    pub id: AccountId,
+    /// The one-time secret, shown once in the link.
+    pub secret: Secret,
+    /// When it expires (Unix seconds).
+    pub expires_at: i64,
+}
+
+/// A device of an account as the hub lists it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Device {
     /// The device's id on the hub.
     pub id: i64,
     /// The sealed name, if the device gave one.
     pub name: Option<Vec<u8>>,
-    /// When it was paired (Unix seconds).
+    /// When it was added (Unix seconds).
     pub created_at: i64,
     /// When it last called the hub (Unix seconds).
     pub last_seen_at: i64,
-    /// Whether it is the calling device.
-    pub current: bool,
 }
 
 #[derive(Deserialize)]
@@ -342,7 +386,33 @@ struct DeviceBody {
     name: Option<String>,
     created_at: i64,
     last_seen_at: i64,
-    current: bool,
+}
+
+/// An account of the library as the hub lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Member {
+    /// What the store keeps of it.
+    pub listed: store::ListedAccount,
+    /// Whether it is the owner account.
+    pub owner: bool,
+    /// Whether it has a password.
+    pub has_password: bool,
+}
+
+/// A password as the library sends it for the owner account: derived on this
+/// computer from the admin's password ([`shelfgauge_core::password`]).
+#[derive(Debug, Clone)]
+pub struct PasswordUpload<'a> {
+    /// The login key.
+    pub login_key: &'a [u8; 32],
+    /// The salt.
+    pub salt: &'a [u8],
+    /// Argon2id memory in KiB.
+    pub memory_kib: u32,
+    /// Argon2id iterations.
+    pub iterations: u32,
+    /// The account key sealed under the wrapping key.
+    pub bundle: &'a [u8],
 }
 
 #[derive(Deserialize)]
@@ -408,51 +478,207 @@ impl HubClient {
         Ok(info)
     }
 
-    /// `POST /api/account`: a new account with this instance as its first device.
-    pub fn create_account(
+    /// `POST /api/libraries`: creates the library `handle` with its owner account
+    /// `owner_name` (both normalized).
+    pub fn create_library(
         &self,
         invite: Option<&str>,
-        recovery: &Secret,
-        device_name: &[u8],
-    ) -> Result<Issued, ClientError> {
-        let body = json!({
-            "invite": invite,
-            "recovery_hash": URL_SAFE_NO_PAD.encode(recovery.hash()),
-            "device_name": URL_SAFE_NO_PAD.encode(device_name),
-        });
-        self.issue("account", body)
-    }
-
-    /// `POST /api/recover`: a device token for an existing account.
-    pub fn recover(
-        &self,
-        account: AccountId,
-        secret: &Secret,
-        device_name: &[u8],
-    ) -> Result<Issued, ClientError> {
-        let body = json!({
-            "account": account.to_string(),
-            "secret": secret.as_str(),
-            "device_name": URL_SAFE_NO_PAD.encode(device_name),
-        });
-        self.issue("recover", body)
-    }
-
-    fn issue(&self, route: &str, body: serde_json::Value) -> Result<Issued, ClientError> {
+        handle: &str,
+        owner_name: &str,
+    ) -> Result<CreatedLibrary, ClientError> {
+        #[derive(Deserialize)]
+        struct Body {
+            library: String,
+            token: String,
+            owner: String,
+        }
         let response = self
             .agent
-            .post(self.url.api(route))
-            .send_json(body)
+            .post(self.url.api("libraries"))
+            .send_json(json!({ "invite": invite, "handle": handle, "owner_name": owner_name }))
             .map_err(transport)?;
-        let body: IssuedBody = answer(response)?;
-        Ok(Issued {
-            account: body.account.parse().map_err(|_| ClientError::BadAnswer)?,
-            device: body.device,
+        let body: Body = answer(response)?;
+        Ok(CreatedLibrary {
+            library: body.library.parse().map_err(|_| ClientError::BadAnswer)?,
             token: Secret::from_text(&body.token),
+            owner: body.owner.parse().map_err(|_| ClientError::BadAnswer)?,
         })
     }
 
-    /// `POST /api/pairings`: a one-time pairing secret.
+    /// `DELETE /api/library`: deletes the library on the hub with every account,
+    /// device, publication and record.
+    pub fn delete_library(&self, token: &Secret) -> Result<(), ClientError> {
+        let response = self
+            .agent
+            .delete(self.url.api("library"))
+            .header("Authorization", bearer(token))
+            .call()
+            .map_err(transport)?;
+        empty(response)
+    }
+
+    /// `POST /api/library/handle`.
+    pub fn set_handle(&self, token: &Secret, handle: &str) -> Result<(), ClientError> {
+        let response = self
+            .agent
+            .post(self.url.api("library/handle"))
+            .header("Authorization", bearer(token))
+            .send_json(json!({ "handle": handle }))
+            .map_err(transport)?;
+        empty(response)
+    }
+
+    /// `GET /api/library/accounts`.
+    pub fn members(&self, token: &Secret) -> Result<Vec<Member>, ClientError> {
+        #[derive(Deserialize)]
+        struct Item {
+            id: String,
+            name: String,
+            role: String,
+            has_password: bool,
+            devices: u32,
+            last_seen_at: Option<i64>,
+            invite: Option<String>,
+        }
+        #[derive(Deserialize)]
+        struct Body {
+            accounts: Vec<Item>,
+        }
+        let response = self
+            .agent
+            .get(self.url.api("library/accounts"))
+            .header("Authorization", bearer(token))
+            .call()
+            .map_err(transport)?;
+        let body: Body = answer(response)?;
+        body.accounts
+            .into_iter()
+            .map(|a| {
+                let id = |text: &str| text.parse().map_err(|_| ClientError::BadAnswer);
+                Ok(Member {
+                    listed: store::ListedAccount {
+                        id: id(&a.id)?,
+                        name: a.name,
+                        devices: a.devices,
+                        last_seen_at: a.last_seen_at,
+                        invite: a.invite.as_deref().map(id).transpose()?,
+                    },
+                    owner: a.role == "owner",
+                    has_password: a.has_password,
+                })
+            })
+            .collect()
+    }
+
+    /// `DELETE /api/library/accounts/{id}`; an account the hub no longer has counts as
+    /// deleted.
+    pub fn delete_member(&self, token: &Secret, id: &AccountId) -> Result<(), ClientError> {
+        let response = self
+            .agent
+            .delete(self.url.api(&format!("library/accounts/{id}")))
+            .header("Authorization", bearer(token))
+            .call()
+            .map_err(transport)?;
+        match empty(response) {
+            Err(ClientError::Hub { status: 404, .. }) => Ok(()),
+            other => other,
+        }
+    }
+
+    /// `DELETE /api/library/accounts/{id}/devices`: signs every device of an account
+    /// out; answers how many.
+    pub fn sign_out_member(&self, token: &Secret, id: &AccountId) -> Result<u32, ClientError> {
+        #[derive(Deserialize)]
+        struct Body {
+            removed: u32,
+        }
+        let response = self
+            .agent
+            .delete(self.url.api(&format!("library/accounts/{id}/devices")))
+            .header("Authorization", bearer(token))
+            .call()
+            .map_err(transport)?;
+        Ok(answer::<Body>(response)?.removed)
+    }
+
+    /// `POST /api/library/invites`: a member invite for a new person, or with
+    /// `account` a password reset of that member.
+    pub fn create_invite(
+        &self,
+        token: &Secret,
+        account: Option<&AccountId>,
+        payload: &[u8],
+    ) -> Result<CreatedInvite, ClientError> {
+        #[derive(Deserialize)]
+        struct Body {
+            id: String,
+            secret: String,
+            expires_at: i64,
+        }
+        let response = self
+            .agent
+            .post(self.url.api("library/invites"))
+            .header("Authorization", bearer(token))
+            .send_json(json!({
+                "account": account.map(|a| a.to_string()),
+                "payload": URL_SAFE_NO_PAD.encode(payload),
+            }))
+            .map_err(transport)?;
+        let body: Body = answer(response)?;
+        Ok(CreatedInvite {
+            id: body.id.parse().map_err(|_| ClientError::BadAnswer)?,
+            secret: Secret::from_text(&body.secret),
+            expires_at: body.expires_at,
+        })
+    }
+
+    /// `DELETE /api/library/invites/{id}`; an invite the hub no longer has (spent or
+    /// expired) counts as withdrawn.
+    pub fn withdraw_invite(&self, token: &Secret, id: &AccountId) -> Result<(), ClientError> {
+        let response = self
+            .agent
+            .delete(self.url.api(&format!("library/invites/{id}")))
+            .header("Authorization", bearer(token))
+            .call()
+            .map_err(transport)?;
+        match empty(response) {
+            Err(ClientError::Hub { status: 404, .. }) => Ok(()),
+            other => other,
+        }
+    }
+
+    /// `PUT /api/library/owner/password`.
+    pub fn set_owner_password(
+        &self,
+        token: &Secret,
+        password: &PasswordUpload<'_>,
+    ) -> Result<(), ClientError> {
+        let response = self
+            .agent
+            .put(self.url.api("library/owner/password"))
+            .header("Authorization", bearer(token))
+            .send_json(json!({
+                "login_key": URL_SAFE_NO_PAD.encode(password.login_key),
+                "salt": URL_SAFE_NO_PAD.encode(password.salt),
+                "kdf": { "memory_kib": password.memory_kib, "iterations": password.iterations },
+                "bundle": URL_SAFE_NO_PAD.encode(password.bundle),
+            }))
+            .map_err(transport)?;
+        empty(response)
+    }
+
+    /// `POST /api/library/owner/name`.
+    pub fn set_owner_name(&self, token: &Secret, name: &str) -> Result<(), ClientError> {
+        let response = self
+            .agent
+            .post(self.url.api("library/owner/name"))
+            .header("Authorization", bearer(token))
+            .send_json(json!({ "name": name }))
+            .map_err(transport)?;
+        empty(response)
+    }
+
+    /// `POST /api/pairings`: a one-time pairing secret for the owner's phone.
     pub fn create_pairing(&self, token: &Secret) -> Result<Pairing, ClientError> {
         #[derive(Deserialize)]
         struct Body {
@@ -472,15 +698,15 @@ impl HubClient {
         })
     }
 
-    /// `GET /api/devices`.
-    pub fn devices(&self, token: &Secret) -> Result<Vec<Device>, ClientError> {
+    /// `GET /api/library/owner/devices`: the owner account's devices.
+    pub fn owner_devices(&self, token: &Secret) -> Result<Vec<Device>, ClientError> {
         #[derive(Deserialize)]
         struct Body {
             devices: Vec<DeviceBody>,
         }
         let response = self
             .agent
-            .get(self.url.api("devices"))
+            .get(self.url.api("library/owner/devices"))
             .header("Authorization", bearer(token))
             .call()
             .map_err(transport)?;
@@ -498,17 +724,16 @@ impl HubClient {
                     name,
                     created_at: d.created_at,
                     last_seen_at: d.last_seen_at,
-                    current: d.current,
                 })
             })
             .collect()
     }
 
-    /// `DELETE /api/devices/{id}`.
-    pub fn revoke_device(&self, token: &Secret, id: i64) -> Result<(), ClientError> {
+    /// `DELETE /api/library/owner/devices/{id}`.
+    pub fn remove_owner_device(&self, token: &Secret, id: i64) -> Result<(), ClientError> {
         let response = self
             .agent
-            .delete(self.url.api(&format!("devices/{id}")))
+            .delete(self.url.api(&format!("library/owner/devices/{id}")))
             .header("Authorization", bearer(token))
             .call()
             .map_err(transport)?;
@@ -557,7 +782,7 @@ impl HubClient {
         }
     }
 
-    /// `GET /api/pub`: the ids of the account's publications on the hub.
+    /// `GET /api/pub`: the ids of the library's publications on the hub.
     pub fn publications(&self, token: &Secret) -> Result<Vec<PublicationId>, ClientError> {
         #[derive(Deserialize)]
         struct Item {
@@ -580,9 +805,15 @@ impl HubClient {
             .collect()
     }
 
-    /// `POST /api/sync`: pushes records (`data: None` deletes one); answers the
-    /// account's newest `seq`.
-    pub fn push(&self, token: &Secret, records: &[OutRecord]) -> Result<i64, ClientError> {
+    /// `POST /api/sync`: pushes records (`data: None` deletes one) of `account` (with
+    /// the library's token) or of the token's own account; answers the account's
+    /// newest `seq`.
+    pub fn push(
+        &self,
+        token: &Secret,
+        account: Option<&AccountId>,
+        records: &[OutRecord],
+    ) -> Result<i64, ClientError> {
         #[derive(Deserialize)]
         struct Body {
             seq: i64,
@@ -597,10 +828,14 @@ impl HubClient {
                 })
             })
             .collect();
-        let response = self
+        let mut request = self
             .agent
             .post(self.url.api("sync"))
-            .header("Authorization", bearer(token))
+            .header("Authorization", bearer(token));
+        if let Some(account) = account {
+            request = request.header(crate::hub::ACCOUNT_HEADER, account.to_string());
+        }
+        let response = request
             .send_json(json!({ "records": records }))
             .map_err(transport)?;
         let body: Body = answer(response)?;
@@ -609,8 +844,14 @@ impl HubClient {
 }
 
 impl HubClient {
-    /// `GET /api/sync?since=N`: one page of records changed after `since`.
-    pub fn pull(&self, token: &Secret, since: i64) -> Result<Pulled, ClientError> {
+    /// `GET /api/sync?since=N`: one page of records of `account` (with the library's
+    /// token) or of the token's own account changed after `since`.
+    pub fn pull(
+        &self,
+        token: &Secret,
+        account: Option<&AccountId>,
+        since: i64,
+    ) -> Result<Pulled, ClientError> {
         #[derive(Deserialize)]
         struct Item {
             kind: String,
@@ -624,12 +865,14 @@ impl HubClient {
             seq: i64,
             more: bool,
         }
-        let response = self
+        let mut request = self
             .agent
             .get(self.url.api(&format!("sync?since={since}&limit=500")))
-            .header("Authorization", bearer(token))
-            .call()
-            .map_err(transport)?;
+            .header("Authorization", bearer(token));
+        if let Some(account) = account {
+            request = request.header(crate::hub::ACCOUNT_HEADER, account.to_string());
+        }
+        let response = request.call().map_err(transport)?;
         let body: Body = answer(response)?;
         let records = body
             .records
@@ -682,7 +925,7 @@ pub struct InRecord {
 /// A record to push.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutRecord {
-    /// `shelf_item`, `annotation` or `position`.
+    /// `shelf_item`, `annotation`, `position` or `library_key`.
     pub kind: &'static str,
     /// The record id.
     pub id: String,
@@ -762,7 +1005,7 @@ mod tests {
                 .user_text()
                 .starts_with("The hub is full")
         );
-        assert!(error(429, "account_limit").user_text().contains("tomorrow"));
+        assert!(error(429, "library_limit").user_text().contains("tomorrow"));
         assert!(error(429, "rate_limited").user_text().contains("busy"));
     }
 

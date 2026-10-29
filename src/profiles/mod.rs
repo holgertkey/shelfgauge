@@ -127,6 +127,9 @@ pub struct Profile {
     pub created_at: i64,
     /// When one of its sessions was last used (Unix seconds), if ever.
     pub last_seen_at: Option<i64>,
+    /// Made by a hub invite: the person reads only through the hub, so the profile is
+    /// not in the picker or on `/login` (the admin still manages it).
+    pub hub_only: bool,
 }
 
 // Names are never logged: `Debug` shows the id and role only.
@@ -373,6 +376,7 @@ mod tests {
             settings: None,
             created_at: 0,
             last_seen_at: None,
+            hub_only: false,
         };
         assert!(!format!("{profile:?}").contains("Secret"));
     }

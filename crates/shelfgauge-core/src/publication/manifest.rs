@@ -164,11 +164,13 @@ mod tests {
             assert!(Manifest::decode(&bytes[..len]).is_err(), "{len}");
         }
         assert!(Manifest::decode(&[0xff; 64]).is_err());
-        let mut other = manifest();
-        other.format_version = 2;
-        assert!(matches!(
-            Manifest::decode(&other.encode()),
-            Err(FormatError::UnsupportedVersion { found: 2, .. })
-        ));
+        for version in [1, FORMAT_VERSION + 1] {
+            let mut other = manifest();
+            other.format_version = version;
+            assert!(matches!(
+                Manifest::decode(&other.encode()),
+                Err(FormatError::UnsupportedVersion { found, .. }) if found == version
+            ));
+        }
     }
 }

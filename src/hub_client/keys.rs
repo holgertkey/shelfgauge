@@ -1,5 +1,6 @@
-//! The account key and what it protects: sync records, device names, record ids and
-//! the recovery code.
+//! The keys of the hub and what they protect: sync records, device names and record
+//! ids under an account key; book keys under a library key; invite payloads under a
+//! one-time key; the account key under a password's wrapping key.
 //!
 //! Records are AES-256-GCM sealed under the account key as
 //! `[record version u16 BE][nonce 12][ciphertext + tag]`; the associated data binds
@@ -14,10 +15,11 @@ use aes_gcm::{Aes256Gcm, Key, Nonce};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use hmac::{Hmac, Mac};
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 
-use crate::hub::{AccountId, Secret};
-use crate::publication::format::NONCE_LEN;
+use crate::hub::AccountId;
+use crate::publication::BookKey;
+use crate::publication::format::{KeyHeader, LIBRARY_SCOPE, NONCE_LEN, PublicationId};
 
 /// The version of the record layout (and of its associated data).
 pub const RECORD_VERSION: u16 = 1;
@@ -26,10 +28,17 @@ pub const RECORD_VERSION: u16 = 1;
 pub const DEVICE_NAME_KIND: &str = "device";
 
 /// The record kinds the hub accepts.
-pub const RECORD_KINDS: &[&str] = &["shelf_item", "annotation", "position"];
+pub const RECORD_KINDS: &[&str] = &[
+    "shelf_item",
+    "annotation",
+    "position",
+    LIBRARY_KEY_KIND,
+    PROFILE_KIND,
+];
 
-/// The account key: 32 random bytes that encrypt the account's records. Known only to
-/// the account's clients; `Debug` hides it.
+/// A 32-byte record key: an account key (the account's records), and in the same
+/// shape a library key, an invite's one-time key or a password's wrapping key. Known
+/// only to the clients; `Debug` hides it.
 #[derive(Clone, PartialEq, Eq)]
 pub struct AccountKey([u8; 32]);
 
@@ -204,225 +213,176 @@ pub fn open_device_name(key: &AccountKey, data: &[u8]) -> Option<String> {
     String::from_utf8(plain).ok()
 }
 
-/// The Crockford base32 alphabet (no I, L, O, U).
-const BASE32: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+/// The kind of the records that carry a library key generation into an account (only
+/// the library writes them).
+pub const LIBRARY_KEY_KIND: &str = "library_key";
 
-/// The prefix of a recovery code; its digit is the code's version.
-const RECOVERY_PREFIX: &str = "SG1";
+/// The kind of the record a member's device writes with their display name and colour
+/// (only the member's devices write it; the library reads it).
+pub const PROFILE_KIND: &str = "profile";
 
-/// The bytes inside a recovery code: account id, account key, recovery secret.
-const RECOVERY_LEN: usize = 16 + 32 + 32;
+/// The record id of the `profile` record.
+pub const PROFILE_ID: &str = "profile";
 
-/// The checksum bytes after them (the first bytes of their SHA-256).
-const CHECKSUM_LEN: usize = 2;
+/// The kind under which a book key is sealed in a manifest header (not a record kind
+/// of the hub; the id is the publication id in hex).
+pub const BOOK_KEY_KIND: &str = "book_key";
 
-/// A recovery code: what a new instance needs to join the account (its id, the account
-/// key and the recovery secret, whose SHA-256 the hub keeps). Written as `SG1-` and
-/// Crockford base32 in groups of four; `Debug` hides it, and there is no `Display`.
-///
-/// # Examples
-///
-/// ```
-/// use shelfgauge::hub::{AccountId, Secret};
-/// use shelfgauge::hub_client::keys::{AccountKey, RecoveryCode};
-///
-/// let code = RecoveryCode::new(AccountId::new([1; 16]), AccountKey::new([2; 32]), [3; 32]);
-/// let text = code.to_text();
-/// assert!(text.starts_with("SG1-"));
-/// let parsed = RecoveryCode::parse(&text.to_lowercase().replace('-', " ")).unwrap();
-/// assert_eq!(parsed.secret().as_str(), code.secret().as_str());
-/// ```
-#[derive(Clone, PartialEq, Eq)]
-pub struct RecoveryCode {
-    account: AccountId,
-    key: AccountKey,
-    secret: [u8; 32],
+/// The kind under which an invite's payload is sealed under its one-time key (empty
+/// id).
+pub const INVITE_KIND: &str = "invite";
+
+/// The kind under which the account key is sealed under a password's wrapping key
+/// (the bundle; empty id).
+pub const BUNDLE_KIND: &str = "bundle";
+
+/// The record id of library key generation `key_id`: `k<key_id>`.
+pub fn library_key_id(key_id: u32) -> String {
+    format!("k{key_id}")
 }
 
-impl fmt::Debug for RecoveryCode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("RecoveryCode(..)")
-    }
+/// The plaintext of a `library_key` record: JSON `{key_id, key, created_at}` (the key
+/// as base64url).
+pub fn library_key_plain(key_id: u32, key: &AccountKey, created_at: i64) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "key_id": key_id,
+        "key": key.to_text(),
+        "created_at": created_at,
+    }))
+    .expect("JSON values always serialize")
 }
 
-/// The text of the recovery secret with these bytes, as the hub expects it.
-pub fn recovery_secret(bytes: &[u8; 32]) -> Secret {
-    Secret::from_text(&URL_SAFE_NO_PAD.encode(bytes))
+/// The manifest header of publication `id` of library `library`: its book key sealed
+/// under generation `key_id` of the library key (see
+/// [`KeyHeader`]).
+pub fn key_header(
+    library: &AccountId,
+    key_id: u32,
+    library_key: &AccountKey,
+    id: &PublicationId,
+    book_key: &BookKey,
+) -> Result<Vec<u8>, getrandom::Error> {
+    let sealed = seal_record(
+        library_key,
+        BOOK_KEY_KIND,
+        &id.to_string(),
+        book_key.as_bytes(),
+    )?;
+    Ok(KeyHeader {
+        library: library.to_string(),
+        key_scope: LIBRARY_SCOPE.to_owned(),
+        key_owner: library.to_string(),
+        key_id,
+        book_key: URL_SAFE_NO_PAD.encode(sealed),
+    }
+    .encode())
 }
 
-/// Why a recovery code was not accepted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum RecoveryCodeError {
-    /// Not a recovery code of this version.
-    #[error("this is not a shelfgauge recovery code (it starts with SG1)")]
-    Format,
-    /// The checksum does not match: a typing error.
-    #[error("the recovery code has a typing error")]
-    Checksum,
+/// What an invite link's payload tells the person's device, sealed under the link's
+/// one-time key: the library, the name the admin gave them, their account and its key,
+/// and the current library key generation.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct InvitePayload {
+    /// The library's public id, hex.
+    pub library_id: String,
+    /// The library's name.
+    pub library_name: String,
+    /// The name the admin gave the profile.
+    pub profile_name: String,
+    /// The account key, base64url.
+    pub account_key: String,
+    /// The current library key generation.
+    pub library_key: InviteLibraryKey,
 }
 
-impl RecoveryCode {
-    /// A code from its parts.
-    pub fn new(account: AccountId, key: AccountKey, secret: [u8; 32]) -> Self {
-        Self {
-            account,
-            key,
-            secret,
-        }
-    }
-
-    /// The account's public id.
-    pub fn account(&self) -> AccountId {
-        self.account
-    }
-
-    /// The account key.
-    pub fn key(&self) -> &AccountKey {
-        &self.key
-    }
-
-    /// The recovery secret as the hub expects it (its text; the hub keeps its SHA-256).
-    pub fn secret(&self) -> Secret {
-        recovery_secret(&self.secret)
-    }
-
-    /// The code's text: `SG1-` and groups of four characters.
-    pub fn to_text(&self) -> String {
-        let mut bytes = Vec::with_capacity(RECOVERY_LEN + CHECKSUM_LEN);
-        bytes.extend_from_slice(self.account.as_bytes());
-        bytes.extend_from_slice(self.key.as_bytes());
-        bytes.extend_from_slice(&self.secret);
-        let sum = Sha256::digest(&bytes);
-        bytes.extend_from_slice(&sum[..CHECKSUM_LEN]);
-        let digits = base32_encode(&bytes);
-        let mut text = RECOVERY_PREFIX.to_owned();
-        for group in digits.as_bytes().chunks(4) {
-            text.push('-');
-            text.push_str(std::str::from_utf8(group).expect("ASCII digits"));
-        }
-        text
-    }
-
-    /// Parses a code; case, dashes and spaces are ignored, and `O`, `I`, `L` read as
-    /// `0`, `1`, `1`.
-    pub fn parse(text: &str) -> Result<Self, RecoveryCodeError> {
-        let cleaned: String = text
-            .chars()
-            .filter(|c| !c.is_whitespace() && *c != '-')
-            .map(|c| c.to_ascii_uppercase())
-            .collect();
-        let digits = cleaned
-            .strip_prefix(RECOVERY_PREFIX)
-            .ok_or(RecoveryCodeError::Format)?;
-        let bytes = base32_decode(digits).ok_or(RecoveryCodeError::Format)?;
-        if bytes.len() != RECOVERY_LEN + CHECKSUM_LEN {
-            return Err(RecoveryCodeError::Format);
-        }
-        let (payload, sum) = bytes.split_at(RECOVERY_LEN);
-        if Sha256::digest(payload)[..CHECKSUM_LEN] != *sum {
-            return Err(RecoveryCodeError::Checksum);
-        }
-        Ok(Self {
-            account: AccountId::new(payload[..16].try_into().expect("16 bytes")),
-            key: AccountKey::new(payload[16..48].try_into().expect("32 bytes")),
-            secret: payload[48..].try_into().expect("32 bytes"),
-        })
-    }
+/// The library key in an [`InvitePayload`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct InviteLibraryKey {
+    /// The generation.
+    pub key_id: u32,
+    /// The key, base64url.
+    pub key: String,
 }
 
-/// Crockford base32 of `bytes`, the last digit padded with zero bits.
-fn base32_encode(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 8 / 5 + 1);
-    let (mut buffer, mut bits) = (0u32, 0u32);
-    for &b in bytes {
-        buffer = (buffer << 8) | u32::from(b);
-        bits += 8;
-        while bits >= 5 {
-            bits -= 5;
-            out.push(BASE32[((buffer >> bits) & 31) as usize] as char);
-        }
-    }
-    if bits > 0 {
-        out.push(BASE32[((buffer << (5 - bits)) & 31) as usize] as char);
-    }
-    out
+/// Seals an invite payload under the one-time key.
+pub fn seal_invite(
+    one_time: &AccountKey,
+    payload: &InvitePayload,
+) -> Result<Vec<u8>, getrandom::Error> {
+    let plain = serde_json::to_vec(payload).expect("an invite payload always serializes");
+    seal_record(one_time, INVITE_KIND, "", &plain)
 }
 
-/// The bytes of Crockford base32 `digits` (uppercase); `None` for other characters or
-/// non-zero padding bits.
-fn base32_decode(digits: &str) -> Option<Vec<u8>> {
-    let mut out = Vec::with_capacity(digits.len() * 5 / 8);
-    let (mut buffer, mut bits) = (0u32, 0u32);
-    for c in digits.bytes() {
-        let c = match c {
-            b'O' => b'0',
-            b'I' | b'L' => b'1',
-            c => c,
-        };
-        let value = BASE32.iter().position(|&d| d == c)? as u32;
-        buffer = (buffer << 5) | value;
-        bits += 5;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((buffer >> bits) as u8);
-            buffer &= (1 << bits) - 1;
-        }
-    }
-    (buffer == 0).then_some(out)
+/// Opens an invite payload; `None` when it does not open or is not one.
+pub fn open_invite(one_time: &AccountKey, sealed: &[u8]) -> Option<InvitePayload> {
+    let plain = open_record(one_time, INVITE_KIND, "", sealed).ok()?;
+    serde_json::from_slice(&plain).ok()
+}
+
+/// Seals the account key under a password's wrapping key (the bundle the hub keeps).
+pub fn seal_bundle(
+    wrapping: &AccountKey,
+    account: &AccountKey,
+) -> Result<Vec<u8>, getrandom::Error> {
+    seal_record(wrapping, BUNDLE_KIND, "", account.as_bytes())
+}
+
+/// Opens a bundle with the wrapping key; `None` when it does not open.
+pub fn open_bundle(wrapping: &AccountKey, sealed: &[u8]) -> Option<AccountKey> {
+    let plain = open_record(wrapping, BUNDLE_KIND, "", sealed).ok()?;
+    Some(AccountKey::new(plain.try_into().ok()?))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn code() -> RecoveryCode {
-        RecoveryCode::new(
-            AccountId::new([0xa5; 16]),
-            AccountKey::new([0x5a; 32]),
-            [0x0f; 32],
-        )
+    #[test]
+    fn a_book_key_comes_out_of_the_header_with_the_library_key_alone() {
+        let library = AccountId::new([0x0f; 16]);
+        let library_key = AccountKey::new([0x24; 32]);
+        let id = PublicationId::new([7; 16]);
+        let book_key = BookKey::new([9; 32]);
+        let header = key_header(&library, 3, &library_key, &id, &book_key).unwrap();
+        let parsed = KeyHeader::decode(&header).unwrap();
+        assert_eq!(parsed.library, library.to_string());
+        assert_eq!(
+            (parsed.key_scope.as_str(), parsed.key_id),
+            (LIBRARY_SCOPE, 3)
+        );
+        let sealed = URL_SAFE_NO_PAD.decode(&parsed.book_key).unwrap();
+        let opened = open_record(&library_key, BOOK_KEY_KIND, &id.to_string(), &sealed).unwrap();
+        assert_eq!(opened, book_key.as_bytes());
+        // Bound to the publication.
+        let other = PublicationId::new([8; 16]).to_string();
+        assert!(open_record(&library_key, BOOK_KEY_KIND, &other, &sealed).is_err());
     }
 
     #[test]
-    fn recovery_codes_round_trip_and_tolerate_typing() {
-        let text = code().to_text();
-        // 82 bytes are 132 digits in 33 groups.
-        assert_eq!(text.len(), 3 + 33 * 5);
-        assert_eq!(RecoveryCode::parse(&text).unwrap(), code());
-        let sloppy = text.to_lowercase().replace('-', "  ").replace('0', "o");
-        assert_eq!(RecoveryCode::parse(&sloppy).unwrap(), code());
-    }
-
-    #[test]
-    fn recovery_codes_catch_typing_errors() {
-        let text = code().to_text();
-        // The second digit of the eleventh group (the payload, not the checksum).
-        let i = 3 + 5 * 10 + 2;
-        let wrong = if &text[i..=i] == "A" { "B" } else { "A" };
-        let typo = format!("{}{wrong}{}", &text[..i], &text[i + 1..]);
-        assert_eq!(
-            RecoveryCode::parse(&typo).unwrap_err(),
-            RecoveryCodeError::Checksum
-        );
-        assert_eq!(
-            RecoveryCode::parse(&text[..text.len() - 5]).unwrap_err(),
-            RecoveryCodeError::Format
-        );
-        assert_eq!(
-            RecoveryCode::parse("SG2-0000").unwrap_err(),
-            RecoveryCodeError::Format
-        );
-        assert_eq!(
-            RecoveryCode::parse(&text.replace("SG1-", "SG1-U")).unwrap_err(),
-            RecoveryCodeError::Format
-        );
-    }
-
-    #[test]
-    fn recovery_secret_is_the_text_the_hub_hashes() {
-        let secret = code().secret();
-        assert_eq!(secret.as_str(), URL_SAFE_NO_PAD.encode([0x0f; 32]));
-        assert_eq!(format!("{:?}", code()), "RecoveryCode(..)");
+    fn invites_and_bundles_open_only_with_their_keys() {
+        let one_time = AccountKey::new([1; 32]);
+        let payload = InvitePayload {
+            library_id: "0f".repeat(16),
+            library_name: "Home".into(),
+            profile_name: "Grandma".into(),
+            account_key: AccountKey::new([2; 32]).to_text(),
+            library_key: InviteLibraryKey {
+                key_id: 1,
+                key: AccountKey::new([3; 32]).to_text(),
+            },
+        };
+        let sealed = seal_invite(&one_time, &payload).unwrap();
+        assert_eq!(open_invite(&one_time, &sealed), Some(payload));
+        assert_eq!(open_invite(&AccountKey::new([9; 32]), &sealed), None);
+        let wrapping = AccountKey::new([4; 32]);
+        let account = AccountKey::new([5; 32]);
+        let bundle = seal_bundle(&wrapping, &account).unwrap();
+        assert_eq!(open_bundle(&wrapping, &bundle), Some(account));
+        assert_eq!(open_bundle(&one_time, &bundle), None);
+        let plain = library_key_plain(2, &AccountKey::new([3; 32]), 100);
+        let json: serde_json::Value = serde_json::from_slice(&plain).unwrap();
+        assert_eq!(json["key_id"], 2);
+        assert_eq!(library_key_id(2), "k2");
     }
 
     #[test]

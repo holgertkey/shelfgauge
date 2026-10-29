@@ -3,8 +3,9 @@
 //! The reader app decrypts and inflates a publication's blobs in JavaScript (WebCrypto,
 //! `DecompressionStream`) and hands the plaintext here: this crate decodes the
 //! manifest and the parts and renders them with the same code as the instance, so
-//! untrusted data becomes escaped HTML. The boundary carries only bytes, strings and
-//! JSON strings.
+//! untrusted data becomes escaped HTML. It also derives the keys of a hub password
+//! (Argon2id has no WebCrypto counterpart) and checks account addresses with the
+//! hub's rules. The boundary carries only bytes, strings and JSON strings.
 //!
 //! Built with `scripts/build-wasm.sh` into `assets/hub/pkg/` (committed); natively it
 //! builds as a plain library for the tests.
@@ -16,6 +17,7 @@ pub mod book;
 use shelfgauge_core::annotations::anchor::Anchor;
 use shelfgauge_core::format::model::BlockId;
 use shelfgauge_core::publication::container;
+use shelfgauge_core::{address, password};
 use wasm_bindgen::prelude::*;
 
 /// An opened publication (see [`book::Book`]).
@@ -167,6 +169,49 @@ pub fn book_file_entries(tail: &[u8], directory: &[u8], file_len: f64) -> Result
         .map(|e| serde_json::json!({ "name": e.name.to_string(), "offset": e.offset, "size": e.size }))
         .collect();
     json(&list)
+}
+
+/// The login key and the wrapping key of a hub password (see
+/// [`shelfgauge_core::password::derive`]): 64 bytes, the login key first. Throws for
+/// parameters below the built-in minimum, so a hub cannot weaken them.
+#[wasm_bindgen(js_name = deriveKeys)]
+pub fn derive_keys(
+    password: &str,
+    salt: &[u8],
+    memory_kib: u32,
+    iterations: u32,
+) -> Result<Vec<u8>, JsError> {
+    let keys = password::derive(password, salt, memory_kib, iterations)
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    Ok([keys.login_key, keys.wrapping_key].concat())
+}
+
+/// The built-in password rules as JSON `{memory_kib, iterations, salt_len,
+/// min_chars}`: the weakest parameters [`derive_keys`] accepts, the salt length and
+/// the shortest new password.
+#[wasm_bindgen(js_name = passwordRules)]
+pub fn password_rules() -> String {
+    serde_json::json!({
+        "memory_kib": password::MIN_MEMORY_KIB,
+        "iterations": password::MIN_ITERATIONS,
+        "salt_len": password::SALT_LEN,
+        "min_chars": password::MIN_PASSWORD_CHARS,
+    })
+    .to_string()
+}
+
+/// A name or handle in its stored form, or `undefined` if it breaks the hub's format
+/// (see [`shelfgauge_core::address::normalize_label`]).
+#[wasm_bindgen(js_name = normalizeLabel)]
+pub fn normalize_label(text: &str) -> Option<String> {
+    address::normalize_label(text)
+}
+
+/// An account address `name@handle` in its stored form, or `undefined` if it is not
+/// one.
+#[wasm_bindgen(js_name = normalizeAddress)]
+pub fn normalize_address(text: &str) -> Option<String> {
+    address::parse_address(text).map(|(name, handle)| format!("{name}@{handle}"))
 }
 
 fn container_error(e: container::ContainerError) -> JsError {

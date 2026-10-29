@@ -38,21 +38,25 @@ base_path = "/"
 # proxy on this machine share one budget of `public_requests_per_hour`.
 trusted_proxies = []
 
-[accounts]
-# Who may create an account: "invite" (a one-time code from `shelfgauge hub invite`)
-# or "open" (anyone who reaches the hub).
+[libraries]
+# Who may create a library on this hub: "invite" (a one-time code from
+# `shelfgauge hub invite`) or "open" (anyone who reaches the hub). Members of a library
+# join by their library admin's invites either way.
 registration = "invite"
-# The most accounts the hub keeps (0 = no limit).
-max_accounts = 0
-# How long an invite code is valid, in days.
+# The most libraries the hub keeps (0 = no limit).
+max_libraries = 0
+# How long a hub invite code is valid, in days.
 invite_days = 7
-# With open registration: accounts created per client address (an IPv6 /64) and day
+# With open registration: libraries created per client address (an IPv6 /64) and day
 # (0 = no limit). Behind a reverse proxy, set `server.trusted_proxies`, or all clients
 # share this budget.
-new_accounts_per_address_per_day = 3
-# An account none of whose devices and libraries made a request for this many days is
-# deleted with everything it stores (0 = never).
-account_expiry_days = 0
+new_libraries_per_address_per_day = 3
+# A member account none of whose devices made a request for this many days is deleted;
+# a library is deleted with everything it stores when neither it nor any device of its
+# accounts made a request for this long (0 = never).
+expiry_days = 0
+# The longest a library admin's invite of a member is valid, in days.
+member_invite_max_days = 7
 
 [operator]
 # Shown by the hub's /terms page, GET /api/info and the reader's This device page.
@@ -65,26 +69,32 @@ contact = ""
 terms_file = "terms.txt"
 
 [quotas]
-# Per account; 0 = no limit.
-# Stored bytes (publication blobs and sync records).
+# Per library; 0 = no limit.
+# Stored bytes (publication blobs and the sync records of all its accounts).
 max_bytes = 0
 # Publications.
 max_publications = 0
-# Devices and instances with a token.
-max_devices = 0
+# Per account: signed-in browsers (the library itself is not counted; 0 = no limit).
+max_devices = 5
+
+[passwords]
+# Argon2id parameters for new and changed hub passwords, derived in the browser. Never
+# below the built-in minimum (19456 KiB, 2 iterations), which the reader app enforces.
+memory_kib = 19456
+iterations = 2
 
 [limits]
 # The largest blob (one part or image of a publication) in bytes.
 max_blob_bytes = 67108864
-# The most bytes the hub stores for all accounts together (0 = no limit); beyond it,
+# The most bytes the hub stores for all libraries together (0 = no limit); beyond it,
 # new books and marks are refused until space is freed.
 max_total_bytes = 0
 # A publication not opened for this many days is deleted (0 = never).
 publication_expiry_days = 0
 # API requests per minute and device token.
 requests_per_minute = 600
-# Requests per hour to the routes without a token (account, pair, recover), per
-# client address (an IPv6 /64); see `server.trusted_proxies`.
+# Requests per hour to the routes without a token (sign-in, invites, pairing, new
+# libraries), per client address (an IPv6 /64); see `server.trusted_proxies`.
 public_requests_per_hour = 60
 "#;
 
@@ -94,21 +104,23 @@ public_requests_per_hour = 60
 pub struct HubConfig {
     /// The `[server]` section.
     pub server: HubServerConfig,
-    /// The `[accounts]` section.
-    pub accounts: AccountsConfig,
+    /// The `[libraries]` section.
+    pub libraries: LibrariesConfig,
     /// The `[operator]` section.
     pub operator: OperatorConfig,
     /// The `[quotas]` section.
     pub quotas: QuotasConfig,
     /// The `[limits]` section.
     pub limits: LimitsConfig,
+    /// The `[passwords]` section.
+    pub passwords: PasswordsConfig,
 }
 
 /// The `[server]` section: where the hub listens.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HubServerConfig {
-    /// Address to listen on; any address is allowed (device tokens authenticate).
+    /// Address to listen on; any address is allowed (tokens authenticate).
     pub bind: IpAddr,
     /// Fixed port; a busy port is a hard error.
     pub port: u16,
@@ -147,7 +159,7 @@ impl HubServerConfig {
     }
 }
 
-/// Who may create an account: `[accounts] registration`.
+/// Who may create a library: `[libraries] registration`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Registration {
@@ -168,32 +180,35 @@ impl Registration {
     }
 }
 
-/// The `[accounts]` section.
+/// The `[libraries]` section.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct AccountsConfig {
-    /// Who may create an account.
+pub struct LibrariesConfig {
+    /// Who may create a library.
     pub registration: Registration,
-    /// The most accounts the hub keeps; 0 = no limit.
-    pub max_accounts: u64,
-    /// How long an invite code is valid, in days (at least 1).
+    /// The most libraries the hub keeps; 0 = no limit.
+    pub max_libraries: u64,
+    /// How long a hub invite code is valid, in days (at least 1).
     pub invite_days: u32,
-    /// With open registration: accounts created per client address and day; 0 = no
+    /// With open registration: libraries created per client address and day; 0 = no
     /// limit.
-    pub new_accounts_per_address_per_day: u32,
-    /// Days without a request of any of its devices after which an account is
-    /// deleted; 0 = never.
-    pub account_expiry_days: u32,
+    pub new_libraries_per_address_per_day: u32,
+    /// Days without a request after which a member account (by its own devices) or a
+    /// library (by its token or any device of its accounts) is deleted; 0 = never.
+    pub expiry_days: u32,
+    /// The longest a member invite is valid, in days (at least 1).
+    pub member_invite_max_days: u32,
 }
 
-impl Default for AccountsConfig {
+impl Default for LibrariesConfig {
     fn default() -> Self {
         Self {
             registration: Registration::Invite,
-            max_accounts: 0,
+            max_libraries: 0,
             invite_days: 7,
-            new_accounts_per_address_per_day: 3,
-            account_expiry_days: 0,
+            new_libraries_per_address_per_day: 3,
+            expiry_days: 0,
+            member_invite_max_days: 7,
         }
     }
 }
@@ -223,16 +238,57 @@ impl Default for OperatorConfig {
 /// The longest `[operator] name` and `contact`, in characters.
 const MAX_OPERATOR_TEXT: usize = 200;
 
-/// The `[quotas]` section: per-account limits, 0 = no limit.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// The `[quotas]` section, 0 = no limit: bytes and publications per library, devices
+/// per account.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct QuotasConfig {
-    /// Stored bytes: publication blobs and sync records.
+    /// Stored bytes of a library: its publication blobs and its accounts' records.
     pub max_bytes: u64,
-    /// Publications.
+    /// Publications of a library.
     pub max_publications: u64,
-    /// Devices and instances with a token (revoked ones do not count).
+    /// Devices of an account (the library's token is not one).
     pub max_devices: u64,
+}
+
+/// The default [`QuotasConfig::max_devices`].
+pub const DEFAULT_MAX_DEVICES: u64 = 5;
+
+impl Default for QuotasConfig {
+    fn default() -> Self {
+        Self {
+            max_bytes: 0,
+            max_publications: 0,
+            max_devices: DEFAULT_MAX_DEVICES,
+        }
+    }
+}
+
+/// The smallest Argon2id memory cost of a hub password, in KiB (OWASP's minimum; the
+/// reader app refuses weaker parameters).
+pub const MIN_PASSWORD_MEMORY_KIB: u32 = shelfgauge_core::password::MIN_MEMORY_KIB;
+
+/// The smallest Argon2id iteration count of a hub password.
+pub const MIN_PASSWORD_ITERATIONS: u32 = shelfgauge_core::password::MIN_ITERATIONS;
+
+/// The `[passwords]` section: the Argon2id parameters given out for new and changed
+/// hub passwords (the lanes are always 1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PasswordsConfig {
+    /// Memory in KiB (at least [`MIN_PASSWORD_MEMORY_KIB`]).
+    pub memory_kib: u32,
+    /// Iterations (at least [`MIN_PASSWORD_ITERATIONS`]).
+    pub iterations: u32,
+}
+
+impl Default for PasswordsConfig {
+    fn default() -> Self {
+        Self {
+            memory_kib: MIN_PASSWORD_MEMORY_KIB,
+            iterations: MIN_PASSWORD_ITERATIONS,
+        }
+    }
 }
 
 /// The `[limits]` section.
@@ -241,7 +297,7 @@ pub struct QuotasConfig {
 pub struct LimitsConfig {
     /// The largest blob in bytes (at least 1024).
     pub max_blob_bytes: u64,
-    /// The most bytes stored for all accounts together; 0 = no limit.
+    /// The most bytes stored for all libraries together; 0 = no limit.
     pub max_total_bytes: u64,
     /// Days without opens after which a publication is deleted; 0 = never.
     pub publication_expiry_days: u32,
@@ -311,9 +367,9 @@ impl HubConfig {
     /// use std::path::Path;
     /// use shelfgauge::hub::config::{HubConfig, Registration};
     ///
-    /// let text = "[accounts]\nregistration = \"open\"\n[server]\nprot = 1\n";
+    /// let text = "[libraries]\nregistration = \"open\"\n[server]\nprot = 1\n";
     /// let (config, unknown) = HubConfig::from_toml(text, Path::new("hub.toml")).unwrap();
-    /// assert_eq!(config.accounts.registration, Registration::Open);
+    /// assert_eq!(config.libraries.registration, Registration::Open);
     /// assert_eq!(unknown, ["server.prot"]);
     /// ```
     pub fn from_toml(text: &str, path: &Path) -> Result<(Self, Vec<String>)> {
@@ -328,6 +384,21 @@ impl HubConfig {
         })
         .map_err(syntax_error)?;
         unknown_keys.sort();
+        if unknown_keys
+            .iter()
+            .any(|key| key == "accounts" || key.starts_with("accounts."))
+        {
+            // Ignoring it would silently drop a public hub's limits.
+            return Err(Error::InvalidConfig {
+                path: path.to_owned(),
+                error: ConfigError::new(
+                    "accounts",
+                    "was replaced in shelfgauge 0.21 by [libraries] (registration, \
+                     max_libraries, invite_days, new_libraries_per_address_per_day, \
+                     expiry_days, member_invite_max_days); rename the section and its keys",
+                ),
+            });
+        }
         config.validate().map_err(|error| Error::InvalidConfig {
             path: path.to_owned(),
             error,
@@ -379,10 +450,28 @@ impl HubConfig {
                 "must be a file name in the data directory",
             ));
         }
-        if self.accounts.invite_days == 0 {
+        if self.libraries.invite_days == 0 {
             return Err(ConfigError::new(
-                "accounts.invite_days",
+                "libraries.invite_days",
                 "must be at least 1",
+            ));
+        }
+        if self.libraries.member_invite_max_days == 0 {
+            return Err(ConfigError::new(
+                "libraries.member_invite_max_days",
+                "must be at least 1",
+            ));
+        }
+        if self.passwords.memory_kib < MIN_PASSWORD_MEMORY_KIB {
+            return Err(ConfigError::new(
+                "passwords.memory_kib",
+                format!("must be at least {MIN_PASSWORD_MEMORY_KIB}"),
+            ));
+        }
+        if self.passwords.iterations < MIN_PASSWORD_ITERATIONS {
+            return Err(ConfigError::new(
+                "passwords.iterations",
+                format!("must be at least {MIN_PASSWORD_ITERATIONS}"),
             ));
         }
         if self.limits.max_blob_bytes < 1024 {
@@ -439,7 +528,16 @@ mod tests {
             key("[server]\ntrusted_proxies = [\"localhost\"]"),
             "server.trusted_proxies"
         );
-        assert_eq!(key("[accounts]\ninvite_days = 0"), "accounts.invite_days");
+        assert_eq!(key("[libraries]\ninvite_days = 0"), "libraries.invite_days");
+        assert_eq!(
+            key("[libraries]\nmember_invite_max_days = 0"),
+            "libraries.member_invite_max_days"
+        );
+        assert_eq!(
+            key("[passwords]\nmemory_kib = 19455"),
+            "passwords.memory_kib"
+        );
+        assert_eq!(key("[passwords]\niterations = 1"), "passwords.iterations");
         assert_eq!(
             key("[operator]\nterms_file = \"../etc/passwd\""),
             "operator.terms_file"
@@ -462,9 +560,28 @@ mod tests {
             "limits.public_requests_per_hour"
         );
         assert!(matches!(
-            parse("[accounts]\nregistration = \"closed\"").unwrap_err(),
+            parse("[libraries]\nregistration = \"closed\"").unwrap_err(),
             Error::ConfigSyntax { .. }
         ));
+    }
+
+    #[test]
+    fn the_old_accounts_section_is_refused() {
+        for text in [
+            "[accounts]\nregistration = \"open\"",
+            "[accounts]\n",
+            "[accounts]\nmax_accounts = 3",
+        ] {
+            match parse(text).unwrap_err() {
+                Error::InvalidConfig { error, .. } => {
+                    assert_eq!(error.key, "accounts");
+                    assert!(error.message.contains("[libraries]"), "{}", error.message);
+                }
+                other => panic!("expected InvalidConfig, got {other:?}"),
+            }
+        }
+        let (config, _) = parse("[passwords]\nmemory_kib = 65536\niterations = 3").unwrap();
+        assert_eq!(config.passwords.memory_kib, 65536);
     }
 
     #[test]

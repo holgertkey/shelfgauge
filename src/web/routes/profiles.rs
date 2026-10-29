@@ -25,6 +25,7 @@ use super::annotations::ApiError;
 use super::{parse_id, render};
 use crate::annotations::attach;
 use crate::annotations::now;
+use crate::hub_client::store::InviteKind;
 use crate::profiles::password;
 use crate::profiles::pin::{self, Failure};
 use crate::profiles::session::{self, Level, Token};
@@ -67,6 +68,10 @@ pub(crate) struct ProfileView {
     pub(crate) has_password: bool,
     /// "2026-10-19" or "never".
     pub(crate) last_seen: String,
+    /// The profile's account on the hub, when the library is there (admin's list).
+    pub(crate) hub: Option<super::members::HubStatus>,
+    /// Made by a hub invite.
+    pub(crate) hub_only: bool,
 }
 
 impl ProfileView {
@@ -83,6 +88,8 @@ impl ProfileView {
             last_seen: profile
                 .last_seen_at
                 .map_or_else(|| "never".to_owned(), super::date),
+            hub: None,
+            hub_only: profile.hub_only,
         }
     }
 }
@@ -124,7 +131,7 @@ pub(crate) async fn picker(
     if peer.is_remote() {
         return Ok(Redirect::to(&state.urls().login(Some(&next))).into_response());
     }
-    let profiles = user(&state, |_, conn| Ok(store::list(conn)?)).await?;
+    let profiles = user(&state, |_, conn| Ok(store::list_local(conn)?)).await?;
     if profiles.len() <= 1 {
         return Ok(Redirect::to(&next).into_response());
     }
@@ -1031,14 +1038,49 @@ pub(crate) struct ProfilesSection {
     pub(crate) auth: bool,
     /// The notice of the last action, if any.
     pub(crate) notice: Option<(&'static str, String)>,
+    /// Whether the library is on the hub (members can be invited).
+    pub(crate) hub: bool,
 }
 
 impl ProfilesSection {
     /// The section with the notice for the settings page's `profile` query value.
     pub(crate) fn load(state: &AppState, done: Option<&str>) -> Result<Self, AppError> {
-        let profiles = store::list(&state.userdata().lock())?;
+        let (profiles, library, accounts) = {
+            let conn = state.userdata().lock();
+            (
+                store::list(&conn)?,
+                crate::hub_client::store::library(&conn)?,
+                crate::hub_client::store::accounts(&conn)?,
+            )
+        };
         let notice = done.and_then(|done| {
             Some(match done {
+                "hub-missing" => (
+                    "error",
+                    "Put the library on the hub first: My profile → Phone and reading \
+                     through the hub."
+                        .to_owned(),
+                ),
+                "hub-has-account" => (
+                    "error",
+                    "This profile has an account on the hub already: Reset password gives \
+                     them a new password."
+                        .to_owned(),
+                ),
+                "hub-no-account" => (
+                    "error",
+                    "This profile has no account on the hub: invite them first.".to_owned(),
+                ),
+                "hub-refused" => (
+                    "error",
+                    "The hub refused or cannot be reached; try again later.".to_owned(),
+                ),
+                "signed-out" => (
+                    "ok",
+                    "Every device of the account was signed out; the person signs in again \
+                     with their password."
+                        .to_owned(),
+                ),
                 "added" => ("ok", "The profile was added.".to_owned()),
                 "renamed" => ("ok", "The profile was renamed.".to_owned()),
                 "color" => ("ok", "The color was changed.".to_owned()),
@@ -1050,6 +1092,13 @@ impl ProfilesSection {
                 "password-removed" => (
                     "ok",
                     "The password was removed; the profile's other devices were signed out."
+                        .to_owned(),
+                ),
+                "deleted" if library.is_some() => (
+                    "ok",
+                    "The profile was deleted, with its account on the hub. If this person may \
+                     have kept a copy of the library key, change the library key (My profile \
+                     → Phone and reading through the hub)."
                         .to_owned(),
                 ),
                 "deleted" => ("ok", "The profile was deleted.".to_owned()),
@@ -1080,7 +1129,20 @@ impl ProfilesSection {
         });
         Ok(Self {
             can_add: profiles.len() < crate::profiles::MAX_PROFILES,
-            profiles: profiles.iter().map(ProfileView::new).collect(),
+            profiles: profiles
+                .iter()
+                .map(|p| {
+                    let mut view = ProfileView::new(p);
+                    view.hub = library.as_ref().map(|l| {
+                        super::members::status(
+                            accounts.iter().find(|a| a.profile == p.id),
+                            &l.handle,
+                        )
+                    });
+                    view
+                })
+                .collect(),
+            hub: library.is_some(),
             colors: colors(0),
             add_action: state.urls().manage_profiles(),
             auth: state.auth().is_configured(),
@@ -1116,11 +1178,16 @@ pub(crate) struct AddForm {
     role: Option<String>,
     #[serde(default)]
     pin: String,
+    /// `1`: **Invite someone**: the profile is made for reading through the hub
+    /// (`hub_only`, a reader) and the invite link is shown at once.
+    #[serde(default)]
+    hub_invite: String,
 }
 
-/// `POST /settings/profiles` (admin): adds a profile (with an optional PIN). Adding
-/// the second profile also starts an owner session in this browser, so the admin is
-/// not sent to the picker.
+/// `POST /settings/profiles` (admin): adds a profile (with an optional PIN); with
+/// `hub_invite` a reader made for the hub, then its invite page. Adding the second
+/// profile also starts an owner session in this browser, so the admin is not sent to
+/// the picker.
 pub(crate) async fn add(
     State(state): State<AppState>,
     current: CurrentProfile,
@@ -1139,12 +1206,17 @@ pub(crate) async fn add(
         Some(hash_pin(&state, pin).await?)
     };
     let color = parse_color(form.color.as_deref()).unwrap_or(0);
+    let hub_invite = form.hub_invite == "1";
     let role = match form.role.as_deref() {
-        Some("admin") => Role::Admin,
+        Some("admin") if !hub_invite => Role::Admin,
         _ => Role::Reader,
     };
+    if hub_invite && super::hub::hub_library(&state).await?.is_none() {
+        return Ok(back_to_profiles(&urls, "hub-missing").into_response());
+    }
+    let invited_name = form.name.trim().to_owned();
     // From another device the admin already has a password session.
-    let first_other = !current.several() && !current.remote;
+    let first_other = !current.several() && !current.remote && !hub_invite;
     let admin = current.id();
     let outcome = user(&state, move |_, conn| {
         let profile = match store::create(conn, &form.name, color, role, now()) {
@@ -1154,6 +1226,9 @@ pub(crate) async fn add(
         if let Some(hash) = &hash {
             store::set_pin_hash(conn, profile.id, Some(hash)).map_err(profile_error)?;
         }
+        if hub_invite {
+            store::set_hub_only(conn, profile.id, true)?;
+        }
         tracing::info!(profile = profile.id.0, "profile added");
         // The admin keeps working without choosing a profile.
         let token = if first_other {
@@ -1161,9 +1236,36 @@ pub(crate) async fn add(
         } else {
             None
         };
-        Ok(Ok(token))
+        Ok(Ok((token, profile.id)))
     })
     .await?;
+    let outcome = outcome.map(|(token, id)| {
+        if hub_invite {
+            (token, Some(id))
+        } else {
+            (token, None)
+        }
+    });
+    if let Ok((_, Some(id))) = &outcome {
+        let page =
+            super::members::invite(&state, &current, *id, invited_name, InviteKind::New).await?;
+        let page = match page {
+            Ok(page) => page,
+            Err(refusal) => super::members::refused(&state, &refusal),
+        };
+        return Ok(match &outcome {
+            Ok((Some(token), _)) => (
+                [(
+                    header::SET_COOKIE,
+                    set_cookie(&state, &headers, token, Keep::Remember),
+                )],
+                page,
+            )
+                .into_response(),
+            _ => page,
+        });
+    }
+    let outcome = outcome.map(|(token, _)| token);
     match outcome {
         Err(code) => Ok(back_to_profiles(&urls, code).into_response()),
         Ok(Some(token)) => Ok((
@@ -1188,8 +1290,11 @@ pub(crate) struct ManageForm {
 }
 
 /// `POST /settings/profiles/{id}/{action}` (admin): `rename`, `color`, `role`,
-/// `remove-pin`, `remove-password` (ends the profile's password sessions), `export` (the profile's Markdown export) or `delete` (needs the
-/// profile's name typed in `name`).
+/// `remove-pin`, `remove-password` (ends the profile's password sessions), `export`
+/// (the profile's Markdown export), `delete` (needs the profile's name typed in
+/// `name`; its hub account is removed too), and for the hub `invite` (a first invite
+/// or **Invite again**), `reset` (**Reset password**) and `sign-out` (**Sign out all
+/// devices**); `invite` and `reset` answer with the link's page.
 pub(crate) async fn manage(
     State(state): State<AppState>,
     current: CurrentProfile,
@@ -1203,6 +1308,25 @@ pub(crate) async fn manage(
         .await?
         .ok_or(AppError::NotFound)?;
     let done: &'static str = match action.as_str() {
+        "invite" | "reset" => {
+            let kind = if action == "invite" {
+                InviteKind::New
+            } else {
+                InviteKind::Reset
+            };
+            return Ok(
+                match super::members::invite(&state, &current, id, profile.name.clone(), kind)
+                    .await?
+                {
+                    Ok(page) => page,
+                    Err(refusal) => super::members::refused(&state, &refusal),
+                },
+            );
+        }
+        "sign-out" => match super::members::sign_out(&state, id).await? {
+            Ok(_) => "signed-out",
+            Err(refusal) => super::members::refusal_code(&refusal),
+        },
         "rename" => {
             let old = profile.name.clone();
             let name = form.name.clone();
@@ -1290,11 +1414,13 @@ pub(crate) async fn manage(
                 return Ok(Redirect::to(&url).into_response());
             } else {
                 user(&state, move |_, conn| {
+                    super::members::queue_removal(conn, id)?;
                     store::delete(conn, id).map_err(profile_error)
                 })
                 .await?;
                 state.pins().success(id);
                 tracing::info!(profile = id.0, "profile deleted");
+                super::members::remove_now(&state).await;
                 "deleted"
             }
         }

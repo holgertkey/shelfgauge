@@ -1,20 +1,25 @@
 //! Book files (`.sgbook`, concept §11 "Book files"): a publication in one file that
-//! travels by any means and opens in the hub's reader app on the account's devices.
+//! travels by any means and opens in the hub's reader app on every device signed in
+//! to the library.
 //!
 //! The container is [`shelfgauge_core::publication::container`]: `mimetype`, `sg.json`,
-//! then the sealed blobs at their hub paths. `sg.json` holds no book data:
+//! then the sealed blobs at their hub paths. The book key is in the manifest's header
+//! ([`KeyHeader`]), sealed under the library key, as in a publication on the hub.
+//! `sg.json` (container version 2) holds no book data:
 //!
 //! - `format` (the container version), `mime`, `format_version` (of the blobs);
-//! - `publication` (hex) and `account` (hex; only to say "another account" before
-//!   anything is decrypted), `key_id` (which account key sealed it);
-//! - `book_key`: the publication's book key sealed as a record of kind
-//!   [`FILE_KEY_KIND`] with the publication id as its id (base64url);
-//! - `snapshot`: the book's `shelf_item`, `annotation` and `position` records at export
-//!   time, sealed exactly as they are pushed (`{kind, id, data}`, data base64url), so
-//!   the device shows the book and its marks before its first sync.
+//! - `publication` (hex), `library` (hex; to find the device's account of that library,
+//!   or to say "not signed in to this library" before anything is decrypted),
+//!   `key_scope` and `key_id` (which key sealed the book key);
+//! - `account` (hex) and `snapshot`: the exporting person's `shelf_item`,
+//!   `annotation` and `position` records of the book, sealed under their account key
+//!   exactly as they are pushed (`{kind, id, data}`, data base64url), so that person's
+//!   devices show the book and their marks before the first sync; other members'
+//!   devices skip it.
 //!
 //! [`open`] is the reference for the reader app's import: the checks run in the same
-//! order, and nothing is decrypted before the account and key id match.
+//! order, and nothing is decrypted before the library and key generation match. A
+//! file of container version 1 (0.19–0.20) is refused as made by an older shelfgauge.
 
 use std::io::{Cursor, Write};
 
@@ -30,12 +35,13 @@ use super::records;
 use crate::hub::AccountId;
 use crate::profiles::ProfileId;
 use crate::publication::BookKey;
-use crate::publication::format::container::{self, CONTAINER_VERSION, ContainerError, MIME, Name};
-use crate::publication::format::{BlobPath, PublicationId, SUPPORTED_VERSIONS};
+use crate::publication::format::container::{
+    self, CONTAINER_VERSION, ContainerError, MIME, Name, OLD_CONTAINER_VERSION,
+};
+use crate::publication::format::{
+    BlobPath, Envelope, KeyHeader, LIBRARY_SCOPE, PublicationId, SUPPORTED_VERSIONS,
+};
 use crate::storage::StorageError;
-
-/// The kind under which a file's book key is sealed (not a record kind of the hub).
-pub const FILE_KEY_KIND: &str = "file_key";
 
 /// A sealed record in a file's snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,54 +65,40 @@ pub struct SgJson {
     pub format_version: u16,
     /// The publication id, hex.
     pub publication: String,
-    /// The public account id, hex.
+    /// The public id of the publishing library, hex.
+    pub library: String,
+    /// Whose key sealed the book key in the manifest's header: [`LIBRARY_SCOPE`].
+    pub key_scope: String,
+    /// The generation of that key.
+    pub key_id: u32,
+    /// The public id of the account whose records are in `snapshot`, hex.
     pub account: String,
-    /// The id of the account key that sealed `book_key` and the snapshot.
-    pub key_id: i64,
-    /// The book key sealed under the account key (kind [`FILE_KEY_KIND`], id = the
-    /// publication id), base64url.
-    pub book_key: String,
-    /// The book's records at export time.
+    /// That account's records of the book at export time.
     #[serde(default)]
     pub snapshot: Vec<SnapshotRecord>,
 }
 
-/// The account a book file is sealed for (what [`write()`] puts in it besides the
-/// blobs, through [`sg_json`]).
-#[derive(Debug, Clone, Copy)]
-pub struct FileKeys<'a> {
-    /// The account.
-    pub account: AccountId,
-    /// The account key.
-    pub key: &'a AccountKey,
-    /// Its id.
-    pub key_id: i64,
-}
-
-/// The `sg.json` of publication `id`, its book key sealed under the account key.
+/// The `sg.json` of publication `id` of `library`, sealed under generation `key_id`
+/// of its key, with `account`'s snapshot.
 pub fn sg_json(
-    keys: FileKeys<'_>,
+    library: &AccountId,
+    key_id: u32,
+    account: &AccountId,
     id: &PublicationId,
-    book_key: &BookKey,
     format_version: u16,
     snapshot: Vec<SnapshotRecord>,
-) -> Result<SgJson, getrandom::Error> {
-    let sealed = keys::seal_record(
-        keys.key,
-        FILE_KEY_KIND,
-        &id.to_string(),
-        book_key.as_bytes(),
-    )?;
-    Ok(SgJson {
+) -> SgJson {
+    SgJson {
         format: CONTAINER_VERSION,
         mime: MIME.to_owned(),
         format_version,
         publication: id.to_string(),
-        account: keys.account.to_string(),
-        key_id: keys.key_id,
-        book_key: URL_SAFE_NO_PAD.encode(sealed),
+        library: library.to_string(),
+        key_scope: LIBRARY_SCOPE.to_owned(),
+        key_id,
+        account: account.to_string(),
         snapshot,
-    })
+    }
 }
 
 /// The book file: `mimetype`, `sg.json` and the sealed blobs (the manifest first, as
@@ -210,18 +202,21 @@ pub enum FileError {
     /// A container or blob format this version does not read.
     #[error("this book file needs a newer version of shelfgauge")]
     Unsupported,
-    /// Made for another account: nothing was decrypted.
-    #[error("this book file belongs to another account")]
-    OtherAccount,
-    /// Sealed with an account key this client does not have.
-    #[error("this book file was made with another key of your account (key {0})")]
-    UnknownKey(i64),
+    /// Made by shelfgauge 0.19–0.20, whose keys no longer exist.
+    #[error("this book file was made by an older shelfgauge; get it again from your library")]
+    Old,
+    /// From another library: nothing was decrypted.
+    #[error("this book file is from a library this device is not signed in to")]
+    OtherLibrary,
+    /// Sealed with a generation of the library key this client does not have yet.
+    #[error("this book file needs a newer library key (key {0}): sync first")]
+    UnknownKey(u32),
     /// The book key does not open: the file was changed.
     #[error("the book file is damaged (its key does not open)")]
     Decrypt,
 }
 
-/// A book file opened with the account key.
+/// A book file opened with the library key.
 #[derive(Debug)]
 pub struct Opened<'a> {
     /// Its `sg.json`.
@@ -234,38 +229,50 @@ pub struct Opened<'a> {
     pub blobs: Vec<(BlobPath, &'a [u8])>,
 }
 
-/// Opens a book file for `keys`'s account: the container, then `sg.json` (versions,
-/// account, key id) and only then the book key. The blobs stay sealed.
-pub fn open<'a>(file: &'a [u8], keys: FileKeys<'_>) -> Result<Opened<'a>, FileError> {
+/// Opens a book file for library `library` with the generations of its key: the
+/// container, then `sg.json` (versions, library, key scope and generation), then the
+/// manifest's header, and only then the book key. The blobs stay sealed.
+pub fn open<'a>(
+    file: &'a [u8],
+    library: &AccountId,
+    library_keys: &[(u32, AccountKey)],
+) -> Result<Opened<'a>, FileError> {
     let entries = container::read(file)?;
+    #[derive(Deserialize)]
+    struct Format {
+        format: u16,
+    }
+    let format: Format =
+        serde_json::from_slice(entries[1].1).map_err(|e| FileError::SgJson(e.to_string()))?;
+    if format.format == OLD_CONTAINER_VERSION {
+        return Err(FileError::Old);
+    }
+    if format.format != CONTAINER_VERSION {
+        return Err(FileError::Unsupported);
+    }
     let sg: SgJson =
         serde_json::from_slice(entries[1].1).map_err(|e| FileError::SgJson(e.to_string()))?;
-    if sg.format != CONTAINER_VERSION || !SUPPORTED_VERSIONS.contains(sg.format_version) {
+    if !SUPPORTED_VERSIONS.contains(sg.format_version) || sg.key_scope != LIBRARY_SCOPE {
         return Err(FileError::Unsupported);
     }
     if sg.mime != MIME {
         return Err(FileError::SgJson("another media type".to_owned()));
     }
-    let account: AccountId = sg
-        .account
+    let owner: AccountId = sg
+        .library
         .parse()
-        .map_err(|_| FileError::SgJson("a bad account id".to_owned()))?;
+        .map_err(|_| FileError::SgJson("a bad library id".to_owned()))?;
     let id: PublicationId = sg
         .publication
         .parse()
         .map_err(|_| FileError::SgJson("a bad publication id".to_owned()))?;
-    if account != keys.account {
-        return Err(FileError::OtherAccount);
+    if owner != *library {
+        return Err(FileError::OtherLibrary);
     }
-    if sg.key_id != keys.key_id {
+    let Some((_, library_key)) = library_keys.iter().find(|(key_id, _)| *key_id == sg.key_id)
+    else {
         return Err(FileError::UnknownKey(sg.key_id));
-    }
-    let sealed = URL_SAFE_NO_PAD
-        .decode(&sg.book_key)
-        .map_err(|_| FileError::SgJson("a bad book key".to_owned()))?;
-    let raw = keys::open_record(keys.key, FILE_KEY_KIND, &sg.publication, &sealed)
-        .map_err(|_| FileError::Decrypt)?;
-    let book_key = BookKey::new(raw.try_into().map_err(|_| FileError::Decrypt)?);
+    };
     let blobs = entries[2..]
         .iter()
         .filter_map(|(name, data)| match name {
@@ -273,9 +280,26 @@ pub fn open<'a>(file: &'a [u8], keys: FileKeys<'_>) -> Result<Opened<'a>, FileEr
             _ => None,
         })
         .collect::<Vec<_>>();
-    if blobs.first().map(|(p, _)| *p) != Some(BlobPath::Manifest) {
+    let Some((BlobPath::Manifest, manifest)) = blobs.first() else {
         return Err(FileError::SgJson("no manifest".to_owned()));
+    };
+    let envelope = Envelope::parse(manifest).map_err(|_| FileError::Unsupported)?;
+    let header = KeyHeader::decode(envelope.header)
+        .map_err(|_| FileError::SgJson("a bad manifest header".to_owned()))?;
+    if header.library != sg.library
+        || header.key_scope != sg.key_scope
+        || header.key_id != sg.key_id
+    {
+        return Err(FileError::SgJson(
+            "the manifest names another key".to_owned(),
+        ));
     }
+    let sealed = URL_SAFE_NO_PAD
+        .decode(&header.book_key)
+        .map_err(|_| FileError::SgJson("a bad book key".to_owned()))?;
+    let raw = keys::open_record(library_key, keys::BOOK_KEY_KIND, &sg.publication, &sealed)
+        .map_err(|_| FileError::Decrypt)?;
+    let book_key = BookKey::new(raw.try_into().map_err(|_| FileError::Decrypt)?);
     Ok(Opened {
         sg,
         id,

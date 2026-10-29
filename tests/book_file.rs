@@ -1,6 +1,7 @@
 //! Book files (`.sgbook`): export on the book card, the container layout, `sg.json`,
-//! opening a file with the account's keys (and refusing another account's without
-//! decrypting anything), and `file` items on the shelf.
+//! opening a file with the library key (and refusing another library's, an unknown key
+//! generation or an old file without decrypting anything), and `file` items on the
+//! shelf.
 
 mod common;
 
@@ -9,18 +10,21 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use common::hub::{Lib, TestHub};
 use shelfgauge::hub::AccountId;
-use shelfgauge::hub_client::book_file::{self, FileError, FileKeys, SgJson};
+use shelfgauge::hub_client::book_file::{self, FileError, SgJson};
 use shelfgauge::hub_client::keys::{self, AccountKey};
-use shelfgauge::hub_client::store::{HubAccount, ShelfKind, ShelfState};
+use shelfgauge::hub_client::store::{self as hub_store, ShelfKind, ShelfState};
 use shelfgauge::publication::format::container::{self, ContainerError, MIME, Name};
 use shelfgauge::publication::format::{BlobPath, Manifest, PartBlob};
 
-fn file_keys(account: &HubAccount) -> FileKeys<'_> {
-    FileKeys {
-        account: account.account,
-        key: &account.key,
-        key_id: account.key_id,
-    }
+/// The library's public id and its key generations, as a member's device has them.
+fn library_keys(lib: &Lib) -> (AccountId, Vec<(u32, AccountKey)>) {
+    let id = lib.hub_library().library_id;
+    (id, hub_store::library_keys(&lib.userdata.lock()).unwrap())
+}
+
+fn open_file<'a>(lib: &Lib, file: &'a [u8]) -> Result<book_file::Opened<'a>, FileError> {
+    let (id, keys) = library_keys(lib);
+    book_file::open(file, &id, &keys)
 }
 
 fn sg_json(file: &[u8]) -> SgJson {
@@ -75,7 +79,7 @@ async fn a_book_file_is_made_without_the_hub_and_opens_with_the_account_key() {
     let file = reply.bytes;
 
     let account = lib.account().unwrap();
-    let opened = book_file::open(&file, file_keys(&account)).unwrap();
+    let opened = open_file(&lib, &file).unwrap();
     let manifest = open_all(&opened);
     let entry = &lib.shelf()[0];
     assert_eq!(manifest.content_key, entry.content_key);
@@ -98,11 +102,13 @@ async fn a_book_file_is_made_without_the_hub_and_opens_with_the_account_key() {
 
     // `sg.json`: what the device checks before decrypting, and the snapshot.
     let sg = &opened.sg;
-    assert_eq!(sg.format, 1);
+    assert_eq!(sg.format, 2);
     assert_eq!(sg.mime, MIME);
     assert_eq!(sg.format_version, manifest.format_version);
     assert_eq!(sg.publication, opened.id.to_string());
-    assert_eq!(sg.account, account.account.to_string());
+    assert_eq!(sg.library, lib.hub_library().library_id.to_string());
+    assert_eq!(sg.key_scope, "library");
+    assert_eq!(sg.account, account.account.unwrap().to_string());
     assert_eq!(sg.key_id, 1);
     let kinds: Vec<&str> = sg.snapshot.iter().map(|r| r.kind.as_str()).collect();
     assert_eq!(kinds, ["shelf_item", "annotation", "position"]);
@@ -177,59 +183,53 @@ async fn the_container_has_the_fixed_layout() {
 }
 
 #[tokio::test]
-async fn another_accounts_file_is_refused_before_anything_is_decrypted() {
+async fn another_librarys_file_is_refused_before_anything_is_decrypted() {
     let hub = TestHub::start().await;
     let lib = Lib::registered(&hub).await;
     let book = lib.book("book.txt");
     let file = lib.export(book).await.bytes;
-    let account = lib.account().unwrap();
+    let (library, keys) = library_keys(&lib);
 
-    // Another account, and the sealed key spoiled: still "another account", so the
-    // key was never tried.
-    let mut sg = sg_json(&file);
-    sg.book_key = "AAAA".into();
-    let spoiled = rewrite(&file, &sg);
+    // Another library: refused before any key is tried.
     let other = AccountId::new([0x99; 16]);
-    let key = AccountKey::new([5; 32]);
-    let keys = FileKeys {
-        account: other,
-        key: &key,
-        key_id: 1,
-    };
     assert_eq!(
-        book_file::open(&spoiled, keys).unwrap_err(),
-        FileError::OtherAccount
+        book_file::open(&file, &other, &keys).unwrap_err(),
+        FileError::OtherLibrary
     );
-    // With the right account it is a damaged file, not another account's.
-    assert!(matches!(
-        book_file::open(&spoiled, file_keys(&account)).unwrap_err(),
-        FileError::SgJson(_) | FileError::Decrypt
-    ));
-
-    // Another key id: refused before decrypting.
+    // A key generation this device does not have yet.
     let mut sg = sg_json(&file);
     sg.key_id = 2;
-    sg.book_key = "AAAA".into();
     assert_eq!(
-        book_file::open(&rewrite(&file, &sg), file_keys(&account)).unwrap_err(),
+        book_file::open(&rewrite(&file, &sg), &library, &keys).unwrap_err(),
         FileError::UnknownKey(2)
     );
-
+    // `sg.json` naming another generation than the manifest's header: damaged.
+    let newer = [keys[0].clone(), (2, AccountKey::new([5; 32]))];
+    assert!(matches!(
+        book_file::open(&rewrite(&file, &sg), &library, &newer).unwrap_err(),
+        FileError::SgJson(_)
+    ));
     // The sealed key moved to another publication id does not open.
     let mut sg = sg_json(&file);
     sg.publication = "ab".repeat(16);
     assert_eq!(
-        book_file::open(&rewrite(&file, &sg), file_keys(&account)).unwrap_err(),
+        book_file::open(&rewrite(&file, &sg), &library, &keys).unwrap_err(),
         FileError::Decrypt
     );
-
-    // A newer container or blob format.
-    for (format, version) in [(2, 1), (1, 99)] {
+    // A file of 0.19–0.20, a newer container or blob format, an unknown key scope.
+    let mut old = sg_json(&file);
+    old.format = 1;
+    assert_eq!(
+        book_file::open(&rewrite(&file, &old), &library, &keys).unwrap_err(),
+        FileError::Old
+    );
+    for (format, version, scope) in [(3, 2, "library"), (2, 99, "library"), (2, 2, "circle")] {
         let mut sg = sg_json(&file);
         sg.format = format;
         sg.format_version = version;
+        sg.key_scope = scope.into();
         assert_eq!(
-            book_file::open(&rewrite(&file, &sg), file_keys(&account)).unwrap_err(),
+            book_file::open(&rewrite(&file, &sg), &library, &keys).unwrap_err(),
             FileError::Unsupported
         );
     }
@@ -237,7 +237,7 @@ async fn another_accounts_file_is_refused_before_anything_is_decrypted() {
     // An EPUB (or anything else) is not a book file.
     let epub = common::epub3();
     assert!(matches!(
-        book_file::open(&epub, file_keys(&account)).unwrap_err(),
+        book_file::open(&epub, &library, &keys).unwrap_err(),
         FileError::Container(ContainerError::NotABookFile(_))
     ));
 }
@@ -265,7 +265,7 @@ async fn an_uploaded_book_keeps_its_shelf_item_and_each_file_is_new() {
 
     let account = lib.account().unwrap();
     let first = lib.export(book).await.bytes;
-    let first = book_file::open(&first, file_keys(&account)).unwrap();
+    let first = open_file(&lib, &first).unwrap();
     let after = lib.shelf()[0].clone();
     assert_eq!(after.kind, ShelfKind::Upload);
     assert_eq!(after.publication, uploaded.publication);
@@ -296,11 +296,10 @@ async fn a_file_book_points_to_the_newest_file_and_can_be_uploaded() {
     let hub = TestHub::start().await;
     let lib = Lib::registered(&hub).await;
     let book = lib.book("book.txt");
-    let account = lib.account().unwrap();
     let first = lib.export(book).await.bytes;
     let second = lib.export(book).await.bytes;
-    let first = book_file::open(&first, file_keys(&account)).unwrap();
-    let second = book_file::open(&second, file_keys(&account)).unwrap();
+    let first = open_file(&lib, &first).unwrap();
+    let second = open_file(&lib, &second).unwrap();
     assert_ne!(first.id, second.id);
     assert_ne!(first.book_key, second.book_key);
     let entry = lib.shelf()[0].clone();
@@ -338,8 +337,8 @@ async fn file_books_neither_expire_nor_are_deleted_on_the_hub() {
     // Removing it needs no delete on the hub (there is nothing to delete).
     assert_eq!(lib.shelf_action(book, "remove").await, "removed");
     assert!(lib.shelf().is_empty());
-    let token = lib.account().unwrap().token;
-    let records = hub.records(token.as_str()).await;
+    let phone = lib.phone(&hub).await;
+    let records = hub.records(&phone.token).await;
     assert!(records.iter().all(|(_, _, data)| data.is_none()));
 
     // Exporting again puts it back on the shelf.
@@ -376,8 +375,9 @@ async fn a_book_put_back_on_the_shelf_from_its_file_stays_this_librarys() {
     let lib = Lib::registered(&hub).await;
     let book = lib.book("book.txt");
     let account = lib.account().unwrap();
+    let phone = lib.phone(&hub).await;
     let file = lib.export(book).await.bytes;
-    let opened = book_file::open(&file, file_keys(&account)).unwrap();
+    let opened = open_file(&lib, &file).unwrap();
     let content_key = lib.shelf()[0].content_key.clone();
     assert_eq!(lib.shelf_action(book, "remove").await, "removed");
 
@@ -387,7 +387,7 @@ async fn a_book_put_back_on_the_shelf_from_its_file_stays_this_librarys() {
             "authors": "",
             "book_key": URL_SAFE_NO_PAD.encode(opened.book_key.as_bytes()),
             "content_key": URL_SAFE_NO_PAD.encode(&content_key),
-            "format_version": 1,
+            "format_version": 2,
             "instance": instance,
             "kind": "file",
             "publication": publication,
@@ -409,7 +409,7 @@ async fn a_book_put_back_on_the_shelf_from_its_file_stays_this_librarys() {
         .api(
             Method::POST,
             "sync",
-            Some(account.token.as_str()),
+            Some(phone.token.as_str()),
             Some(device_puts_back(
                 "Home library",
                 opened.id.to_string(),
@@ -430,7 +430,7 @@ async fn a_book_put_back_on_the_shelf_from_its_file_stays_this_librarys() {
         .api(
             Method::POST,
             "sync",
-            Some(account.token.as_str()),
+            Some(phone.token.as_str()),
             Some(device_puts_back("Office", "ab".repeat(16), now + 20)),
         )
         .await;

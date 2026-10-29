@@ -31,6 +31,8 @@ use crate::storage::StorageError;
 pub enum Applied {
     /// Nothing: the local state is newer, the same, or the record is not understood.
     Kept,
+    /// The member's display name or colour (a `profile` record) renamed the profile.
+    Profile,
     /// The shelf changed.
     Shelf,
     /// An annotation of the book with this content key changed.
@@ -140,8 +142,37 @@ pub fn apply(
             Ok(p) => position(conn, profile, key, record, &plain, p, book_id),
             Err(_) => Ok(Applied::Kept),
         },
+        // Written by a member's device; `library_key` records are the library's own.
+        keys::PROFILE_KIND if record.id == keys::PROFILE_ID => {
+            match serde_json::from_slice(&plain) {
+                Ok(p) => profile_record(conn, profile, p),
+                Err(_) => Ok(Applied::Kept),
+            }
+        }
         _ => Ok(Applied::Kept),
     }
+}
+
+#[derive(Deserialize)]
+struct ProfileIn {
+    display_name: String,
+    color: u8,
+}
+
+/// A member's display name and colour rename their profile (a name taken by another
+/// profile or not allowed is left as it is; so is an unknown colour).
+fn profile_record(
+    conn: &Connection,
+    profile: ProfileId,
+    record: ProfileIn,
+) -> Result<Applied, StorageError> {
+    let renamed = crate::profiles::store::rename(conn, profile, &record.display_name).is_ok();
+    let coloured = crate::profiles::store::set_color(conn, profile, record.color).is_ok();
+    Ok(if renamed || coloured {
+        Applied::Profile
+    } else {
+        Applied::Kept
+    })
 }
 
 fn shelf_item(
@@ -404,7 +435,6 @@ mod tests {
     use crate::hub::{AccountId, Secret};
     use crate::hub_client::HubUrl;
     use crate::hub_client::keys::seal_record;
-    use crate::hub_client::store::NewHubAccount;
 
     fn setup() -> (UserData, AccountKey) {
         let userdata = UserData::open_in_memory().unwrap();
@@ -412,16 +442,20 @@ mod tests {
         {
             let conn = userdata.lock();
             let url = HubUrl::parse("https://hub.example.org").unwrap();
-            let token = Secret::from_text("t");
-            let new = NewHubAccount {
-                hub_url: &url,
-                account: AccountId::new([1; 16]),
-                key: &key,
-                device_id: 1,
-                token: &token,
-                recovery_code: None,
-            };
-            store::save_account(&conn, ProfileId::OWNER, &new, 0).unwrap();
+            store::save_library(
+                &conn,
+                &url,
+                AccountId::new([2; 16]),
+                "home",
+                &Secret::from_text("t"),
+                &AccountKey::new([3; 32]),
+                ProfileId::OWNER,
+                AccountId::new([1; 16]),
+                &key,
+                "admin",
+                0,
+            )
+            .unwrap();
             conn.execute(
                 "INSERT INTO profiles (id, name, role, created_at) VALUES (2, 'Anna', 'reader', 0)",
                 [],

@@ -28,7 +28,7 @@ use crate::storage::{StorageError, migrations, open_wal};
 
 /// Schema migrations of the user-data database; index `i` upgrades version `i` to
 /// `i + 1`. Append only: user data cannot be rebuilt.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6];
 
 /// Version 1: annotations and reading positions.
 ///
@@ -273,6 +273,145 @@ WHEN NEW.deleted_at IS NULL AND EXISTS (
 BEGIN
     INSERT OR IGNORE INTO hub_outbox (profile_id, kind, key) VALUES (NEW.profile_id, 'position', NEW.book_key);
 END;
+"#;
+
+/// Version 6 (0.21): the library on the hub with its members' accounts (Phase 30)
+/// replaces one hub account per profile.
+///
+/// - `hub_legacy_accounts`: what a last pull of a 0.18–0.20 account needs (its hub,
+///   key, device token and cursor), kept until that pull is done or the hub says the
+///   account is gone; then the row goes.
+/// - `hub_library`: the library on its hub (at most one row): the hub, the library's
+///   public id, handle and token.
+/// - `hub_library_keys`: every generation of the library key, the newest current.
+/// - `hub_accounts`: a profile's account in the library: `owner` (the owner profile)
+///   or `reader`; its public id once the hub has it (a new person's account exists
+///   only after the invite is redeemed), the account key, the address's name part, the
+///   pending invite (`invite_kind` `new` or `reset`), `keys_sent` (the newest library
+///   key generation pushed into it), what the hub's account list said last (`devices`,
+///   `last_seen_at`, `gone_at` when it was missing: left or expired) and the sync
+///   state.
+/// - `hub_removals`: accounts and invites still to delete on the hub (the profile is
+///   gone already).
+/// - `hub_shelf` and `hub_outbox` as in version 5, emptied: the old publications do
+///   not open any more.
+/// - `profiles.hub_only`: a profile made by an invite, not in the picker or on
+///   `/login`.
+const V6: &str = r#"
+CREATE TABLE hub_legacy_accounts (
+    profile_id   INTEGER PRIMARY KEY REFERENCES profiles (id) ON DELETE CASCADE,
+    hub_url      TEXT    NOT NULL,
+    account_key  BLOB    NOT NULL,
+    device_token TEXT    NOT NULL,
+    last_seq     INTEGER NOT NULL
+);
+
+INSERT INTO hub_legacy_accounts (profile_id, hub_url, account_key, device_token, last_seq)
+    SELECT profile_id, hub_url, account_key, device_token, last_seq FROM hub_accounts;
+
+DROP TRIGGER hub_outbox_annotation_insert;
+DROP TRIGGER hub_outbox_annotation_update;
+DROP TRIGGER hub_outbox_position_insert;
+DROP TRIGGER hub_outbox_position_update;
+DROP TABLE hub_outbox;
+DROP TABLE hub_shelf;
+DROP TABLE hub_accounts;
+
+CREATE TABLE hub_library (
+    id         INTEGER PRIMARY KEY CHECK (id = 1),
+    hub_url    TEXT    NOT NULL,
+    library_id BLOB    NOT NULL,
+    handle     TEXT    NOT NULL,
+    token      TEXT    NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE hub_library_keys (
+    key_id     INTEGER PRIMARY KEY,
+    key        BLOB    NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE hub_accounts (
+    profile_id        INTEGER PRIMARY KEY REFERENCES profiles (id) ON DELETE CASCADE,
+    role              TEXT    NOT NULL CHECK (role IN ('owner', 'reader')),
+    account_id        BLOB,
+    account_key       BLOB    NOT NULL,
+    name              TEXT,
+    invite_id         BLOB,
+    invite_kind       TEXT    CHECK (invite_kind IN ('new', 'reset')),
+    invite_expires_at INTEGER,
+    keys_sent         INTEGER NOT NULL DEFAULT 0,
+    devices           INTEGER NOT NULL DEFAULT 0,
+    last_seen_at      INTEGER,
+    gone_at           INTEGER,
+    created_at        INTEGER NOT NULL,
+    last_seq          INTEGER NOT NULL DEFAULT 0,
+    synced_at         INTEGER,
+    sync_error        TEXT
+);
+
+CREATE TABLE hub_removals (
+    public_id BLOB    PRIMARY KEY,
+    kind      TEXT    NOT NULL CHECK (kind IN ('account', 'invite'))
+);
+
+CREATE TABLE hub_shelf (
+    profile_id     INTEGER NOT NULL REFERENCES hub_accounts (profile_id) ON DELETE CASCADE,
+    book_key       BLOB    NOT NULL,
+    publication_id BLOB,
+    cipher_key     BLOB,
+    own            INTEGER NOT NULL DEFAULT 0 CHECK (own IN (0, 1)),
+    kind           TEXT    NOT NULL DEFAULT 'upload' CHECK (kind IN ('upload', 'file')),
+    state          TEXT    NOT NULL CHECK (state IN ('uploading', 'published', 'expired', 'removing')),
+    instance       TEXT    NOT NULL,
+    title          TEXT    NOT NULL,
+    authors        TEXT    NOT NULL,
+    published_at   INTEGER,
+    updated_at     INTEGER NOT NULL,
+    PRIMARY KEY (profile_id, book_key)
+);
+
+CREATE TABLE hub_outbox (
+    profile_id INTEGER NOT NULL REFERENCES hub_accounts (profile_id) ON DELETE CASCADE,
+    kind       TEXT    NOT NULL CHECK (kind IN ('shelf_item', 'annotation', 'position')),
+    key        ANY     NOT NULL,
+    PRIMARY KEY (profile_id, kind, key)
+) STRICT;
+
+CREATE TRIGGER hub_outbox_annotation_insert AFTER INSERT ON annotations
+WHEN NEW.deleted_reason IS NOT 'book_removed' AND EXISTS (
+    SELECT 1 FROM hub_shelf s
+     WHERE s.profile_id = NEW.profile_id AND s.book_key = NEW.book_key AND s.state <> 'removing')
+BEGIN
+    INSERT OR IGNORE INTO hub_outbox (profile_id, kind, key) VALUES (NEW.profile_id, 'annotation', NEW.id);
+END;
+
+CREATE TRIGGER hub_outbox_annotation_update AFTER UPDATE ON annotations
+WHEN NEW.deleted_reason IS NOT 'book_removed' AND EXISTS (
+    SELECT 1 FROM hub_shelf s
+     WHERE s.profile_id = NEW.profile_id AND s.book_key = NEW.book_key AND s.state <> 'removing')
+BEGIN
+    INSERT OR IGNORE INTO hub_outbox (profile_id, kind, key) VALUES (NEW.profile_id, 'annotation', NEW.id);
+END;
+
+CREATE TRIGGER hub_outbox_position_insert AFTER INSERT ON reading_positions
+WHEN NEW.deleted_at IS NULL AND EXISTS (
+    SELECT 1 FROM hub_shelf s
+     WHERE s.profile_id = NEW.profile_id AND s.book_key = NEW.book_key AND s.state <> 'removing')
+BEGIN
+    INSERT OR IGNORE INTO hub_outbox (profile_id, kind, key) VALUES (NEW.profile_id, 'position', NEW.book_key);
+END;
+
+CREATE TRIGGER hub_outbox_position_update AFTER UPDATE ON reading_positions
+WHEN NEW.deleted_at IS NULL AND EXISTS (
+    SELECT 1 FROM hub_shelf s
+     WHERE s.profile_id = NEW.profile_id AND s.book_key = NEW.book_key AND s.state <> 'removing')
+BEGIN
+    INSERT OR IGNORE INTO hub_outbox (profile_id, kind, key) VALUES (NEW.profile_id, 'position', NEW.book_key);
+END;
+
+ALTER TABLE profiles ADD COLUMN hub_only INTEGER NOT NULL DEFAULT 0 CHECK (hub_only IN (0, 1));
 "#;
 
 /// The schema version this build creates and understands.

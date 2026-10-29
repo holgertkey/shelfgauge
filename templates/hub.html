@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block main %}
-<h1>Phone and other devices</h1>
-<p class="muted">Read the books of this library on a phone or another computer, also when this computer is off: the hub keeps encrypted copies of the books you open there, with your marks, notes and reading positions. The hub cannot read them; only your paired devices hold the key. <a href="{{ profile_action }}">Back to My profile</a></p>
+<h1>Phone and reading through the hub</h1>
+<p class="muted">Read the books of this library on a phone or anywhere else, also when this computer is off: the hub keeps encrypted copies of the books sent to it, with the marks, notes and reading positions of each person. The hub cannot read them; only the library and its members’ devices hold the keys. <a href="{{ profile_action }}">Back to My profile</a></p>
 {%- if let Some(notice) = notice %}
 <div class="notice settings-notice ok" role="status"><span>{{ notice }}</span></div>
 {%- endif %}
@@ -9,33 +9,49 @@
 <div class="notice settings-notice error" role="alert"><span>{{ error }}</span></div>
 {%- endif %}
 
-{%- if let Some(account) = account %}
-{%- if account.recovery_pending %}
-<div class="notice settings-notice error" role="status"><span>Save your recovery code: without it and without a paired device your synced marks are lost if this library is. <a href="{{ recovery_action }}">Show the recovery code</a></span></div>
-{%- endif %}
+{%- if let Some(library) = library %}
+<section class="settings-section" id="hub-library">
+  <h2>The library on the hub</h2>
+  <p>On <code>{{ library.hub_url }}</code> as <code>{{ library.handle }}</code>, since {{ library.created }}. Every member’s address ends in <code>@{{ library.handle }}</code>.</p>
+  {%- if admin %}
+  <p class="hint">Invite the others in <a href="{{ profiles_action }}">Settings → Profiles</a>.</p>
+  {%- endif %}
+</section>
 
+{%- if let Some(account) = account %}
 <section class="settings-section" id="hub-account">
-  <h2>Hub account</h2>
-  <p>On the hub <code>{{ account.hub_url }}</code>, used by this library since {{ account.joined }}.</p>
+  <h2>Your account</h2>
+  {%- if let Some(address) = account.address %}
+  <p>Your address: <code>{{ address }}</code>{% if account.owner %} (the library’s own account){% endif %}.</p>
+  {%- endif %}
+  {%- if let Some(pending) = account.pending %}
+  <p class="hint">{{ pending }}.</p>
+  {%- endif %}
+  {%- if account.gone %}
+  <p class="hint">No longer on the hub: the account was left or expired. An admin can invite you again.</p>
+  {%- endif %}
   {%- if let Some(synced) = account.synced %}
   <p class="hint">Last synced {{ synced }}.</p>
   {%- endif %}
   {%- if let Some(sync_error) = account.sync_error %}
   <p class="hint">The last sync failed: {{ sync_error }}</p>
   {%- endif %}
-  <p class="hint">This library syncs your marks and positions of the books on your shelf every few minutes and soon after each change.</p>
+  {%- if !account.owner %}
+  <p class="hint">Your devices, password and name are managed in the hub reader: My account.</p>
+  {%- endif %}
   <form action="{{ action }}" method="post">
     <input type="hidden" name="action" value="sync">
     <button type="submit">Sync now</button>
   </form>
 </section>
 
+{%- if account.owner %}
 <section class="settings-section" id="hub-pair">
-  <h2>Pair a device</h2>
-  <p class="muted">Shows a QR code to open on the phone (or a link for another computer). It works once, for 10 minutes. Afterwards the device opens the books you send to it from a book’s page.</p>
+  <h2>Your phone</h2>
+  <p class="muted">Shows a QR code to open on the phone. It works once, for 10 minutes. Read on phone on a book’s page does the same and opens the book at once.</p>
   <form action="{{ action }}" method="post">
     <input type="hidden" name="action" value="pair">
-    <button type="submit" class="primary">Pair a device</button>
+    <button type="submit" class="primary">Pair a phone</button>
   </form>
 </section>
 
@@ -43,70 +59,126 @@
   <h2>Devices</h2>
   {%- if let Some(devices_error) = devices_error %}
   <p>The list of devices is not available: {{ devices_error }}</p>
+  {%- else if devices.is_empty() %}
+  <p class="hint">No device is signed in to your account yet.</p>
   {%- else %}
   <ul class="device-list">
     {%- for device in devices %}
     <li>
-      <div><strong>{{ device.name }}</strong>{% if device.current %} <span class="muted">(this library)</span>{% endif %}</div>
-      <p class="hint">Paired {{ device.paired }}; last seen {{ device.last_seen }}.</p>
-      {%- if !device.current %}
+      <div><strong>{{ device.name }}</strong></div>
+      <p class="hint">Added {{ device.paired }}; last seen {{ device.last_seen }}.</p>
       <form action="{{ action }}" method="post">
-        <input type="hidden" name="action" value="revoke">
+        <input type="hidden" name="action" value="remove">
         <input type="hidden" name="device" value="{{ device.id }}">
         <button type="submit">Remove</button>
       </form>
-      {%- endif %}
     </li>
     {%- endfor %}
   </ul>
-  <p class="hint">A removed device can no longer sync or fetch books; at its next connection it forgets its books, marks and keys. A device can also forget itself: This device in its reader.</p>
+  <p class="hint">A removed device can no longer sync or fetch books; at its next connection it forgets this library’s books, marks and keys.</p>
   {%- endif %}
 </section>
 
-<section class="settings-section" id="hub-leave">
-  <h2>Leave the account</h2>
-  <p class="muted">This library stops syncing with the hub and forgets the account. Your marks, notes and positions here stay; the hub and your devices keep theirs. To join again you need the recovery code.</p>
-  {%- if account.recovery_pending %}
-  <p class="hint">Save the recovery code first: <a href="{{ recovery_action }}">Show the recovery code</a>.</p>
-  {%- else %}
-  <form action="{{ action }}" method="post">
-    <input type="hidden" name="action" value="leave">
-    <button type="submit" class="danger">Leave the hub account</button>
-  </form>
-  {%- endif %}
-</section>
-{%- else if let Some(configured) = configured %}
-<section class="settings-section" id="hub-register">
-  <h2>New hub account</h2>
-  <p class="muted">Creates an anonymous account for your profile on <code>{{ configured }}</code>; no e-mail or name is needed. You get a recovery code to keep.</p>
+<section class="settings-section" id="hub-name">
+  <h2>Your address</h2>
   <form class="settings-form" action="{{ action }}" method="post">
-    <input type="hidden" name="action" value="register">
-    {%- if invite %}
+    <input type="hidden" name="action" value="name">
     <div class="field">
-      <label for="hub-invite">Invite code</label>
+      <label for="hub-name-input">Name</label>
+      <input type="text" id="hub-name-input" name="name" autocomplete="off" spellcheck="false" maxlength="32" required aria-describedby="hub-name-hint">
+      <p class="hint" id="hub-name-hint">The part before <code>@{{ library.handle }}</code>: 3 to 32 Latin letters, digits, dots, dashes or underscores.</p>
+    </div>
+    <div class="form-actions">
+      <button type="submit">Change name</button>
+    </div>
+  </form>
+</section>
+
+<section class="settings-section" id="hub-password">
+  <h2>Hub password</h2>
+  <p class="muted">Optional: your phone is paired by its QR code. With a password you also sign in to the hub reader on any other device. This library never keeps it.{% if account.has_password %} A password is set; a new one replaces it.{% endif %}</p>
+  <form class="settings-form" action="{{ action }}" method="post">
+    <input type="hidden" name="action" value="password">
+    <div class="field">
+      <label for="hub-password-input">New password</label>
+      <input type="password" id="hub-password-input" name="password" autocomplete="new-password" minlength="{{ min_password }}" required aria-describedby="hub-password-hint">
+      <p class="hint" id="hub-password-hint">At least {{ min_password }} characters; a few words are easy to remember.</p>
+    </div>
+    <div class="field">
+      <label for="hub-password-repeat">Repeat it</label>
+      <input type="password" id="hub-password-repeat" name="repeat" autocomplete="new-password" minlength="{{ min_password }}" required>
+    </div>
+    <div class="form-actions">
+      <button type="submit">Set password</button>
+    </div>
+  </form>
+</section>
+{%- endif %}
+{%- endif %}
+
+{%- if admin %}
+<section class="settings-section" id="hub-key">
+  <h2>Change the library key</h2>
+  <p class="muted">Every member’s devices hold the library’s key, which opens every book link and book file of this library. A removed member’s devices forget it at their next connection; if someone may have kept a copy (a lost phone, an invite in the wrong hands), give the library a new key. Books sent from then on use it; books sent before still open for the members, and for whoever kept the old key.</p>
+  <form action="{{ action }}" method="post">
+    <input type="hidden" name="action" value="rotate">
+    <button type="submit">Change library key</button>
+  </form>
+</section>
+
+<section class="settings-section" id="hub-delete">
+  <h2>Delete the library on the hub</h2>
+  <p class="muted">Syncs every account a last time, then deletes the library on the hub with every member’s account, their devices and the books there. Marks not yet synced on their devices are lost, and everyone must be invited again. Your marks and positions here stay.</p>
+  <form class="settings-form" action="{{ action }}" method="post">
+    <input type="hidden" name="action" value="delete">
+    <div class="field">
+      <label for="hub-delete-confirm">Type <code>{{ library.handle }}</code> to confirm</label>
+      <input type="text" id="hub-delete-confirm" name="confirm" autocomplete="off" spellcheck="false" required>
+    </div>
+    <div class="form-actions">
+      <button type="submit" class="danger">Delete the library on this hub</button>
+    </div>
+  </form>
+</section>
+{%- endif %}
+{%- else if let Some(create) = create %}
+<section class="settings-section" id="hub-create">
+  <h2>Put the library on the hub</h2>
+  <p class="muted">Creates the library on <code>{{ create.hub_url }}</code>. No book leaves this computer until you send one with Read on phone, and then only encrypted.</p>
+  {%- if let Some(operator) = create.operator %}
+  <p class="hint">The hub is run by {{ operator }}.</p>
+  {%- endif %}
+  {%- if let Some(terms) = create.terms %}
+  <p class="hint">By creating the library you accept the hub’s <a href="{{ terms }}" rel="noopener">terms of use</a>.</p>
+  {%- endif %}
+  <form class="settings-form" action="{{ action }}" method="post">
+    <input type="hidden" name="action" value="create">
+    <div class="field">
+      <label for="hub-handle">The library’s handle</label>
+      <input type="text" id="hub-handle" name="handle" value="{{ create.handle }}" autocomplete="off" spellcheck="false" maxlength="32" required aria-describedby="hub-handle-hint">
+      <p class="hint" id="hub-handle-hint">The end of every member’s address, as in <code>grandma@{{ create.handle }}</code>: 3 to 32 Latin letters, digits, dots, dashes or underscores. It can be changed later.</p>
+    </div>
+    <div class="field">
+      <label for="hub-owner">Your name</label>
+      <input type="text" id="hub-owner" name="owner_name" value="{{ create.owner_name }}" autocomplete="off" spellcheck="false" maxlength="32" required aria-describedby="hub-owner-hint">
+      <p class="hint" id="hub-owner-hint">Your own address: <code>{{ create.owner_name }}@{{ create.handle }}</code>.</p>
+    </div>
+    {%- if create.invite %}
+    <div class="field">
+      <label for="hub-invite">Hub invite code</label>
       <input type="text" id="hub-invite" name="invite" autocomplete="off" spellcheck="false" maxlength="256" aria-describedby="hub-invite-hint">
       <p class="hint" id="hub-invite-hint">From the hub’s operator (<code>shelfgauge hub invite</code>).</p>
     </div>
     {%- endif %}
     <div class="form-actions">
-      <button type="submit" class="primary">Create account</button>
+      <button type="submit" class="primary">Put the library on the hub</button>
     </div>
   </form>
 </section>
-
-<section class="settings-section" id="hub-join">
-  <h2>Join your account</h2>
-  <p class="muted">Already have a hub account (from another library)? Enter its recovery code.</p>
-  <form class="settings-form" action="{{ action }}" method="post">
-    <input type="hidden" name="action" value="join">
-    <div class="field">
-      <label for="hub-code">Recovery code</label>
-      <textarea id="hub-code" name="code" rows="4" autocomplete="off" spellcheck="false" maxlength="1024" required></textarea>
-    </div>
-    <div class="form-actions">
-      <button type="submit" class="primary">Join</button>
-    </div>
-  </form>
+{%- else if configured.is_some() %}
+<section class="settings-section" id="hub-waiting">
+  <h2>Not on the hub yet</h2>
+  <p>An admin of this library puts it on the hub and invites you.</p>
 </section>
 {%- else %}
 <section class="settings-section" id="hub-none">
@@ -114,7 +186,7 @@
   <p>To use a hub, add its address to <code>config.toml</code> and restart:</p>
   <pre><code>[hub]
 url = "https://hub.example.org"</code></pre>
-  <p class="hint">A hub is <code>shelfgauge hub</code> running behind HTTPS; see the README, “Running a hub”.</p>
+  <p class="hint">A hub is <code>shelfgauge hub</code> running behind HTTPS; see the README, “Running your own hub”.</p>
 </section>
 {%- endif %}
 {%- endblock %}

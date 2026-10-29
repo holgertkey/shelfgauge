@@ -58,16 +58,18 @@ pub fn inflate(data: &[u8], limit: u64) -> Result<Vec<u8>, OpenError> {
 }
 
 /// Encrypts an already compressed and padded blob with the given nonce and wraps it
-/// in its envelope. Only for fixed test vectors: [`seal`] picks a fresh nonce, and a
-/// nonce must never be used twice with one key.
+/// in its envelope with the plaintext `header` (empty but for a manifest). Only for
+/// fixed test vectors: [`seal`] picks a fresh nonce, and a nonce must never be used
+/// twice with one key.
 pub fn encrypt_padded(
     id: &PublicationId,
     key: &BookKey,
     path: BlobPath,
+    header: &[u8],
     padded: &[u8],
     nonce: [u8; NONCE_LEN],
 ) -> Vec<u8> {
-    let ad = associated_data(FORMAT_VERSION, id, path);
+    let ad = associated_data(FORMAT_VERSION, id, path, header);
     let ciphertext = cipher(key)
         .encrypt(
             &Nonce::from(nonce),
@@ -79,6 +81,7 @@ pub fn encrypt_padded(
         .expect("AES-GCM encrypts any blob below 64 GiB");
     Envelope {
         version: FORMAT_VERSION,
+        header,
         nonce: &nonce,
         ciphertext: &ciphertext,
     }
@@ -86,16 +89,24 @@ pub fn encrypt_padded(
 }
 
 /// Seals the plaintext of the blob at `path` of publication `id`: compress, pad,
-/// encrypt under `key` with a fresh random nonce.
+/// encrypt under `key` with a fresh random nonce, with the plaintext `header`.
 pub fn seal(
     id: &PublicationId,
     key: &BookKey,
     path: BlobPath,
+    header: &[u8],
     plain: &[u8],
 ) -> Result<Vec<u8>, getrandom::Error> {
     let mut nonce = [0u8; NONCE_LEN];
     getrandom::fill(&mut nonce)?;
-    Ok(encrypt_padded(id, key, path, &pad(&compress(plain)), nonce))
+    Ok(encrypt_padded(
+        id,
+        key,
+        path,
+        header,
+        &pad(&compress(plain)),
+        nonce,
+    ))
 }
 
 /// Opens the blob at `path` of publication `id` with `key`: the plaintext, at most
@@ -108,7 +119,7 @@ pub fn open(
     limit: u64,
 ) -> Result<Vec<u8>, OpenError> {
     let envelope = Envelope::parse(blob)?;
-    let ad = associated_data(envelope.version, id, path);
+    let ad = associated_data(envelope.version, id, path, envelope.header);
     let padded = cipher(key)
         .decrypt(
             &Nonce::from(*envelope.nonce),

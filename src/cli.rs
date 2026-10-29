@@ -119,9 +119,9 @@ pub enum Command {
     #[command(subcommand)]
     Profiles(ProfilesCommand),
     /// Run a hub: encrypted books and reading data for the phones and other devices of
-    /// shelfgauge libraries (`hub takedown`, `accounts`, `invite`, `delete-account`,
-    /// `quota` manage it; `hub check <url>` compares a hub's reader app with this
-    /// build).
+    /// shelfgauge libraries (`hub takedown`, `libraries`, `invite`, `delete-library`,
+    /// `quota`, `migrate` manage it; `hub check <url>` compares a hub's reader app with
+    /// this build).
     Hub(HubArgs),
 }
 
@@ -142,15 +142,16 @@ pub struct HubArgs {
 /// `shelfgauge hub` subcommands.
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum HubCommand {
-    /// Delete a publication, whichever account it belongs to, and refuse its id from
+    /// Delete a publication, whichever library it belongs to, and refuse its id from
     /// now on.
     Takedown {
         /// The publication id (32 hex digits, from its /r/<id> link).
         id: String,
     },
-    /// List the accounts: internal id, age, usage, own quotas (no secrets).
-    Accounts,
-    /// Create a one-time invite code for registering an account.
+    /// List the libraries: internal id, age, accounts, devices, usage, own quotas (no
+    /// handles, names or secrets).
+    Libraries,
+    /// Create a one-time invite code for creating a library on this hub.
     Invite,
     /// Check that the hub at URL serves exactly this build's reader app (run it with
     /// the hub's version); needs no data directory.
@@ -158,28 +159,28 @@ pub enum HubCommand {
         /// The hub's address, e.g. https://hub.example.org.
         url: String,
     },
-    /// Delete an account with its devices, books and reading data (the number from
-    /// `hub accounts`).
-    DeleteAccount {
-        /// The account's internal number.
-        account: i64,
+    /// Delete a library with its accounts, devices, books and reading data (the number
+    /// from `hub libraries`).
+    DeleteLibrary {
+        /// The library's internal number.
+        library: i64,
     },
-    /// Show or set an account's own quotas, which replace the hub's `[quotas]`: a
+    /// Show or set a library's own quotas, which replace the hub's `[quotas]`: a
     /// number (bytes may end in KiB, MiB, GiB or TiB), 0 for no limit, or `default`
     /// for the hub's value.
     Quota {
-        /// The account's internal number.
-        account: i64,
-        /// Stored bytes.
+        /// The library's internal number.
+        library: i64,
+        /// Stored bytes: its publications and the records of all its accounts.
         #[arg(long, value_name = "SIZE", value_parser = parse_quota_bytes)]
         max_bytes: Option<QuotaValue>,
         /// Publications.
         #[arg(long, value_name = "N", value_parser = parse_quota_count)]
         max_publications: Option<QuotaValue>,
-        /// Devices and libraries.
-        #[arg(long, value_name = "N", value_parser = parse_quota_count)]
-        max_devices: Option<QuotaValue>,
     },
+    /// Move a hub database of shelfgauge 0.18–0.20 to this version: deletes its
+    /// accounts, devices, publications and reading data (taken-down ids stay refused).
+    Migrate,
 }
 
 /// A value of `shelfgauge hub quota`.
@@ -192,7 +193,7 @@ pub enum QuotaValue {
 }
 
 impl QuotaValue {
-    /// The account's own value: `None` for the hub's.
+    /// The library's own value: `None` for the hub's.
     pub fn own(self) -> Option<u64> {
         match self {
             Self::Default => None,
@@ -342,30 +343,30 @@ pub enum HubAction {
         /// The publication id as given.
         id: String,
     },
-    /// List the accounts.
-    Accounts,
-    /// Create an invite code.
+    /// List the libraries.
+    Libraries,
+    /// Create a hub invite code.
     Invite,
     /// Compare a hub's reader app with this build's.
     Check {
         /// The hub's address as given.
         url: String,
     },
-    /// Delete an account.
-    DeleteAccount {
+    /// Delete a library.
+    DeleteLibrary {
         /// The internal id.
-        account: i64,
+        library: i64,
     },
-    /// Show or change an account's own quotas (`None`: unchanged).
+    /// Move an old database to this version.
+    Migrate,
+    /// Show or change a library's own quotas (`None`: unchanged).
     Quota {
         /// The internal id.
-        account: i64,
+        library: i64,
         /// Stored bytes.
         max_bytes: Option<QuotaValue>,
         /// Publications.
         max_publications: Option<QuotaValue>,
-        /// Devices.
-        max_devices: Option<QuotaValue>,
     },
 }
 
@@ -473,22 +474,21 @@ impl Cli {
                 let action = match args.command {
                     None => HubAction::Serve,
                     Some(HubCommand::Takedown { id }) => HubAction::Takedown { id },
-                    Some(HubCommand::Accounts) => HubAction::Accounts,
+                    Some(HubCommand::Libraries) => HubAction::Libraries,
                     Some(HubCommand::Invite) => HubAction::Invite,
                     Some(HubCommand::Check { url }) => HubAction::Check { url },
-                    Some(HubCommand::DeleteAccount { account }) => {
-                        HubAction::DeleteAccount { account }
+                    Some(HubCommand::DeleteLibrary { library }) => {
+                        HubAction::DeleteLibrary { library }
                     }
+                    Some(HubCommand::Migrate) => HubAction::Migrate,
                     Some(HubCommand::Quota {
-                        account,
+                        library,
                         max_bytes,
                         max_publications,
-                        max_devices,
                     }) => HubAction::Quota {
-                        account,
+                        library,
                         max_bytes,
                         max_publications,
-                        max_devices,
                     },
                 };
                 Invocation {
@@ -712,8 +712,8 @@ mod tests {
         );
         assert_eq!(inv.path, PathBuf::from("d"));
         assert_eq!(
-            parse(&["hub", "--data", "d", "accounts"]).unwrap().mode,
-            Mode::Hub(HubAction::Accounts)
+            parse(&["hub", "--data", "d", "libraries"]).unwrap().mode,
+            Mode::Hub(HubAction::Libraries)
         );
         assert_eq!(
             parse(&["hub", "invite"]).unwrap().mode,
@@ -729,9 +729,14 @@ mod tests {
             })
         );
         assert_eq!(
-            parse(&["hub", "delete-account", "7"]).unwrap().mode,
-            Mode::Hub(HubAction::DeleteAccount { account: 7 })
+            parse(&["hub", "delete-library", "7"]).unwrap().mode,
+            Mode::Hub(HubAction::DeleteLibrary { library: 7 })
         );
+        assert_eq!(
+            parse(&["hub", "migrate", "--data", "d"]).unwrap().mode,
+            Mode::Hub(HubAction::Migrate)
+        );
+        assert!(parse(&["hub", "accounts"]).is_err());
         assert_eq!(
             parse(&[
                 "hub",
@@ -739,20 +744,20 @@ mod tests {
                 "7",
                 "--max-bytes",
                 "2GiB",
-                "--max-devices",
+                "--max-publications",
                 "default"
             ])
             .unwrap()
             .mode,
             Mode::Hub(HubAction::Quota {
-                account: 7,
+                library: 7,
                 max_bytes: Some(QuotaValue::Limit(2 << 30)),
-                max_publications: None,
-                max_devices: Some(QuotaValue::Default),
+                max_publications: Some(QuotaValue::Default),
             })
         );
         assert!(parse(&["hub", "quota", "7", "--max-bytes", "2GB"]).is_err());
-        assert!(parse(&["hub", "quota", "7", "--max-devices", "-1"]).is_err());
+        assert!(parse(&["hub", "quota", "7", "--max-publications", "-1"]).is_err());
+        assert!(parse(&["hub", "quota", "7", "--max-devices", "1"]).is_err());
         assert_eq!(
             Cli::try_parse_from(["shelfgauge", "hub", "--log-format", "json"])
                 .unwrap()

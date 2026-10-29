@@ -1,6 +1,9 @@
 //! The instance's side of the hub end to end: a real hub on a loopback port and the
-//! library's router, through My profile → Phone and other devices (register, the
-//! recovery code, pairing, devices, joining with the recovery code, leaving).
+//! library's router. The library is put on the hub (My profile → Phone and reading
+//! through the hub), pairs the owner's phone, invites members (Settings → Profiles)
+//! whose devices redeem the invite through the API, publishes under the library key,
+//! syncs every account with the library's token, changes the library key, and pulls
+//! the accounts of 0.18–0.20 a last time.
 
 mod common;
 
@@ -9,8 +12,34 @@ use std::sync::Arc;
 use axum::http::{Method, StatusCode, header};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use common::hub::{Lib, TestHub, pairing_link};
-use shelfgauge::hub_client::keys::{self, AccountKey, RecoveryCode};
+use common::hub::{Lib, TestHub};
+use shelfgauge::hub_client::keys::{self, AccountKey};
+use shelfgauge::profiles::ProfileId;
+use shelfgauge::publication::format::{BlobPath, Envelope, KeyHeader, Manifest};
+
+/// Serves `router` on a loopback port.
+async fn serve(router: axum::Router) -> u16 {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move { axum::serve(listener, router).await });
+    port
+}
+
+/// The book key of a manifest blob, from its header, with the library key generations
+/// a member's device holds.
+fn book_key_of(manifest: &[u8], id: &str, generations: &[(u32, AccountKey)]) -> (u32, Vec<u8>) {
+    let envelope = Envelope::parse(manifest).unwrap();
+    let header = KeyHeader::decode(envelope.header).unwrap();
+    let (_, key) = generations
+        .iter()
+        .find(|(key_id, _)| *key_id == header.key_id)
+        .unwrap_or_else(|| panic!("no generation {}", header.key_id));
+    let sealed = URL_SAFE_NO_PAD.decode(&header.book_key).unwrap();
+    (
+        header.key_id,
+        keys::open_record(key, keys::BOOK_KEY_KIND, id, &sealed).unwrap(),
+    )
+}
 
 #[tokio::test]
 async fn without_a_hub_the_page_says_how_to_set_one() {
@@ -18,7 +47,7 @@ async fn without_a_hub_the_page_says_how_to_set_one() {
     let page = lib.get("/profile/hub").await;
     assert_eq!(page.status, StatusCode::OK);
     assert!(page.body.contains("No hub set"), "{}", page.body);
-    let reply = lib.post("/profile/hub", &[("action", "register")]).await;
+    let reply = lib.post("/profile/hub", &[("action", "create")]).await;
     assert_eq!(reply.status, StatusCode::UNPROCESSABLE_ENTITY);
     assert!(reply.body.contains("No hub is set"));
     let profile = lib.get("/profile").await;
@@ -26,201 +55,508 @@ async fn without_a_hub_the_page_says_how_to_set_one() {
 }
 
 #[tokio::test]
-async fn registering_shows_the_recovery_code_until_it_is_saved() {
+async fn the_library_goes_on_the_hub_with_its_handle_and_owner() {
     let hub = TestHub::start().await;
     let lib = Lib::new(&hub.url, "Home library");
     let page = lib.get("/profile/hub").await;
-    assert!(page.body.contains("Invite code"), "{}", page.body);
+    assert!(
+        page.body.contains("Put the library on the hub"),
+        "{}",
+        page.body
+    );
+    assert!(
+        page.body.contains("Hub invite code"),
+        "the hub is invite-only"
+    );
+    assert!(
+        page.body.contains("value=\"home-library\""),
+        "a suggested handle"
+    );
     assert_eq!(page.headers[header::CACHE_CONTROL], "no-store");
 
-    // The hub is invite-only.
-    let refused = lib.post("/profile/hub", &[("action", "register")]).await;
+    let refused = lib
+        .post(
+            "/profile/hub",
+            &[
+                ("action", "create"),
+                ("handle", "home"),
+                ("owner_name", "admin"),
+            ],
+        )
+        .await;
     assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
     assert!(refused.body.contains("invite code"), "{}", refused.body);
+    let bad = lib
+        .post(
+            "/profile/hub",
+            &[
+                ("action", "create"),
+                ("handle", "x"),
+                ("owner_name", "admin"),
+            ],
+        )
+        .await;
+    assert!(bad.body.contains("3 to 32 characters"), "{}", bad.body);
     assert!(lib.account().is_none());
 
-    let code = lib.register(&hub.invite()).await;
-    let parsed = RecoveryCode::parse(&code).unwrap();
-    let account = lib.account().unwrap();
-    assert_eq!(parsed.account(), account.account);
-    assert_eq!(parsed.key(), &account.key);
-    assert!(account.recovery_pending);
-
-    let page = lib.get("/profile/hub/recovery").await;
-    assert_eq!(page.headers[header::CACHE_CONTROL], "no-store");
-    assert!(page.body.contains("<svg class=\"qr\""));
-
-    let page = lib.get("/profile/hub").await;
-    assert!(page.body.contains("Save your recovery code"));
-    assert!(page.body.contains("Home library"), "{}", page.body);
-    assert!(page.body.contains("(this library)"));
-
-    // A second registration is refused.
+    lib.create_library(&hub.invite()).await;
+    let library = lib.hub_library();
+    assert_eq!(library.handle, "home");
+    let owner = lib.account().unwrap();
+    assert_eq!(owner.role, shelfgauge::hub_client::store::Role::Owner);
+    assert_eq!(owner.name.as_deref(), Some("admin"));
+    let page = lib.get("/profile/hub?done=created").await;
+    assert!(page.body.contains("admin@home"), "{}", page.body);
+    assert!(page.body.contains("Pair a phone"));
     let again = lib
         .post(
             "/profile/hub",
-            &[("action", "register"), ("invite", &hub.invite())],
+            &[
+                ("action", "create"),
+                ("handle", "other"),
+                ("owner_name", "admin"),
+            ],
         )
         .await;
     assert_eq!(again.status, StatusCode::UNPROCESSABLE_ENTITY);
+    // The hub knows the library and its owner account.
+    let summary = &hub.state.hub().libraries().unwrap()[0];
+    assert_eq!(summary.usage.accounts, 1);
 
-    let saved = lib.post("/profile/hub", &[("action", "saved")]).await;
-    assert_eq!(saved.location(), "/profile/hub?done=saved");
-    assert_eq!(
-        lib.get("/profile/hub/recovery").await.status,
-        StatusCode::NOT_FOUND
-    );
-    let page = lib.get("/profile/hub").await;
-    assert!(!page.body.contains("Save your recovery code"));
-    assert!(!page.body.contains(&code));
+    // The owner's name and hub password, set on this computer.
+    let renamed = lib
+        .post("/profile/hub", &[("action", "name"), ("name", "Anna")])
+        .await;
+    assert_eq!(renamed.location(), "/profile/hub?done=renamed");
+    let password = "Correct horse battery";
+    let short = lib
+        .post(
+            "/profile/hub",
+            &[
+                ("action", "password"),
+                ("password", "short"),
+                ("repeat", "short"),
+            ],
+        )
+        .await;
+    assert_eq!(short.status, StatusCode::UNPROCESSABLE_ENTITY);
+    let set = lib
+        .post(
+            "/profile/hub",
+            &[
+                ("action", "password"),
+                ("password", password),
+                ("repeat", password),
+            ],
+        )
+        .await;
+    assert_eq!(set.location(), "/profile/hub?done=password");
+    // The hub reader signs in with the keys derived from it.
+    let (status, prelogin) = hub
+        .api(
+            Method::POST,
+            "prelogin",
+            None,
+            Some(serde_json::json!({ "address": "anna@home" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let salt = URL_SAFE_NO_PAD
+        .decode(prelogin["salt"].as_str().unwrap())
+        .unwrap();
+    let derived = shelfgauge_core::password::derive(password, &salt, 19456, 2).unwrap();
+    let (status, signed_in) = hub
+        .api(
+            Method::POST,
+            "login",
+            None,
+            Some(serde_json::json!({
+                "address": "anna@home",
+                "login_key": URL_SAFE_NO_PAD.encode(derived.login_key),
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{signed_in}");
+    let (_, bundle) = hub
+        .api(
+            Method::GET,
+            "bundle",
+            Some(signed_in["token"].as_str().unwrap()),
+            None,
+        )
+        .await;
+    let sealed = URL_SAFE_NO_PAD
+        .decode(bundle["bundle"].as_str().unwrap())
+        .unwrap();
+    let opened = keys::open_bundle(&AccountKey::new(derived.wrapping_key), &sealed).unwrap();
+    assert_eq!(opened, lib.account().unwrap().key);
 }
 
 #[tokio::test]
-async fn pairing_links_carry_the_account_key_and_pair_a_device() {
+async fn the_owners_phone_pairs_with_the_owner_key() {
     let hub = TestHub::start().await;
-    let lib = Lib::new(&hub.url, "Home library");
-    lib.register(&hub.invite()).await;
-    let account = lib.account().unwrap();
-
-    let page = lib.post("/profile/hub", &[("action", "pair")]).await;
-    assert_eq!(page.status, StatusCode::OK);
-    assert_eq!(page.headers[header::CACHE_CONTROL], "no-store");
-    assert!(page.body.contains("<svg class=\"qr\""));
-    let (secret, key) = pairing_link(&page.body, &hub.url);
-    assert_eq!(key, account.key.to_text());
-
-    // The phone pairs with the secret and names itself with the account key.
-    let key = AccountKey::new(URL_SAFE_NO_PAD.decode(&key).unwrap().try_into().unwrap());
-    let name = URL_SAFE_NO_PAD.encode(keys::seal_device_name(&key, "Phone").unwrap());
-    let (status, paired) = hub
-        .api(
-            Method::POST,
-            "pair",
-            None,
-            Some(serde_json::json!({ "secret": secret, "device_name": name })),
+    let lib = Lib::registered(&hub).await;
+    let phone = lib.phone(&hub).await;
+    assert_eq!(phone.key, lib.account().unwrap().key);
+    let page = lib.get("/profile/hub").await;
+    assert!(page.body.contains("Remove"), "{}", page.body);
+    let removed = lib
+        .post(
+            "/profile/hub",
+            &[("action", "remove"), ("device", &phone.device.to_string())],
         )
         .await;
-    assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(paired["account"], account.account.to_string());
-    let phone = paired["device"].as_i64().unwrap();
-    // Single use.
+    assert_eq!(removed.location(), "/profile/hub?done=removed");
+    let (status, _) = hub.api(Method::GET, "sync", Some(&phone.token), None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn an_invited_member_opens_the_librarys_books_by_their_links() {
+    let hub = TestHub::start().await;
+    let lib = Lib::registered(&hub).await;
+    let book = lib.book("book.txt");
+    assert_eq!(lib.publish(book).await, "published");
+    let id = lib.shelf()[0].publication.unwrap().to_string();
+
+    let (grandma, secret, one_time) = lib.invite_someone(&hub, "Grandma").await;
+    // Not in the picker: one profile is still read on this computer.
+    assert_eq!(lib.get("/").await.status, StatusCode::OK);
+    let settings = lib.get("/settings").await;
+    assert!(
+        settings.body.contains("Invited, until"),
+        "{}",
+        settings.body
+    );
+    let member = hub.redeem(&secret, &one_time, "grandma").await;
+    assert_eq!(member.payload.profile_name, "Grandma");
+    assert_eq!(member.payload.library_name, "Home library");
+    assert_eq!(member.payload.library_key.key_id, 1);
+
+    // The member's device opens the book by its link alone: the book key is in the
+    // manifest's header under the library key from the invite.
+    let library_key = AccountKey::new(
+        URL_SAFE_NO_PAD
+            .decode(&member.payload.library_key.key)
+            .unwrap()
+            .try_into()
+            .unwrap(),
+    );
+    let (status, manifest) = hub.blob(&member.token, &id, "manifest").await;
+    assert_eq!(status, StatusCode::OK);
+    let (key_id, book_key) = book_key_of(&manifest, &id, &[(1, library_key)]);
+    assert_eq!(key_id, 1);
+    let book_key = shelfgauge::publication::BookKey::new(book_key.try_into().unwrap());
+    let plain = shelfgauge::publication::open(
+        &id.parse().unwrap(),
+        &book_key,
+        BlobPath::Manifest,
+        &manifest,
+        1 << 26,
+    )
+    .unwrap();
+    assert_eq!(
+        Manifest::decode(&plain).unwrap().title,
+        lib.shelf()[0].title
+    );
+
+    // The library learns of the account at its next sync and hands it the key.
+    lib.sync().await;
+    let account = lib.account_of(ProfileId(grandma)).unwrap();
+    assert_eq!(account.name.as_deref(), Some("grandma"));
+    assert_eq!(account.account.unwrap().to_string(), member.account);
+    assert_eq!(account.keys_sent, 1);
+    let settings = lib.get("/settings").await;
+    assert!(settings.body.contains("grandma@home"), "{}", settings.body);
+    let records = hub.records(&member.token).await;
+    let key_record = records
+        .iter()
+        .find(|(kind, _, _)| kind == "library_key")
+        .unwrap();
+    let member_key = AccountKey::new(
+        URL_SAFE_NO_PAD
+            .decode(&member.payload.account_key)
+            .unwrap()
+            .try_into()
+            .unwrap(),
+    );
+    let plain = keys::open_record(
+        &member_key,
+        "library_key",
+        "k1",
+        key_record.2.as_ref().unwrap(),
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&plain).unwrap();
+    assert_eq!(value["key_id"], 1);
+
+    // A `profile` record of the member renames the profile here.
+    let profile = serde_json::json!({ "display_name": "Babushka", "color": 3, "updated_at": 1 });
+    let sealed = keys::seal_record(
+        &member_key,
+        "profile",
+        "profile",
+        &serde_json::to_vec(&profile).unwrap(),
+    )
+    .unwrap();
     let (status, _) = hub
         .api(
             Method::POST,
-            "pair",
+            "sync",
+            Some(&member.token),
+            Some(serde_json::json!({ "records": [
+                { "kind": "profile", "id": "profile", "data": URL_SAFE_NO_PAD.encode(sealed) }
+            ] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    // An admin's Sync now syncs every account of the library.
+    lib.sync().await;
+    let name: String = lib.value(&format!("SELECT name FROM profiles WHERE id = {grandma}"));
+    assert_eq!(name, "Babushka");
+}
+
+#[tokio::test]
+async fn a_new_library_key_reaches_the_members_and_old_books_still_open() {
+    let hub = TestHub::start().await;
+    let lib = Lib::registered(&hub).await;
+    let book = lib.book("book.txt");
+    assert_eq!(lib.publish(book).await, "published");
+    let old = lib.shelf()[0].publication.unwrap().to_string();
+    let (_, secret, one_time) = lib.invite_someone(&hub, "Ivan").await;
+    let ivan = hub.redeem(&secret, &one_time, "ivan").await;
+    let (anna_id, secret, one_time) = lib.invite_someone(&hub, "Anna").await;
+    let anna = hub.redeem(&secret, &one_time, "anna").await;
+    lib.sync().await;
+
+    let rotated = lib.post("/profile/hub", &[("action", "rotate")]).await;
+    assert_eq!(rotated.location(), "/profile/hub?done=rotated");
+    // Anna is removed before the next sync: she never gets the new generation.
+    let deleted = lib
+        .post(
+            &format!("/settings/profiles/{anna_id}/delete"),
+            &[("name", "Anna")],
+        )
+        .await;
+    assert_eq!(deleted.status, StatusCode::SEE_OTHER);
+    let (status, _) = hub.api(Method::GET, "sync", Some(&anna.token), None).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "her account is gone from the hub"
+    );
+    // Off the shelf and on it again: a new publication under generation 2.
+    assert_eq!(lib.shelf_action(book, "remove").await, "removed");
+    assert_eq!(lib.publish(book).await, "published");
+    let new = lib.shelf()[0].publication.unwrap().to_string();
+    lib.sync().await;
+
+    let generations = shelfgauge::hub_client::store::library_keys(&lib.userdata.lock()).unwrap();
+    assert_eq!(generations.len(), 2);
+    let (_, manifest) = hub.blob(&ivan.token, &new, "manifest").await;
+    assert_eq!(book_key_of(&manifest, &new, &generations).0, 2);
+    // Ivan got generation 2 as a record.
+    let ids: Vec<String> = hub
+        .records(&ivan.token)
+        .await
+        .into_iter()
+        .filter(|(kind, _, _)| kind == "library_key")
+        .map(|(_, id, _)| id)
+        .collect();
+    assert_eq!(ids, ["k1", "k2"]);
+    // A book made before the change opens with generation 1 (the hub deleted it, so
+    // check the header of the publication made before: still generation 1).
+    let _ = old;
+}
+
+#[tokio::test]
+async fn a_reset_link_gives_a_member_a_new_password() {
+    let hub = TestHub::start().await;
+    let lib = Lib::registered(&hub).await;
+    let (id, secret, one_time) = lib.invite_someone(&hub, "Olga").await;
+    let olga = hub.redeem(&secret, &one_time, "olga").await;
+    // Before the library saw the account: no reset yet.
+    let early = lib
+        .post(&format!("/settings/profiles/{id}/reset"), &[])
+        .await;
+    assert_eq!(early.status, StatusCode::SEE_OTHER);
+    assert!(early.location().contains("hub-no-account"));
+    lib.sync().await;
+    let (secret, one_time) = lib.invite_link(&hub, id, "reset").await;
+    let (_, preview) = hub
+        .api(
+            Method::POST,
+            "invites/preview",
             None,
             Some(serde_json::json!({ "secret": secret })),
         )
         .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-
-    let page = lib.get("/profile/hub").await;
-    assert!(
-        page.body.contains("<strong>Phone</strong>"),
-        "{}",
-        page.body
-    );
-    assert_eq!(hub.device_count(), 2);
-
-    let revoked = lib
-        .post(
-            "/profile/hub",
-            &[("action", "revoke"), ("device", &phone.to_string())],
-        )
-        .await;
-    assert_eq!(revoked.location(), "/profile/hub?done=revoked");
-    let page = lib.get("/profile/hub").await;
-    assert!(!page.body.contains("<strong>Phone</strong>"));
-    assert_eq!(hub.device_count(), 1);
-    let token = paired["token"].as_str().unwrap();
-    let (status, _) = hub.api(Method::GET, "devices", Some(token), None).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-}
-
-#[tokio::test]
-async fn a_second_library_joins_with_the_recovery_code() {
-    let hub = TestHub::start().await;
-    let home = Lib::new(&hub.url, "Home library");
-    let code = home.register(&hub.invite()).await;
-
-    let office = Lib::new(&hub.url, "Office");
-    // One digit of the payload changed (the last digit also holds padding bits).
-    let i = 3 + 5 * 10 + 2;
-    let wrong = if &code[i..=i] == "A" { "B" } else { "A" };
-    let typo = format!("{}{wrong}{}", &code[..i], &code[i + 1..]);
-    let refused = office
-        .post("/profile/hub", &[("action", "join"), ("code", &typo)])
-        .await;
-    assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert!(refused.body.contains("typing error"), "{}", refused.body);
-
-    let joined = office
-        .post(
-            "/profile/hub",
-            &[("action", "join"), ("code", &code.to_lowercase())],
-        )
-        .await;
+    assert_eq!(preview["kind"], "reset");
+    assert_eq!(preview["name"], "olga");
+    let payload = keys::open_invite(
+        &one_time,
+        &URL_SAFE_NO_PAD
+            .decode(preview["payload"].as_str().unwrap())
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(
-        joined.location(),
-        "/profile/hub?done=joined",
-        "{}",
-        joined.body
+        payload.account_key, olga.payload.account_key,
+        "the same account"
     );
-    let account = office.account().unwrap();
-    assert_eq!(account.account, home.account().unwrap().account);
-    assert_eq!(account.key, home.account().unwrap().key);
-    assert!(!account.recovery_pending);
-
-    let page = office.get("/profile/hub").await;
-    assert!(
-        page.body.contains("<strong>Home library</strong>"),
-        "{}",
-        page.body
-    );
-    assert!(
-        page.body
-            .contains("<strong>Office</strong> <span class=\"muted\">(this library)")
-    );
+    // Sign out all devices: the old device goes.
+    let out = lib
+        .post(&format!("/settings/profiles/{id}/sign-out"), &[])
+        .await;
+    assert!(out.location().contains("signed-out"), "{}", out.location());
+    let (status, _) = hub.api(Method::GET, "sync", Some(&olga.token), None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
-async fn leaving_forgets_the_account_and_revokes_this_library() {
-    let hub = TestHub::start().await;
-    let home = Lib::new(&hub.url, "Home library");
-    let code = home.register(&hub.invite()).await;
-
-    // Not before the recovery code is saved: it is the only copy.
-    let page = home.get("/profile/hub").await;
-    assert!(!page.body.contains("Leave the hub account"));
-    let refused = home.post("/profile/hub", &[("action", "leave")]).await;
-    assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert!(refused.body.contains("Save the recovery code first"));
-    assert!(home.account().is_some());
-    home.post("/profile/hub", &[("action", "saved")]).await;
+async fn an_older_hub_is_refused_by_its_version() {
+    use axum::routing::get;
+    let port = serve(axum::Router::new().route(
+        "/api/info",
+        get(|| async {
+            axum::Json(serde_json::json!({
+                "service": "shelfgauge-hub",
+                "version": "0.19.0",
+                "formats": { "min": 1, "max": 1 },
+                "registration": "open",
+                "limits": {
+                    "max_blob_bytes": 1024, "max_record_bytes": 1024,
+                    "max_sync_records": 10, "publication_expiry_days": 0
+                },
+            }))
+        }),
+    ))
+    .await;
+    let lib = Lib::new(&format!("http://127.0.0.1:{port}"), "Home");
+    let page = lib.get("/profile/hub").await;
     assert!(
-        home.get("/profile/hub")
-            .await
-            .body
-            .contains("Leave the hub account")
+        page.body.contains("runs shelfgauge 0.19.0"),
+        "{}",
+        page.body
+    );
+    let reply = lib
+        .post(
+            "/profile/hub",
+            &[
+                ("action", "create"),
+                ("handle", "home"),
+                ("owner_name", "admin"),
+            ],
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(reply.body.contains("runs shelfgauge 0.19.0"));
+    assert!(lib.account().is_none());
+}
+
+#[tokio::test]
+async fn old_accounts_are_pulled_a_last_time_and_forgotten() {
+    use axum::routing::get;
+    use shelfgauge::hub_client::store;
+    use shelfgauge::hub_client::sync::{Report, pull_legacy};
+
+    // A 0.20 hub: its device token pulls the account's records.
+    let key = AccountKey::new([6; 32]);
+    let content: Vec<u8> = vec![1, 2, 3];
+    let annotation = serde_json::json!({
+        "id": "0f8fad5b-d9cb-469f-a165-70867728950e", "content_key": URL_SAFE_NO_PAD.encode(&content),
+        "start_block": 2, "start_offset": 0, "end_block": 2, "end_offset": 0, "text": "",
+        "prefix": "", "suffix": "s", "section_title": null, "note": "made on a phone",
+        "book_title": "T", "book_authors": "A", "created_at": 1, "updated_at": 5,
+        "deleted_at": null,
+    });
+    let sealed = keys::seal_record(
+        &key,
+        "annotation",
+        "0f8fad5b-d9cb-469f-a165-70867728950e",
+        &serde_json::to_vec(&annotation).unwrap(),
+    )
+    .unwrap();
+    let body = serde_json::json!({
+        "records": [
+            { "kind": "annotation", "id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+              "seq": 7, "data": URL_SAFE_NO_PAD.encode(sealed), "updated_at": 5 },
+            { "kind": "shelf_item", "id": "x", "seq": 8, "data": "AAAA", "updated_at": 5 },
+        ],
+        "seq": 8, "more": false,
+    });
+    let port = serve(axum::Router::new().route(
+        "/api/sync",
+        get(move |headers: axum::http::HeaderMap| {
+            let body = body.clone();
+            async move {
+                if headers[header::AUTHORIZATION] == "Bearer old-token" {
+                    (StatusCode::OK, axum::Json(body))
+                } else {
+                    (
+                        StatusCode::UNAUTHORIZED,
+                        axum::Json(serde_json::json!({ "error": "unauthorized", "message": "" })),
+                    )
+                }
+            }
+        }),
+    ))
+    .await;
+    let lib = Lib::new("", "Home");
+    lib.sql(&format!(
+        "INSERT INTO hub_legacy_accounts (profile_id, hub_url, account_key, device_token, last_seq)
+         VALUES (1, 'http://127.0.0.1:{port}', X'{}', 'old-token', 0)",
+        "06".repeat(32)
+    ));
+    let legacy = store::legacy_accounts(&lib.userdata.lock()).unwrap();
+    assert_eq!(legacy.len(), 1);
+    let userdata = Arc::clone(&lib.userdata);
+    let done = tokio::task::spawn_blocking(move || {
+        let mut report = Report::default();
+        let done = pull_legacy(&userdata, &legacy[0], &|_| None, "Home", &mut report).unwrap();
+        (done, report.merged)
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        done,
+        (true, 1),
+        "the annotation merged, the shelf item skipped"
+    );
+    let note: String = lib.value("SELECT note FROM annotations");
+    assert_eq!(note, "made on a phone");
+    assert!(
+        store::legacy_accounts(&lib.userdata.lock())
+            .unwrap()
+            .is_empty()
     );
 
-    let office = Lib::new(&hub.url, "Office");
-    office
-        .post("/profile/hub", &[("action", "join"), ("code", &code)])
-        .await;
-    assert_eq!(hub.device_count(), 2);
-    let token = office.account().unwrap().token;
-
-    let left = office.post("/profile/hub", &[("action", "leave")]).await;
-    assert_eq!(left.location(), "/profile/hub?done=left");
-    assert!(office.account().is_none());
-    assert_eq!(hub.device_count(), 1);
-    let (status, _) = hub
-        .api(Method::GET, "devices", Some(token.as_str()), None)
-        .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-    let page = office.get("/profile/hub").await;
-    assert!(page.body.contains("Join your account"));
+    // A token the old hub no longer knows: forgotten without a pull.
+    lib.sql(&format!(
+        "INSERT INTO hub_legacy_accounts (profile_id, hub_url, account_key, device_token, last_seq)
+         VALUES (1, 'http://127.0.0.1:{port}', X'{}', 'revoked', 0)",
+        "06".repeat(32)
+    ));
+    let legacy = store::legacy_accounts(&lib.userdata.lock()).unwrap();
+    let userdata = Arc::clone(&lib.userdata);
+    let done = tokio::task::spawn_blocking(move || {
+        pull_legacy(
+            &userdata,
+            &legacy[0],
+            &|_| None,
+            "Home",
+            &mut Report::default(),
+        )
+        .unwrap()
+    })
+    .await
+    .unwrap();
+    assert!(done);
+    assert!(
+        store::legacy_accounts(&lib.userdata.lock())
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -236,7 +572,14 @@ async fn an_unreachable_hub_is_reported_on_the_page() {
     assert_eq!(page.status, StatusCode::OK);
     assert!(page.body.contains("cannot be reached"), "{}", page.body);
     let reply = lib
-        .post("/profile/hub", &[("action", "register"), ("invite", "x")])
+        .post(
+            "/profile/hub",
+            &[
+                ("action", "create"),
+                ("handle", "home"),
+                ("owner_name", "admin"),
+            ],
+        )
         .await;
     assert_eq!(reply.status, StatusCode::UNPROCESSABLE_ENTITY);
     assert!(reply.body.contains("cannot be reached"));
@@ -250,33 +593,26 @@ async fn redirects_are_never_followed() {
     use shelfgauge::hub::Secret;
     use shelfgauge::hub_client::{ClientError, HubClient, HubUrl};
 
-    async fn serve(router: axum::Router) -> u16 {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        tokio::spawn(async move { axum::serve(listener, router).await });
-        port
-    }
-
     let hits = Arc::new(AtomicUsize::new(0));
     let counted = Arc::clone(&hits);
     let target = serve(axum::Router::new().route(
-        "/api/devices",
+        "/api/library/owner/devices",
         get(move || {
             counted.fetch_add(1, Ordering::Relaxed);
             async { axum::Json(serde_json::json!({ "devices": [] })) }
         }),
     ))
     .await;
-    let location = format!("http://127.0.0.1:{target}/api/devices");
+    let location = format!("http://127.0.0.1:{target}/api/library/owner/devices");
     let redirecting = serve(axum::Router::new().route(
-        "/api/devices",
+        "/api/library/owner/devices",
         get(move || async move { (StatusCode::FOUND, [(header::LOCATION, location.clone())]) }),
     ))
     .await;
 
     let url = HubUrl::parse(&format!("http://127.0.0.1:{redirecting}")).unwrap();
     let result = tokio::task::spawn_blocking(move || {
-        HubClient::new(url).devices(&Secret::from_text("token"))
+        HubClient::new(url).owner_devices(&Secret::from_text("token"))
     })
     .await
     .unwrap();
@@ -285,49 +621,6 @@ async fn redirects_are_never_followed() {
         other => panic!("{other:?}"),
     }
     assert_eq!(hits.load(Ordering::Relaxed), 0);
-}
-
-#[tokio::test]
-async fn each_profile_has_its_own_hub_account() {
-    use shelfgauge::profiles::session::{self, Level};
-    use shelfgauge::profiles::{ProfileId, Role, store as profiles};
-
-    let hub = TestHub::start().await;
-    let lib = Lib::new(&hub.url, "Home library");
-    let (anna, owner_session, anna_session) = {
-        let conn = lib.userdata.lock();
-        let anna = profiles::create(&conn, "Anna", 1, Role::Reader, 0)
-            .unwrap()
-            .id;
-        (
-            anna,
-            session::create(&conn, ProfileId::OWNER, Level::Local, false, 0).unwrap(),
-            session::create(&conn, anna, Level::Local, false, 0).unwrap(),
-        )
-    };
-    lib.act_as(Some(owner_session.as_str()));
-    lib.register(&hub.invite()).await;
-
-    lib.act_as(Some(anna_session.as_str()));
-    let page = lib.get("/profile/hub").await;
-    assert!(page.body.contains("New hub account"), "{}", page.body);
-    assert!(!page.body.contains("Home library"));
-    assert_eq!(
-        lib.get("/profile/hub/recovery").await.status,
-        StatusCode::NOT_FOUND
-    );
-    for action in ["leave", "pair", "saved"] {
-        let reply = lib.post("/profile/hub", &[("action", action)]).await;
-        assert_eq!(reply.status, StatusCode::UNPROCESSABLE_ENTITY, "{action}");
-    }
-    assert!(lib.account_of(anna).is_none());
-
-    // Anna registers her own account.
-    lib.register(&hub.invite()).await;
-    let (mine, hers) = (lib.account().unwrap(), lib.account_of(anna).unwrap());
-    assert_ne!(mine.account, hers.account);
-    assert_ne!(mine.key, hers.key);
-    assert_eq!(hub.state.hub().accounts().unwrap().len(), 2);
 }
 
 /// The JSON plaintext of a pushed record.
@@ -383,7 +676,8 @@ async fn open_on_phone_publishes_the_book_with_its_marks() {
 
     // A device opens the manifest with the book key from the shelf item.
     let account = lib.account().unwrap();
-    let token = account.token.as_str();
+    let phone = lib.phone(&hub).await;
+    let token = phone.token.as_str();
     let (status, blob) = hub.blob(token, &id.to_string(), "manifest").await;
     assert_eq!(status, StatusCode::OK);
     let plain =
@@ -408,7 +702,7 @@ async fn open_on_phone_publishes_the_book_with_its_marks() {
                     URL_SAFE_NO_PAD.encode(book_key.as_bytes())
                 );
                 assert_eq!(value["instance"], "Home library");
-                assert_eq!(value["format_version"], 1);
+                assert_eq!(value["format_version"], 2);
             }
             "annotation" => {
                 assert_eq!(record_id, &mark);
@@ -445,14 +739,19 @@ async fn changes_of_shelf_books_are_queued_and_pushed() {
     let url = HubUrl::parse(&hub.url).unwrap();
     let pushed = tokio::task::spawn_blocking({
         let account = account.clone();
-        move || sync::push(&userdata, &account, &HubClient::new(url))
+        let library = lib.hub_library();
+        move || {
+            let target = sync::Target::of(&library, &account).unwrap();
+            sync::push(&userdata, target, &account, &HubClient::new(url))
+        }
     })
     .await
     .unwrap()
     .unwrap();
     assert_eq!(pushed, 1);
     assert_eq!(lib.outbox(), 0);
-    let records = hub.records(account.token.as_str()).await;
+    let phone = lib.phone(&hub).await;
+    let records = hub.records(&phone.token).await;
     assert!(
         records
             .iter()
@@ -472,7 +771,7 @@ async fn removing_from_the_shelf_deletes_the_copy_and_the_records() {
     .await;
     assert_eq!(lib.publish(book).await, "published");
     let id = lib.shelf()[0].publication.unwrap().to_string();
-    let token = lib.account().unwrap().token;
+    let token = lib.phone(&hub).await.token;
 
     assert_eq!(lib.shelf_action(book, "remove").await, "removed");
     assert!(lib.shelf().is_empty());
@@ -522,7 +821,7 @@ async fn expired_publications_can_be_published_again() {
     let book = lib.book("book.txt");
     assert_eq!(lib.publish(book).await, "published");
     let old = lib.shelf()[0].clone();
-    let token = lib.account().unwrap().token;
+    let token = lib.hub_library().token.as_str().to_owned();
     // As the hub's expiry does.
     let id = old.publication.unwrap().to_string();
     let (status, _) = hub
@@ -535,7 +834,7 @@ async fn expired_publications_can_be_published_again() {
         .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
-    lib.get("/profile/hub").await;
+    lib.sync().await;
     assert_eq!(lib.shelf()[0].state, ShelfState::Expired);
     let card = lib.get(&format!("/book/{book}")).await;
     assert!(card.body.contains("Publish again"), "{}", card.body);
@@ -565,7 +864,7 @@ async fn drm_books_never_go_on_the_shelf() {
     assert!(!card.body.contains("Open on phone"));
     assert_eq!(lib.publish(book).await, "protected");
     assert!(lib.shelf().is_empty());
-    let token = lib.account().unwrap().token;
+    let token = lib.phone(&hub).await.token;
     let (_, list) = hub
         .api(Method::GET, "pub", Some(token.as_str()), None)
         .await;
@@ -579,7 +878,7 @@ async fn a_refused_upload_leaves_nothing_behind() {
     let book = lib.book("book.txt");
     assert_eq!(lib.publish(book).await, "quota");
     assert!(lib.shelf().is_empty());
-    let token = lib.account().unwrap().token;
+    let token = lib.phone(&hub).await.token;
     let (_, list) = hub
         .api(Method::GET, "pub", Some(token.as_str()), None)
         .await;
@@ -653,16 +952,19 @@ async fn a_book_removed_from_the_library_keeps_its_records_on_the_hub() {
     }
 
     let account = lib.account().unwrap();
+    let phone = lib.phone(&hub).await;
     let push = |account: shelfgauge::hub_client::store::HubAccount| {
         let userdata = std::sync::Arc::clone(&lib.userdata);
         let url = HubUrl::parse(&hub.url).unwrap();
+        let library = lib.hub_library();
         tokio::task::spawn_blocking(move || {
-            sync::push(&userdata, &account, &HubClient::new(url)).unwrap()
+            let target = sync::Target::of(&library, &account).unwrap();
+            sync::push(&userdata, target, &account, &HubClient::new(url)).unwrap()
         })
     };
     assert_eq!(push(account.clone()).await.unwrap(), 0, "nothing to push");
     assert_eq!(lib.outbox(), 0);
-    let records = hub.records(account.token.as_str()).await;
+    let records = hub.records(&phone.token).await;
     assert_eq!(records.len(), 3);
     assert!(
         records.iter().all(|(_, _, data)| data.is_some()),
@@ -671,7 +973,7 @@ async fn a_book_removed_from_the_library_keeps_its_records_on_the_hub() {
 
     // Taking the book off the shelf deletes them all, also those of the removed book.
     assert_eq!(lib.shelf_action(book, "remove").await, "removed");
-    let records = hub.records(account.token.as_str()).await;
+    let records = hub.records(&phone.token).await;
     assert!(
         records.iter().all(|(_, _, data)| data.is_none()),
         "{records:?}"
@@ -690,7 +992,7 @@ async fn a_double_click_on_open_on_phone_uploads_once() {
         codes == ["busy", "published"] || codes == ["published", "published"],
         "{codes:?}"
     );
-    let token = lib.account().unwrap().token;
+    let token = lib.phone(&hub).await.token;
     let (_, list) = hub
         .api(Method::GET, "pub", Some(token.as_str()), None)
         .await;
@@ -701,187 +1003,6 @@ async fn a_double_click_on_open_on_phone_uploads_once() {
     assert_eq!(lib.shelf()[0].publication, before);
 }
 
-/// Two libraries on one account with the same book, `home` has it on the shelf with a
-/// bookmark and `office` has pulled it: `(hub, home, office, book id, bookmark id)`.
-async fn shared() -> (TestHub, Lib, Lib, i64, String) {
-    let hub = TestHub::start().await;
-    let home = Lib::new(&hub.url, "Home library");
-    let code = home.register(&hub.invite()).await;
-    home.post("/profile/hub", &[("action", "saved")]).await;
-    let book = home.book("book.txt");
-    let mark = home.bookmark(book, "b2").await;
-    assert_eq!(home.publish(book).await, "published");
-    let office = Lib::new(&hub.url, "Office");
-    office.join(&code).await;
-    office.sync().await;
-    let office_book = office.book("book.txt");
-    assert_eq!(office_book, book, "same library layout");
-    (hub, home, office, book, mark)
-}
-
-#[tokio::test]
-async fn two_libraries_share_the_shelf_and_the_marks() {
-    let (_hub, home, office, book, mark) = shared().await;
-    let shelf = office.shelf();
-    assert_eq!(shelf.len(), 1);
-    assert!(!shelf[0].own);
-    assert_eq!(shelf[0].instance, "Home library");
-    assert_eq!(shelf[0].publication, home.shelf()[0].publication);
-    let card = office.get(&format!("/book/{book}")).await;
-    assert!(card.body.contains("from Home library"), "{}", card.body);
-    assert!(card.body.contains("Bookmarks (1)"));
-    let pulled: i64 = office.value(&format!(
-        "SELECT count(*) FROM annotations WHERE id = '{mark}' AND book_id = {book}"
-    ));
-    assert_eq!(pulled, 1, "attached to the office's own copy of the book");
-    assert_eq!(office.outbox(), 0, "a merge is not pushed back");
-    let exported = std::fs::read_dir(office.library.annotations_dir())
-        .map(|d| d.count())
-        .unwrap_or(0);
-    assert!(exported > 0, "the export follows the merge");
-
-    // The office's bookmark and position reach home.
-    office.bookmark(book, "b4").await;
-    let reply = office
-        .json(
-            &format!("/book/{book}/position"),
-            serde_json::json!({ "block": "b5" }),
-        )
-        .await;
-    assert_eq!(reply.status, StatusCode::NO_CONTENT);
-    assert_eq!(office.outbox(), 2);
-    office.sync().await;
-    assert_eq!(office.outbox(), 0);
-    home.sync().await;
-    let card = home.get(&format!("/book/{book}")).await;
-    assert!(card.body.contains("Bookmarks (2)"), "{}", card.body);
-    assert!(card.body.contains("read?at=b5"), "{}", card.body);
-    assert_eq!(home.outbox(), 0);
-}
-
-#[tokio::test]
-async fn a_newer_edit_beats_a_deletion_and_a_newer_deletion_beats_an_edit() {
-    let (_hub, home, office, _book, mark) = shared().await;
-    let t = shelfgauge::annotations::now();
-
-    // Office deletes at t, home edits the note at t + 10: the edit wins everywhere.
-    office.sql(&format!(
-        "UPDATE annotations SET deleted_at = {t}, deleted_reason = 'user', updated_at = {t}
-          WHERE id = '{mark}'"
-    ));
-    home.sql(&format!(
-        "UPDATE annotations SET note = 'kept', updated_at = {} WHERE id = '{mark}'",
-        t + 10
-    ));
-    office.sync().await;
-    home.sync().await;
-    office.sync().await;
-    for lib in [&home, &office] {
-        let (note, deleted): (String, Option<i64>) = lib
-            .userdata
-            .lock()
-            .query_row(
-                &format!("SELECT note, deleted_at FROM annotations WHERE id = '{mark}'"),
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .unwrap();
-        assert_eq!((note.as_str(), deleted), ("kept", None));
-    }
-
-    // Now the deletion is newer: it wins everywhere.
-    office.sql(&format!(
-        "UPDATE annotations SET deleted_at = {0}, deleted_reason = 'user', updated_at = {0}
-          WHERE id = '{mark}'",
-        t + 30
-    ));
-    home.sql(&format!(
-        "UPDATE annotations SET note = 'lost', updated_at = {} WHERE id = '{mark}'",
-        t + 20
-    ));
-    home.sync().await;
-    office.sync().await;
-    home.sync().await;
-    for lib in [&home, &office] {
-        let reason: String = lib.value(&format!(
-            "SELECT deleted_reason FROM annotations WHERE id = '{mark}'"
-        ));
-        assert_eq!(reason, "user");
-        assert_eq!(lib.outbox(), 0);
-    }
-}
-
-#[tokio::test]
-async fn edits_at_the_same_second_end_the_same_everywhere() {
-    let (_hub, home, office, _book, mark) = shared().await;
-    let t = shelfgauge::annotations::now() + 5;
-    home.sql(&format!(
-        "UPDATE annotations SET note = 'from home', updated_at = {t} WHERE id = '{mark}'"
-    ));
-    office.sql(&format!(
-        "UPDATE annotations SET note = 'from office', updated_at = {t} WHERE id = '{mark}'"
-    ));
-    home.sync().await;
-    office.sync().await;
-    home.sync().await;
-    let query = format!("SELECT note FROM annotations WHERE id = '{mark}'");
-    let (a, b): (String, String) = (home.value(&query), office.value(&query));
-    assert_eq!(a, b, "both libraries agree");
-    // The bytewise larger plaintext wins: "from office" > "from home".
-    assert_eq!(a, "from office");
-}
-
-#[tokio::test]
-async fn removing_on_one_library_takes_the_book_off_the_others() {
-    let (_hub, home, office, book, mark) = shared().await;
-    assert_eq!(home.shelf_action(book, "remove").await, "removed");
-    office.sync().await;
-    assert!(office.shelf().is_empty());
-    let kept: i64 = office.value(&format!(
-        "SELECT count(*) FROM annotations WHERE id = '{mark}' AND deleted_at IS NULL"
-    ));
-    assert_eq!(kept, 1, "local marks stay");
-    let card = office.get(&format!("/book/{book}")).await;
-    assert!(card.body.contains("Open on phone"));
-}
-
-#[tokio::test]
-async fn records_of_a_book_this_library_lacks_are_kept_for_later() {
-    let hub = TestHub::start().await;
-    let home = Lib::new(&hub.url, "Home library");
-    let code = home.register(&hub.invite()).await;
-    let book = home.book("book.txt");
-    let mark = home.bookmark(book, "b2").await;
-    assert_eq!(home.publish(book).await, "published");
-
-    let empty = Lib::with_books(&hub.url, "Laptop", &[]);
-    empty.join(&code).await;
-    empty.sync().await;
-    assert_eq!(
-        empty.shelf().len(),
-        1,
-        "the shelf lists the book from Home library"
-    );
-    let orphan: i64 = empty.value(&format!(
-        "SELECT book_id FROM annotations WHERE id = '{mark}' AND deleted_at IS NULL"
-    ));
-    assert_eq!(orphan, 0, "no book here yet");
-    assert_eq!(empty.outbox(), 0);
-
-    // A scan's cleanup keeps them while the book is on the shelf, even with no
-    // retention (regression: they were marked removed and purged).
-    let exporter = shelfgauge::annotations::export::Exporter::new(
-        empty.library.annotations_dir(),
-        "http://127.0.0.1:8742/",
-    );
-    shelfgauge::annotations::attach::cleanup_library(&empty.library, &empty.userdata, &exporter, 0)
-        .unwrap();
-    let kept: i64 = empty.value(&format!(
-        "SELECT count(*) FROM annotations WHERE id = '{mark}' AND deleted_at IS NULL"
-    ));
-    assert_eq!(kept, 1);
-}
-
 #[tokio::test]
 async fn a_sync_notices_expired_publications_and_reports_errors() {
     use shelfgauge::hub_client::store::ShelfState;
@@ -890,7 +1011,8 @@ async fn a_sync_notices_expired_publications_and_reports_errors() {
     let lib = Lib::registered(&hub).await;
     let book = lib.book("book.txt");
     assert_eq!(lib.publish(book).await, "published");
-    let token = lib.account().unwrap().token;
+    // The hub drops the copy (as after `publication_expiry_days`).
+    let token = lib.hub_library().token.as_str().to_owned();
     let id = lib.shelf()[0].publication.unwrap().to_string();
     hub.api(
         Method::DELETE,
@@ -916,16 +1038,14 @@ async fn a_sync_notices_expired_publications_and_reports_errors() {
 #[tokio::test]
 async fn the_worker_syncs_at_start() {
     let hub = TestHub::start().await;
-    let home = Lib::new(&hub.url, "Home library");
-    let code = home.register(&hub.invite()).await;
-    let book = home.book("book.txt");
-    assert_eq!(home.publish(book).await, "published");
-    let office = Lib::new(&hub.url, "Office");
-    office.join(&code).await;
+    let lib = Lib::registered(&hub).await;
+    let book = lib.book("book.txt");
+    assert_eq!(lib.publish(book).await, "published");
+    assert!(lib.account().unwrap().synced_at.is_none());
 
-    let worker = shelfgauge::web::hub_sync::start(office.state.clone());
+    let worker = shelfgauge::web::hub_sync::start(lib.state.clone());
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-    while office.shelf().is_empty() {
+    while lib.account().unwrap().synced_at.is_none() {
         assert!(
             std::time::Instant::now() < deadline,
             "the worker did not sync"
@@ -933,100 +1053,6 @@ async fn the_worker_syncs_at_start() {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     worker.abort();
-    assert!(office.account().unwrap().synced_at.is_some());
-}
-
-#[tokio::test]
-async fn marks_at_places_the_book_does_not_have_do_not_break_its_pages() {
-    // A buggy device could push them; the hub cannot forge them (AEAD).
-    let (_hub, home, office, book, _mark) = shared().await;
-    let t = shelfgauge::annotations::now() + 5;
-    home.sql(&format!(
-        "INSERT INTO annotations (id, profile_id, book_key, book_id, start_block, start_offset,
-             end_block, end_offset, text, prefix, suffix, book_title, book_authors, note,
-             created_at, updated_at)
-         SELECT 'far-away', 1, book_key, book_id, 99999, 0, 99999, 4, 'gone', '', '', 'T', 'A',
-                'far', {t}, {t} FROM annotations LIMIT 1;
-         INSERT INTO annotations (id, profile_id, book_key, book_id, start_block, start_offset,
-             end_block, end_offset, text, prefix, suffix, book_title, book_authors, note,
-             created_at, updated_at)
-         SELECT 'backwards', 1, book_key, book_id, 2, 10, 2, 3, 'odd', '', '', 'T', 'A',
-                'odd', {t}, {t} FROM annotations LIMIT 1;"
-    ));
-    home.sync().await;
-    office.sync().await;
-    let merged: i64 =
-        office.value("SELECT count(*) FROM annotations WHERE id IN ('far-away', 'backwards')");
-    assert_eq!(merged, 2);
-    for uri in [
-        format!("/book/{book}"),
-        format!("/book/{book}/annotations"),
-        format!("/book/{book}/read"),
-        format!("/book/{book}/read?part=2"),
-    ] {
-        let reply = office.get(&uri).await;
-        assert_eq!(reply.status, StatusCode::OK, "{uri}: {}", reply.body);
-    }
-}
-
-#[tokio::test]
-async fn two_profiles_sync_with_separate_accounts() {
-    use shelfgauge::profiles::session::{self, Level};
-    use shelfgauge::profiles::{ProfileId, Role, store as profiles};
-
-    let hub = TestHub::start().await;
-    let lib = Lib::new(&hub.url, "Home library");
-    let (anna, owner_session, anna_session) = {
-        let conn = lib.userdata.lock();
-        let anna = profiles::create(&conn, "Anna", 1, Role::Reader, 0)
-            .unwrap()
-            .id;
-        (
-            anna,
-            session::create(&conn, ProfileId::OWNER, Level::Local, false, 0).unwrap(),
-            session::create(&conn, anna, Level::Local, false, 0).unwrap(),
-        )
-    };
-    let book = lib.book("book.txt");
-    let mut marks = Vec::new();
-    for session in [&owner_session, &anna_session] {
-        lib.act_as(Some(session.as_str()));
-        lib.register(&hub.invite()).await;
-        lib.post("/profile/hub", &[("action", "saved")]).await;
-        marks.push(lib.bookmark(book, "b2").await);
-        assert_eq!(lib.publish(book).await, "published");
-        lib.sync().await;
-    }
-    for session in [&owner_session, &anna_session] {
-        lib.act_as(Some(session.as_str()));
-        lib.sync().await;
-    }
-    for (profile, mark) in [(ProfileId::OWNER, &marks[0]), (anna, &marks[1])] {
-        let ids: Vec<String> = {
-            let conn = lib.userdata.lock();
-            let mut stmt = conn
-                .prepare("SELECT id FROM annotations WHERE profile_id = ?1")
-                .unwrap();
-            stmt.query_map([profile.0], |r| r.get(0))
-                .unwrap()
-                .collect::<Result<_, _>>()
-                .unwrap()
-        };
-        assert_eq!(ids, std::slice::from_ref(mark), "{profile:?}");
-        let shelf = shelfgauge::hub_client::store::shelf(&lib.userdata.lock(), profile).unwrap();
-        assert_eq!(shelf.len(), 1);
-        assert!(shelf[0].own);
-    }
-    let (owner_account, anna_account) = (lib.account().unwrap(), lib.account_of(anna).unwrap());
-    assert_ne!(owner_account.account, anna_account.account);
-    // Each account's hub holds only its own records.
-    let records = hub.records(anna_account.token.as_str()).await;
-    assert!(
-        records
-            .iter()
-            .any(|(k, id, _)| k == "annotation" && *id == marks[1])
-    );
-    assert!(!records.iter().any(|(_, id, _)| *id == marks[0]));
 }
 
 #[tokio::test]

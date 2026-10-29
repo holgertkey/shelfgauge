@@ -545,7 +545,7 @@ fn publication_keys_and_ids_are_never_logged() {
         ..BookInfo::default()
     };
     let publication = build(&info, &content, None, &ReaderConfig::default()).unwrap();
-    let sealed = publication.seal(&id, &key).unwrap();
+    let sealed = publication.seal(&id, &key, &[]).unwrap();
     for (path, blob) in &sealed {
         open(&id, &key, *path, blob, 1 << 26).unwrap();
         let error = open(&id, &BookKey::new([0; 32]), *path, blob, 1 << 26).unwrap_err();
@@ -563,25 +563,29 @@ fn publication_keys_and_ids_are_never_logged() {
     assert!(!log.contains("[107, 107"), "key bytes in {log}");
 }
 
-/// The hub never logs device tokens, pairing secrets, invite codes, recovery secrets
-/// or their hashes, public account ids, publication ids or bodies (blobs, records,
-/// device names) or client addresses (behind a trusted proxy), also not when requests
-/// fail or are rate limited; accounts appear as `account=N` and routes as templates.
+/// The hub never logs tokens (library and device), pairing and invite secrets, hub
+/// invite codes, login keys, salts, key bundles, invite payloads, addresses, names and
+/// handles, public library and account ids, publication ids or bodies (blobs,
+/// records, device names) or client addresses (behind a trusted proxy), also not when
+/// requests fail or are rate limited; libraries and accounts appear as internal ids
+/// and routes as templates.
 #[tokio::test]
 async fn hub_secrets_and_publication_ids_are_never_logged() {
     use base64::Engine as _;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use shelfgauge::hub::config::HubConfig;
-    use shelfgauge::hub::{Hub, HubState, Secret};
+    use shelfgauge::hub::{Hub, HubState};
 
     drop(Capture::default().dispatch("off", LogFormat::Text, false));
     let dir = tempfile::tempdir().unwrap();
+    let b64 = |data: &[u8]| URL_SAFE_NO_PAD.encode(data);
     for format in [LogFormat::Text, LogFormat::Json] {
         let data = tempfile::tempdir_in(dir.path()).unwrap();
         let mut config = HubConfig::default();
         config.server.trusted_proxies = vec!["127.0.0.1".into()];
-        // Account, pair, recover and a reused pairing secret; the next is limited.
-        config.limits.public_requests_per_hour = 4;
+        // Library, prelogin, two sign-ins, preview, redeem, pair and a reused pairing
+        // secret; the next is limited.
+        config.limits.public_requests_per_hour = 8;
         let hub = Hub::with_config(data.path(), config).unwrap();
         let (invite, _) = hub.invite(shelfgauge::annotations::now()).unwrap();
         let state = HubState::new(hub);
@@ -610,28 +614,133 @@ async fn hub_secrets_and_publication_ids_are_never_logged() {
             }
         };
         let json = |value: serde_json::Value| Body::from(value.to_string());
-        let recovery = Secret::from_text("Recovery-Secret-Wombat");
-        let recovery_hash = URL_SAFE_NO_PAD.encode(recovery.hash());
-        let name = URL_SAFE_NO_PAD.encode(b"Device-Name-Ciphertext");
         let (status, created) = send(
             Method::POST,
-            "/api/account".into(),
+            "/api/libraries".into(),
             None,
             json(serde_json::json!({
                 "invite": invite.as_str(),
-                "recovery_hash": recovery_hash,
-                "device_name": name,
+                "handle": "wombat-hall",
+                "owner_name": "quokka-admin",
             })),
         )
         .await;
         assert_eq!(status, StatusCode::CREATED);
         let created = created.unwrap();
-        let token = created["token"].as_str().unwrap().to_owned();
-        let account = created["account"].as_str().unwrap().to_owned();
+        let library = created["token"].as_str().unwrap().to_owned();
+        let library_id = created["library"].as_str().unwrap().to_owned();
+        let owner_id = created["owner"].as_str().unwrap().to_owned();
+        let payload = b64(b"Invite-Payload-Ciphertext");
+        let (_, member_invite) = send(
+            Method::POST,
+            "/api/library/invites".into(),
+            Some(library.clone()),
+            json(serde_json::json!({ "payload": payload })),
+        )
+        .await;
+        let member_invite = member_invite.unwrap();
+        let invite_secret = member_invite["secret"].as_str().unwrap().to_owned();
+        let invite_id = member_invite["id"].as_str().unwrap().to_owned();
+        send(
+            Method::POST,
+            "/api/invites/preview".into(),
+            None,
+            json(serde_json::json!({ "secret": invite_secret })),
+        )
+        .await;
+        let login_key = b64(&[0x4b; 32]);
+        let salt = b64(b"Salt-Bytes-Tapir");
+        let bundle = b64(b"Bundle-Ciphertext-Dingo");
+        let password = serde_json::json!({
+            "login_key": login_key,
+            "salt": salt,
+            "kdf": { "memory_kib": 19456, "iterations": 2 },
+            "bundle": bundle,
+        });
+        let name = b64(b"Device-Name-Ciphertext");
+        let (status, redeemed) = send(
+            Method::POST,
+            "/api/invites/redeem".into(),
+            None,
+            json(serde_json::json!({
+                "secret": invite_secret,
+                "name": "okapi-member",
+                "password": password,
+                "device_name": name,
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let redeemed = redeemed.unwrap();
+        let token = redeemed["token"].as_str().unwrap().to_owned();
+        let account = redeemed["account"].as_str().unwrap().to_owned();
+        send(
+            Method::POST,
+            "/api/prelogin".into(),
+            None,
+            json(serde_json::json!({ "address": "okapi-member@wombat-hall" })),
+        )
+        .await;
+        let (status, signed_in) = send(
+            Method::POST,
+            "/api/login".into(),
+            None,
+            json(serde_json::json!({
+                "address": "okapi-member@wombat-hall",
+                "login_key": login_key,
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let phone = signed_in.unwrap()["token"].as_str().unwrap().to_owned();
+        let wrong_key = b64(&[0x77; 32]);
+        let (status, _) = send(
+            Method::POST,
+            "/api/login".into(),
+            None,
+            json(serde_json::json!({
+                "address": "okapi-member@wombat-hall",
+                "login_key": wrong_key,
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, _) = send(
+            Method::POST,
+            "/api/name".into(),
+            Some(phone.clone()),
+            json(serde_json::json!({ "login_key": login_key, "name": "numbat-renamed" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let new_bundle = b64(b"New-Bundle-Ciphertext-Emu");
+        let (status, _) = send(
+            Method::POST,
+            "/api/password".into(),
+            Some(phone.clone()),
+            json(serde_json::json!({
+                "login_key": login_key,
+                "new": {
+                    "login_key": b64(&[0x5a; 32]),
+                    "salt": b64(b"New-Salt-Bilby-1"),
+                    "kdf": { "memory_kib": 19456, "iterations": 2 },
+                    "bundle": new_bundle,
+                },
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        send(
+            Method::GET,
+            "/api/bundle".into(),
+            Some(phone.clone()),
+            Body::empty(),
+        )
+        .await;
         let (_, pairing) = send(
             Method::POST,
             "/api/pairings".into(),
-            Some(token.clone()),
+            Some(library.clone()),
             Body::empty(),
         )
         .await;
@@ -643,24 +752,16 @@ async fn hub_secrets_and_publication_ids_are_never_logged() {
             json(serde_json::json!({ "secret": pairing })),
         )
         .await;
-        let phone = paired.unwrap()["token"].as_str().unwrap().to_owned();
-        let (status, _) = send(
-            Method::POST,
-            "/api/recover".into(),
-            None,
-            json(serde_json::json!({ "account": account, "secret": recovery.as_str() })),
-        )
-        .await;
-        assert_eq!(status, StatusCode::CREATED);
+        let owner_phone = paired.unwrap()["token"].as_str().unwrap().to_owned();
         let id = "5e".repeat(16);
-        let mut blob = vec![0, 1];
+        let mut blob = vec![0, 2, 0, 0];
         blob.extend_from_slice(&[0; 12]);
         blob.extend_from_slice(b"Blob-Body-Ciphertext");
         for path in ["manifest", "p/0"] {
             let (status, _) = send(
                 Method::PUT,
                 format!("/api/pub/{id}/{path}"),
-                Some(token.clone()),
+                Some(library.clone()),
                 Body::from(blob.clone()),
             )
             .await;
@@ -669,24 +770,38 @@ async fn hub_secrets_and_publication_ids_are_never_logged() {
         send(
             Method::GET,
             format!("/api/pub/{id}/manifest"),
-            Some(phone.clone()),
+            Some(token.clone()),
             Body::empty(),
         )
         .await;
-        let record = URL_SAFE_NO_PAD.encode(b"Record-Ciphertext");
+        let record = b64(b"Record-Ciphertext");
         send(
             Method::POST,
             "/api/sync".into(),
-            Some(phone.clone()),
+            Some(owner_phone.clone()),
             json(serde_json::json!({
                 "records": [{ "kind": "annotation", "id": "Record-Id-Okapi", "data": record }]
             })),
         )
         .await;
+        let app = app.clone();
+        let synced = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/sync?since=0")
+                    .header(header::HOST, "localhost:8743")
+                    .header(header::AUTHORIZATION, format!("Bearer {library}"))
+                    .header("x-shelfgauge-account", account.as_str())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(synced.status(), StatusCode::OK);
         send(
             Method::GET,
-            "/api/sync?since=0".into(),
-            Some(token.clone()),
+            "/api/library/accounts".into(),
+            Some(library.clone()),
             Body::empty(),
         )
         .await;
@@ -724,29 +839,54 @@ async fn hub_secrets_and_publication_ids_are_never_logged() {
         send(
             Method::DELETE,
             format!("/api/pub/{id}"),
-            Some(token.clone()),
+            Some(library.clone()),
             Body::empty(),
         )
         .await;
 
         let log = capture.text();
-        assert!(log.contains("account created"), "{log}");
-        assert!(log.contains("device paired"), "{log}");
-        assert!(log.contains("publication deleted"), "{log}");
+        for event in [
+            "library created",
+            "member invite created",
+            "invite redeemed",
+            "signed in",
+            "failed sign-in",
+            "name changed",
+            "password changed",
+            "device paired",
+            "publication deleted",
+        ] {
+            assert!(log.contains(event), "{event}: {log}");
+        }
         assert!(
             log.contains("/api/pub/{id}/{*blob}"),
             "route templates: {log}"
         );
+        assert!(log.contains("library"), "{log}");
         assert!(log.contains("account"), "{log}");
         let blob_text = String::from_utf8_lossy(&blob).into_owned();
         for secret in [
+            library.as_str(),
             token.as_str(),
             phone.as_str(),
+            owner_phone.as_str(),
             invite.as_str(),
+            invite_secret.as_str(),
+            invite_id.as_str(),
+            payload.as_str(),
             pairing.as_str(),
+            library_id.as_str(),
+            owner_id.as_str(),
             account.as_str(),
-            recovery.as_str(),
-            recovery_hash.as_str(),
+            login_key.as_str(),
+            wrong_key.as_str(),
+            salt.as_str(),
+            bundle.as_str(),
+            new_bundle.as_str(),
+            "wombat-hall",
+            "quokka-admin",
+            "okapi-member",
+            "numbat-renamed",
             name.as_str(),
             id.as_str(),
             "7a7a7a7a",
@@ -764,28 +904,22 @@ async fn hub_secrets_and_publication_ids_are_never_logged() {
 
 #[tokio::test]
 async fn hub_account_secrets_are_never_logged_by_the_library() {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use common::hub::{Lib, TestHub, pairing_link};
-    use shelfgauge::hub_client::keys::RecoveryCode;
 
     drop(Capture::default().dispatch("off", LogFormat::Text, false));
     for format in [LogFormat::Text, LogFormat::Json] {
         let hub = TestHub::start().await;
         let home = Lib::new(&hub.url, "Home library");
-        let office = Lib::new(&hub.url, "Office");
         let invite = hub.invite();
         let capture = Capture::default();
         let _log = tracing::dispatcher::set_default(&capture.dispatch("trace", format, false));
 
-        let code = home.register(&invite).await;
-        home.post("/profile/hub", &[("action", "saved")]).await;
+        home.create_library(&invite).await;
         let pair = home.post("/profile/hub", &[("action", "pair")]).await;
         let (pairing, key) = pairing_link(&pair.body, &hub.url);
-        let joined = office
-            .post("/profile/hub", &[("action", "join"), ("code", &code)])
-            .await;
-        assert_eq!(joined.status, StatusCode::SEE_OTHER);
         home.get("/profile/hub").await;
-        office.post("/profile/hub", &[("action", "leave")]).await;
         let book = home.book("book.txt");
         home.json(
             &format!("/book/{book}/annotations"),
@@ -798,42 +932,76 @@ async fn hub_account_secrets_are_never_logged_by_the_library() {
         let book_key = shelf[0].book_key.clone().unwrap();
         home.get(&format!("/book/{book}")).await;
         home.bookmark(book, "b3").await;
+        // An invite, a member redeeming it, a password reset, the owner's password.
+        let (member, secret, one_time) = home.invite_someone(&hub, "Grandma").await;
+        let redeemed = hub.redeem(&secret, &one_time, "grandma-okapi").await;
+        home.sync().await;
+        let (reset, reset_key) = home.invite_link(&hub, member, "reset").await;
+        let password = "Correct-Horse-Wombat-77";
+        let set = home
+            .post(
+                "/profile/hub",
+                &[
+                    ("action", "password"),
+                    ("password", password),
+                    ("repeat", password),
+                ],
+            )
+            .await;
+        assert_eq!(set.status, StatusCode::SEE_OTHER, "{}", set.body);
+        home.post("/profile/hub", &[("action", "rotate")]).await;
         home.sync().await;
         assert_eq!(home.shelf_action(book, "remove").await, "removed");
 
-        let account = home.account().unwrap();
-        let parsed = RecoveryCode::parse(&code).unwrap();
-        let log = capture.text();
-        assert!(log.contains("hub account registered"), "{log}");
-        assert!(log.contains("hub account joined"), "{log}");
-        assert!(log.contains("book published to the hub"), "{log}");
-        assert!(log.contains("synced with the hub"), "{log}");
-        let digits = code.replace('-', "");
-        let key_b64 = {
-            use base64::Engine as _;
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(book_key.as_bytes())
+        let library = home.hub_library();
+        let keys = {
+            let conn = home.userdata.lock();
+            shelfgauge::hub_client::store::library_keys(&conn).unwrap()
         };
-        let key_hex: String = book_key
-            .as_bytes()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
-        for secret in [
-            code.as_str(),
-            &digits[3..40],
-            account.token.as_str(),
-            &key,
-            &pairing,
-            parsed.secret().as_str(),
-            &account.account.to_string(),
-            &invite,
-            &publication,
-            &key_b64,
-            &key_hex,
+        let owner = home.account().unwrap();
+        let log = capture.text();
+        for event in [
+            "library created on the hub",
+            "book published to the hub",
+            "hub invite created",
+            "hub owner password set",
+            "library key changed",
+            "synced with the hub",
         ] {
+            assert!(log.contains(event), "{event}: {log}");
+        }
+        let b64 = |b: &[u8]| URL_SAFE_NO_PAD.encode(b);
+        let hex = |b: &[u8]| b.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let mut secrets = vec![
+            library.token.as_str().to_owned(),
+            library.library_id.to_string(),
+            owner.account.unwrap().to_string(),
+            b64(owner.key.as_bytes()),
+            key.clone(),
+            pairing.clone(),
+            invite.clone(),
+            secret.clone(),
+            b64(one_time.as_bytes()),
+            reset.clone(),
+            b64(reset_key.as_bytes()),
+            redeemed.account.clone(),
+            redeemed.payload.account_key.clone(),
+            publication.clone(),
+            b64(book_key.as_bytes()),
+            hex(book_key.as_bytes()),
+            password.to_owned(),
+            "grandma-okapi".to_owned(),
+            "home".to_owned() + "@",
+            "@home".to_owned(),
+        ];
+        for (_, key) in &keys {
+            secrets.push(b64(key.as_bytes()));
+            secrets.push(hex(key.as_bytes()));
+        }
+        for secret in &secrets {
             assert!(
-                !log.contains(secret),
-                "{format:?} log contains a secret:\n{log}"
+                !log.contains(secret.as_str()),
+                "{format:?} log contains {secret:?}:\n{log}"
             );
         }
     }

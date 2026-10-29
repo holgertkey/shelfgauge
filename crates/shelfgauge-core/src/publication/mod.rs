@@ -20,11 +20,16 @@
 //!    say little about the book;
 //! 3. encrypted with AES-256-GCM under the publication's book key, a random 96-bit
 //!    nonce and the [`associated_data`] of the blob (format version, publication id,
-//!    blob path), so blobs cannot be swapped between positions or publications;
-//! 4. wrapped as `[format version: u16 BE][nonce: 12 bytes][ciphertext and 16-byte tag]`
-//!    ([`Envelope`]): the version is readable before decrypting, so a reader refuses
-//!    an unknown one with a clear error, and it is authenticated through the
-//!    associated data.
+//!    blob path, plaintext header), so blobs cannot be swapped between positions or
+//!    publications and the header cannot be changed;
+//! 4. wrapped as `[format version: u16 BE][header length: u16 BE][header][nonce: 12
+//!    bytes][ciphertext and 16-byte tag]` ([`Envelope`]): the version is readable
+//!    before decrypting, so a reader refuses an unknown one with a clear error, and it
+//!    is authenticated through the associated data.
+//!
+//! Only the manifest has a header ([`KeyHeader`], JSON): which library published it
+//! and its book key sealed under that library's key, so any member's device opens the
+//! book from its link or file alone. Parts and images have an empty header.
 //!
 //! Opening reverses this: [`Envelope::parse`], decrypt, [`unpad`], inflate, then
 //! [`Manifest::decode`] or [`PartBlob::decode`]. The data is untrusted (any account
@@ -47,11 +52,16 @@ use std::str::FromStr;
 pub use manifest::{ImageInfo, Manifest, PartInfo};
 pub use part::{PartBlob, PartBody, assemble};
 
-/// The publication format version this crate writes.
-pub const FORMAT_VERSION: u16 = 1;
+/// The publication format version this crate writes. Version 2 (shelfgauge 0.21) added
+/// the plaintext header; version 1 is not read any more (its book keys were sealed
+/// under accounts that no longer exist).
+pub const FORMAT_VERSION: u16 = 2;
 
 /// The format versions this crate reads.
-pub const SUPPORTED_VERSIONS: VersionRange = VersionRange { min: 1, max: 1 };
+pub const SUPPORTED_VERSIONS: VersionRange = VersionRange { min: 2, max: 2 };
+
+/// The largest plaintext header of a blob.
+pub const MAX_HEADER_LEN: usize = 4096;
 
 /// An inclusive range of format versions (what a hub advertises in `/api/info`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -240,25 +250,82 @@ impl FromStr for BlobPath {
 }
 
 /// The AES-GCM associated data of a blob: `[version: u16 BE][publication id: 16
-/// bytes][path: UTF-8, e.g. "p/3"]`. Only the last field has a variable length.
+/// bytes][path: UTF-8, e.g. "p/3"][0][header]`. The zero byte ends the path, so path
+/// and header cannot be shifted into each other.
 ///
 /// # Examples
 ///
 /// ```
 /// use shelfgauge_core::publication::{BlobPath, PublicationId, associated_data};
 ///
-/// let ad = associated_data(1, &PublicationId::new([7; 16]), BlobPath::Part(3));
-/// assert_eq!(&ad[..2], &[0, 1]);
+/// let ad = associated_data(2, &PublicationId::new([7; 16]), BlobPath::Part(3), b"");
+/// assert_eq!(&ad[..2], &[0, 2]);
 /// assert_eq!(&ad[2..18], &[7; 16]);
-/// assert_eq!(&ad[18..], b"p/3");
+/// assert_eq!(&ad[18..], b"p/3\0");
 /// ```
-pub fn associated_data(version: u16, id: &PublicationId, path: BlobPath) -> Vec<u8> {
+pub fn associated_data(version: u16, id: &PublicationId, path: BlobPath, header: &[u8]) -> Vec<u8> {
     let path = path.to_string();
-    let mut ad = Vec::with_capacity(2 + 16 + path.len());
+    let mut ad = Vec::with_capacity(2 + 16 + path.len() + 1 + header.len());
     ad.extend_from_slice(&version.to_be_bytes());
     ad.extend_from_slice(id.as_bytes());
     ad.extend_from_slice(path.as_bytes());
+    ad.push(0);
+    ad.extend_from_slice(header);
     ad
+}
+
+/// The key scope of a library's own key ([`KeyHeader::key_scope`]).
+pub const LIBRARY_SCOPE: &str = "library";
+
+/// The plaintext header of a manifest: who published the book and its book key
+/// sealed under the publishing library's key. Untrusted until the manifest decrypts
+/// (it is authenticated as associated data).
+///
+/// `key_scope` names whose key sealed `book_key` (`library`; circles of libraries
+/// will add their own scope), `key_owner` that library or circle, and `key_id` the
+/// generation of its key. A reader that does not know the scope says a newer
+/// shelfgauge is needed.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct KeyHeader {
+    /// The public id of the publishing library, hex.
+    pub library: String,
+    /// Whose key sealed the book key: [`LIBRARY_SCOPE`].
+    pub key_scope: String,
+    /// The public id of the key's owner (the library for [`LIBRARY_SCOPE`]), hex.
+    pub key_owner: String,
+    /// The generation of the owner's key.
+    pub key_id: u32,
+    /// The book key sealed as a record of kind `book_key` (id: the publication id in
+    /// hex) under that key, base64url.
+    pub book_key: String,
+}
+
+impl KeyHeader {
+    /// The header's bytes (compact JSON).
+    pub fn encode(&self) -> Vec<u8> {
+        serde_json::to_vec(self).expect("a key header always serializes")
+    }
+
+    /// Decodes a header; any other JSON is malformed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use shelfgauge_core::publication::{KeyHeader, LIBRARY_SCOPE};
+    ///
+    /// let header = KeyHeader {
+    ///     library: "ab".repeat(16),
+    ///     key_scope: LIBRARY_SCOPE.into(),
+    ///     key_owner: "ab".repeat(16),
+    ///     key_id: 1,
+    ///     book_key: "c2VhbGVk".into(),
+    /// };
+    /// assert_eq!(KeyHeader::decode(&header.encode()).unwrap(), header);
+    /// assert!(KeyHeader::decode(b"{}").is_err());
+    /// ```
+    pub fn decode(bytes: &[u8]) -> Result<Self, FormatError> {
+        serde_json::from_slice(bytes).map_err(|e| FormatError::Malformed(e.to_string()))
+    }
 }
 
 /// The length of an AES-GCM nonce.
@@ -267,14 +334,18 @@ pub const NONCE_LEN: usize = 12;
 /// The length of an AES-GCM tag (at the end of the ciphertext).
 pub const TAG_LEN: usize = 16;
 
-/// The length of the envelope header: the version and the nonce.
-pub const HEADER_LEN: usize = 2 + NONCE_LEN;
+/// The length of the envelope's framing around an empty header: the version, the
+/// header length and the nonce.
+pub const HEADER_LEN: usize = 2 + 2 + NONCE_LEN;
 
-/// A sealed blob taken apart: `[version: u16 BE][nonce][ciphertext and tag]`.
+/// A sealed blob taken apart: `[version: u16 BE][header length: u16 BE][header]
+/// [nonce][ciphertext and tag]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Envelope<'a> {
     /// The format version the blob was written in.
     pub version: u16,
+    /// The plaintext header (empty but for a manifest).
+    pub header: &'a [u8],
     /// The AES-GCM nonce.
     pub nonce: &'a [u8; NONCE_LEN],
     /// The ciphertext followed by the tag.
@@ -283,7 +354,8 @@ pub struct Envelope<'a> {
 
 impl<'a> Envelope<'a> {
     /// Takes `blob` apart; fails for an unsupported version before anything else is
-    /// looked at, and for a blob too short to hold a tag.
+    /// looked at, for a header longer than [`MAX_HEADER_LEN`] and for a blob too short
+    /// to hold a tag.
     ///
     /// # Examples
     ///
@@ -309,21 +381,42 @@ impl<'a> Envelope<'a> {
                 supported: SUPPORTED_VERSIONS,
             });
         }
-        if blob.len() < HEADER_LEN + TAG_LEN {
+        let header_len = usize::from(u16::from_be_bytes(
+            blob.get(2..4)
+                .ok_or(FormatError::Truncated)?
+                .try_into()
+                .expect("two bytes"),
+        ));
+        if header_len > MAX_HEADER_LEN {
+            return Err(FormatError::Malformed("the header is too long".into()));
+        }
+        if blob.len() < HEADER_LEN + header_len + TAG_LEN {
             return Err(FormatError::Truncated);
         }
-        let (header, ciphertext) = blob.split_at(HEADER_LEN);
+        let (header, rest) = blob[4..].split_at(header_len);
+        let (nonce, ciphertext) = rest.split_at(NONCE_LEN);
         Ok(Self {
             version,
-            nonce: header[2..].try_into().expect("nonce length"),
+            header,
+            nonce: nonce.try_into().expect("nonce length"),
             ciphertext,
         })
     }
 
     /// The blob's bytes.
+    ///
+    /// # Panics
+    ///
+    /// If the header is longer than [`MAX_HEADER_LEN`].
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut blob = Vec::with_capacity(HEADER_LEN + self.ciphertext.len());
+        assert!(
+            self.header.len() <= MAX_HEADER_LEN,
+            "the header is too long"
+        );
+        let mut blob = Vec::with_capacity(HEADER_LEN + self.header.len() + self.ciphertext.len());
         blob.extend_from_slice(&self.version.to_be_bytes());
+        blob.extend_from_slice(&(self.header.len() as u16).to_be_bytes());
+        blob.extend_from_slice(self.header);
         blob.extend_from_slice(self.nonce);
         blob.extend_from_slice(self.ciphertext);
         blob
@@ -450,38 +543,63 @@ mod tests {
     fn envelopes_round_trip_and_refuse_short_or_unknown_blobs() {
         let nonce = [3u8; NONCE_LEN];
         let ciphertext = [9u8; 40];
+        for header in [&b""[..], b"{\"library\":\"x\"}"] {
+            let blob = Envelope {
+                version: FORMAT_VERSION,
+                header,
+                nonce: &nonce,
+                ciphertext: &ciphertext,
+            }
+            .to_bytes();
+            assert_eq!(&blob[..2], &FORMAT_VERSION.to_be_bytes());
+            assert_eq!(&blob[2..4], &(header.len() as u16).to_be_bytes());
+            let envelope = Envelope::parse(&blob).unwrap();
+            assert_eq!(envelope.header, header);
+            assert_eq!(envelope.nonce, &nonce);
+            assert_eq!(envelope.ciphertext, &ciphertext);
+            assert_eq!(
+                Envelope::parse(&blob[..HEADER_LEN + header.len() + TAG_LEN - 1]),
+                Err(FormatError::Truncated)
+            );
+        }
         let blob = Envelope {
             version: FORMAT_VERSION,
+            header: b"",
             nonce: &nonce,
             ciphertext: &ciphertext,
         }
         .to_bytes();
-        assert_eq!(&blob[..2], &FORMAT_VERSION.to_be_bytes());
-        let envelope = Envelope::parse(&blob).unwrap();
-        assert_eq!(envelope.nonce, &nonce);
-        assert_eq!(envelope.ciphertext, &ciphertext);
 
         assert_eq!(Envelope::parse(&[]), Err(FormatError::Truncated));
-        assert_eq!(
-            Envelope::parse(&blob[..HEADER_LEN + TAG_LEN - 1]),
-            Err(FormatError::Truncated)
-        );
+        assert_eq!(Envelope::parse(&[0, 2, 0]), Err(FormatError::Truncated));
+        let mut long = blob.clone();
+        long[2..4].copy_from_slice(&(MAX_HEADER_LEN as u16 + 1).to_be_bytes());
+        assert!(matches!(
+            Envelope::parse(&long),
+            Err(FormatError::Malformed(_))
+        ));
         let mut future = blob.clone();
-        future[..2].copy_from_slice(&2u16.to_be_bytes());
+        future[..2].copy_from_slice(&3u16.to_be_bytes());
         let error = Envelope::parse(&future).unwrap_err();
         assert_eq!(
             error,
             FormatError::UnsupportedVersion {
-                found: 2,
+                found: 3,
                 supported: SUPPORTED_VERSIONS
             }
         );
         assert!(
             error
                 .to_string()
-                .contains("version 2 is not supported (supported: 1)"),
+                .contains("version 3 is not supported (supported: 2)"),
             "{error}"
         );
+        // Version 1 (0.17–0.20) is not read any more.
+        future[..2].copy_from_slice(&1u16.to_be_bytes());
+        assert!(matches!(
+            Envelope::parse(&future),
+            Err(FormatError::UnsupportedVersion { found: 1, .. })
+        ));
         future[..2].copy_from_slice(&0u16.to_be_bytes());
         assert!(matches!(
             Envelope::parse(&future),

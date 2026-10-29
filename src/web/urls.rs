@@ -405,8 +405,9 @@ impl Urls {
         self.path("/profile")
     }
 
-    /// The current profile's hub account: Phone and other devices (`GET`; `POST`
-    /// registers, joins, pairs, revokes or leaves).
+    /// The library on its hub and the current profile's account in it (`GET`; `POST`
+    /// creates the library, syncs, pairs the owner's phone, removes a device, changes
+    /// the owner's name or hub password, deletes the library on the hub).
     pub fn profile_hub(&self) -> String {
         self.path("/profile/hub")
     }
@@ -414,11 +415,6 @@ impl Urls {
     /// A book's place on the hub shelf (`POST`: publish or remove).
     pub fn book_hub(&self, id: i64) -> String {
         self.path(&format!("/book/{id}/hub"))
-    }
-
-    /// The current profile's recovery code while it waits for "I saved it" (`GET`).
-    pub fn profile_hub_recovery(&self) -> String {
-        self.path("/profile/hub/recovery")
     }
 
     /// Saves the current profile's theme and reader settings (`POST`, JSON).

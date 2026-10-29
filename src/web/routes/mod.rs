@@ -22,6 +22,7 @@ pub(crate) mod find;
 pub(crate) mod hub;
 pub(crate) mod library;
 pub(crate) mod login;
+pub(crate) mod members;
 pub(crate) mod profiles;
 pub(crate) mod read;
 pub(crate) mod scan;

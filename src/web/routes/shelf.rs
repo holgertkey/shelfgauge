@@ -1,10 +1,12 @@
-//! A book on the profile's hub shelf (concept §11): "Open on phone" on the book card
-//! publishes it (build, seal, upload, push the shelf item with the book's annotations
-//! and position), "Remove from shelf" deletes the publication and the book's records
-//! on the hub (local data stays), an expired publication can be published again.
-//! "Download book file" exports the book as a `.sgbook` file (concept §11 "Book
-//! files"): always a new publication, nothing uploaded; a book not yet on the shelf
-//! goes on it as a `file` item.
+//! A book on the profile's hub shelf (concept §11, Phase 30): "Read on phone" on the
+//! book card publishes it for the library (build, seal with the book key in the
+//! manifest's header under the current library key, upload with the library's token,
+//! push the shelf item with the book's annotations and position), "Remove from shelf"
+//! deletes the publication and the book's records on the hub (local data stays), an
+//! expired publication can be published again. "Download book file" exports the book
+//! as a `.sgbook` file (concept §11 "Book files"): always a new publication, nothing
+//! uploaded; a book not yet on the shelf goes on it as a `file` item. Only admins
+//! publish: a `reader` profile's card has none of this.
 //!
 //! Publication ids and book keys are never logged; only profile and book ids.
 
@@ -19,8 +21,10 @@ use super::parse_id;
 use crate::annotations::now;
 use crate::cache::covers;
 use crate::format::model::Image;
-use crate::hub_client::book_file::{self, FileKeys};
-use crate::hub_client::store::{self, HubAccount, ShelfEntry, ShelfKind, ShelfState};
+use crate::hub_client::book_file;
+use crate::hub_client::keys;
+use crate::hub_client::store::{self, HubAccount, HubLibrary, ShelfEntry, ShelfKind, ShelfState};
+use crate::hub_client::sync::Target;
 use crate::hub_client::{ClientError, HubClient, sync};
 use crate::profiles::ProfileId;
 use crate::publication::{self, BookInfo, BookKey, Publication, generate_publication_id};
@@ -41,22 +45,27 @@ pub(crate) struct ShelfView {
     pub(crate) action: String,
 }
 
-/// What the book card shows about the shelf: `None` without a hub account.
+/// What the book card shows about the shelf: `None` for a profile that is not an
+/// admin, and while the library is not on the hub or the profile has no account there.
 pub(crate) fn view(
     state: &AppState,
     profile: ProfileId,
+    admin: bool,
     book: &BookDetails,
     readable: bool,
 ) -> Result<Option<ShelfView>, AppError> {
-    let Some(key) = content_key(book) else {
+    let Some(key) = content_key(book).filter(|_| admin) else {
         return Ok(None);
     };
-    let (account, entry) = {
+    let (library, entry) = {
         let conn = state.userdata().lock();
-        let Some(account) = store::account(&conn, profile)? else {
+        let Some(library) = store::library(&conn)? else {
             return Ok(None);
         };
-        (account, store::shelf_entry(&conn, profile, &key)?)
+        if !store::account(&conn, profile)?.is_some_and(|a| a.on_hub()) {
+            return Ok(None);
+        }
+        (library, store::shelf_entry(&conn, profile, &key)?)
     };
     let action = state.urls().book_hub(book.id);
     let (state_name, other, link) = match &entry {
@@ -66,7 +75,7 @@ pub(crate) fn view(
         Some(entry) => {
             let link = match (entry.state, entry.publication) {
                 (ShelfState::Published, Some(id)) if entry.kind == ShelfKind::Upload => {
-                    let link = account.hub_url.book_link(&id);
+                    let link = library.hub_url.book_link(&id);
                     qr::svg(&link, "QR code of the book link").map(|svg| (link, svg))
                 }
                 _ => None,
@@ -95,7 +104,8 @@ pub(crate) fn notice(code: &str) -> Option<(&'static str, &'static str)> {
     Some(match code {
         "published" => (
             "ok",
-            "The book is on your shelf: open it on a paired phone or other device.",
+            "The book is on your shelf: scan the code with your phone, or send the link to \
+             anyone in the library.",
         ),
         "removed" => (
             "ok",
@@ -112,7 +122,7 @@ pub(crate) fn notice(code: &str) -> Option<(&'static str, &'static str)> {
             "The book is being uploaded; reload this page in a moment.",
         ),
         "unreachable" => ("error", "The hub cannot be reached; try again later."),
-        "quota" => ("error", "The hub refused: your account's quota is used up."),
+        "quota" => ("error", "The hub refused: the library's quota is used up."),
         "too-large" => (
             "error",
             "A part or an image of this book is larger than the hub accepts.",
@@ -123,8 +133,8 @@ pub(crate) fn notice(code: &str) -> Option<(&'static str, &'static str)> {
         ),
         "unpaired" => (
             "error",
-            "This library is no longer paired with your hub account; see My profile → \
-             Phone and other devices.",
+            "The hub no longer knows this library; see My profile → Phone and reading \
+             through the hub.",
         ),
         "protected" => ("error", "Books protected by DRM never leave this library."),
         "failed" => ("error", "Publishing failed; the log has the reason."),
@@ -162,16 +172,23 @@ pub(crate) async fn save(
     let Form(form) = form.map_err(|e| AppError::BadRequest(e.body_text()))?;
     let id = parse_id(&id)?;
     let profile = current.id();
+    if !current.is_admin() {
+        return Err(AppError::Forbidden);
+    }
+    let library = super::hub::hub_library(&state)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("the library is not on the hub".to_owned()))?;
     let account = super::hub::hub_account(&state, profile)
         .await?
+        .filter(HubAccount::on_hub)
         .ok_or_else(|| AppError::BadRequest("this profile has no hub account".to_owned()))?;
     let code = match form.action.as_str() {
-        "export" => match export(&state, account, id).await? {
+        "export" => match export(&state, library, account, id).await? {
             Ok(file) => return Ok(file),
             Err(code) => code,
         },
-        "publish" => publish(&state, account, id).await?,
-        "remove" => remove(&state, account, id).await?,
+        "publish" => publish(&state, library, account, id).await?,
+        "remove" => remove(&state, library, account, id).await?,
         _ => return Err(AppError::BadRequest("unknown action".to_owned())),
     };
     Ok(Redirect::to(&format!("{}?hub={code}#shelf", state.urls().book(id))).into_response())
@@ -208,7 +225,12 @@ async fn build(state: &AppState, id: i64) -> Result<Option<(BookInfo, Publicatio
         .await
 }
 
-async fn publish(state: &AppState, account: HubAccount, id: i64) -> Result<&'static str, AppError> {
+async fn publish(
+    state: &AppState,
+    library: HubLibrary,
+    account: HubAccount,
+    id: i64,
+) -> Result<&'static str, AppError> {
     let profile = account.profile;
     let Some((info, publication)) = build(state, id).await? else {
         return Ok("protected");
@@ -226,10 +248,11 @@ async fn publish(state: &AppState, account: HubAccount, id: i64) -> Result<&'sta
     }
     let instance = super::hub::instance_name(state);
     let userdata = state.userdata_handle();
-    let url = account.hub_url.clone();
+    let url = library.hub_url.clone();
     let code = call(url, move |client| {
         Ok(upload(
             &userdata,
+            &library,
             &account,
             client,
             &info,
@@ -253,6 +276,7 @@ async fn publish(state: &AppState, account: HubAccount, id: i64) -> Result<&'sta
 /// `hub` code of the outcome. Runs blocking HTTP.
 fn upload(
     userdata: &crate::annotations::store::UserData,
+    library: &HubLibrary,
     account: &HubAccount,
     client: &HubClient,
     info: &BookInfo,
@@ -260,6 +284,9 @@ fn upload(
     instance: &str,
 ) -> &'static str {
     let profile = account.profile;
+    let Some(target) = Target::of(library, account) else {
+        return "failed";
+    };
     let hub = match client.info() {
         Ok(hub) => hub,
         Err(e) => return failure(&e),
@@ -270,7 +297,23 @@ fn upload(
     let (Ok(pub_id), Ok(key)) = (generate_publication_id(), BookKey::generate()) else {
         return "failed";
     };
-    let Ok(sealed) = publication.seal(&pub_id, &key) else {
+    let header = match store::current_library_key(&userdata.lock()) {
+        Ok(Some((key_id, library_key))) => {
+            keys::key_header(&library.library_id, key_id, &library_key, &pub_id, &key)
+        }
+        Ok(None) => {
+            tracing::error!("the library has no key");
+            return "failed";
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "cannot read the library key");
+            return "failed";
+        }
+    };
+    let Ok(header) = header else {
+        return "failed";
+    };
+    let Ok(sealed) = publication.seal(&pub_id, &key, &header) else {
         return "failed";
     };
     if sealed
@@ -309,7 +352,7 @@ fn upload(
     if let Some(old) = previous.as_ref().and_then(|p| {
         p.publication
             .filter(|_| p.own && p.kind == ShelfKind::Upload)
-    }) && let Err(e) = client.delete_publication(&account.token, &old)
+    }) && let Err(e) = client.delete_publication(&library.token, &old)
     {
         tracing::info!(error = %e, "the hub did not delete an earlier copy");
     }
@@ -317,9 +360,9 @@ fn upload(
     let mut blobs = sealed;
     blobs.rotate_left(1);
     for (path, blob) in &blobs {
-        if let Err(e) = client.put_blob(&account.token, &pub_id, *path, blob) {
+        if let Err(e) = client.put_blob(&library.token, &pub_id, *path, blob) {
             tracing::info!(profile = profile.0, error = %e, "publishing failed");
-            if let Err(e) = client.delete_publication(&account.token, &pub_id) {
+            if let Err(e) = client.delete_publication(&library.token, &pub_id) {
                 tracing::info!(error = %e, "the hub did not delete the partial copy");
             }
             restore(userdata, profile, &info.content_key, previous.as_ref());
@@ -341,7 +384,7 @@ fn upload(
             return "failed";
         }
     }
-    if let Err(e) = sync::push(userdata, account, client) {
+    if let Err(e) = sync::push(userdata, target, account, client) {
         // The worker pushes the rest later.
         tracing::info!(profile = profile.0, error = %e, "push after publishing failed");
     }
@@ -366,13 +409,14 @@ fn restore(
     }
 }
 
-/// Exports library book `id` as a book file: a new publication sealed for the account,
-/// with a snapshot of the book's records. A book not on the shelf (or being taken
+/// Exports library book `id` as a book file: a new publication sealed under the
+/// current library key, with a snapshot of the profile's records of the book. A book not on the shelf (or being taken
 /// off it) goes on it as a `file` item, a `file` item points to the newest file; an
 /// uploaded book's shelf item stays as it is. Nothing is sent to the hub here (the
 /// shelf item and records go out with the next push).
 async fn export(
     state: &AppState,
+    library: HubLibrary,
     account: HubAccount,
     id: i64,
 ) -> Result<Result<Response, &'static str>, AppError> {
@@ -385,7 +429,11 @@ async fn export(
     let made = blocking(move || -> Result<(Vec<u8>, String), AppError> {
         let pub_id = generate_publication_id().map_err(random)?;
         let key = BookKey::generate().map_err(random)?;
-        let sealed = publication.seal(&pub_id, &key).map_err(random)?;
+        let (key_id, library_key) = store::current_library_key(&userdata.lock())?
+            .ok_or_else(|| AppError::Internal("the library has no key".to_owned()))?;
+        let header = keys::key_header(&library.library_id, key_id, &library_key, &pub_id, &key)
+            .map_err(random)?;
+        let sealed = publication.seal(&pub_id, &key, &header).map_err(random)?;
         let snapshot = {
             let conn = userdata.lock();
             let entry = store::shelf_entry(&conn, profile, &info.content_key)?;
@@ -421,19 +469,17 @@ async fn export(
                 }
             })?
         };
-        let keys = FileKeys {
-            account: account.account,
-            key: &account.key,
-            key_id: account.key_id,
-        };
+        let account_id = account
+            .account
+            .ok_or_else(|| AppError::Internal("the account has no id".to_owned()))?;
         let sg = book_file::sg_json(
-            keys,
+            &library.library_id,
+            key_id,
+            &account_id,
             &pub_id,
-            &key,
             publication.manifest.format_version,
             snapshot,
-        )
-        .map_err(random)?;
+        );
         let name = book_file::file_name(&info.title, &info.authors.join(", "));
         Ok((book_file::write(&sg, &sealed), name))
     })
@@ -493,7 +539,12 @@ fn attachment(name: &str) -> HeaderValue {
     .expect("only visible ASCII")
 }
 
-async fn remove(state: &AppState, account: HubAccount, id: i64) -> Result<&'static str, AppError> {
+async fn remove(
+    state: &AppState,
+    library: HubLibrary,
+    account: HubAccount,
+    id: i64,
+) -> Result<&'static str, AppError> {
     let profile = account.profile;
     let key = state
         .db(move |conn| {
@@ -509,8 +560,9 @@ async fn remove(state: &AppState, account: HubAccount, id: i64) -> Result<&'stat
         entry
     };
     let userdata = state.userdata_handle();
-    let done = call(account.hub_url.clone(), move |client| {
-        Ok(sync::take_down(&userdata, &account, client, &entry))
+    let done = call(library.hub_url.clone(), move |client| {
+        Ok(Target::of(&library, &account)
+            .is_some_and(|target| sync::take_down(&userdata, target, &account, client, &entry)))
     })
     .await?
     .unwrap_or(false);

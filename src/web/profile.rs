@@ -125,7 +125,7 @@ pub(crate) fn resolve(
     remote: bool,
 ) -> Result<Option<CurrentProfile>, AppError> {
     let conn = state.userdata().lock();
-    let count = store::count(&conn)?;
+    let count = store::count_local(&conn)?;
     if count <= 1 && !remote {
         let owner = store::get(&conn, ProfileId::OWNER)?
             .ok_or_else(|| AppError::Internal("the owner profile is missing".into()))?;

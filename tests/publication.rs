@@ -7,6 +7,8 @@ mod common;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use shelfgauge::annotations::text::{BookText, rendered_text};
 use shelfgauge::config::{ReaderConfig, SplitMode};
 use shelfgauge::format::epub::EpubParser;
@@ -16,8 +18,8 @@ use shelfgauge::format::model::{BlockId, BookContent, Image};
 use shelfgauge::format::txt::TxtParser;
 use shelfgauge::format::{BookParser, run_with_parser_stack};
 use shelfgauge::publication::format::{
-    BlobPath, Envelope, FormatError, HEADER_LEN, Manifest, PartBlob, PublicationId, TAG_LEN,
-    assemble, bucket, pad,
+    BlobPath, Envelope, FORMAT_VERSION, FormatError, HEADER_LEN, KeyHeader, LIBRARY_SCOPE,
+    Manifest, PartBlob, PublicationId, TAG_LEN, assemble, bucket, pad,
 };
 use shelfgauge::publication::{
     BookInfo, BookKey, OpenError, PublishError, build, compress, encrypt_padded, inflate, open,
@@ -125,7 +127,7 @@ fn round_trip(
 ) -> (Manifest, Vec<PartBlob>, Vec<Vec<u8>>) {
     let publication = build(&info(), content, cover, config).unwrap();
     let key = BookKey::generate().unwrap();
-    let sealed = publication.seal(&id(), &key).unwrap();
+    let sealed = publication.seal(&id(), &key, &[]).unwrap();
     let opened: BTreeMap<String, Vec<u8>> = sealed
         .iter()
         .map(|(path, blob)| {
@@ -397,7 +399,7 @@ fn blobs_open_only_with_their_key_publication_and_path() {
     let (_, content, cover) = &books[0];
     let publication = build(&info(), content, cover.as_ref(), &ReaderConfig::default()).unwrap();
     let key = BookKey::generate().unwrap();
-    let sealed = publication.seal(&id(), &key).unwrap();
+    let sealed = publication.seal(&id(), &key, &[]).unwrap();
     let (path, blob) = &sealed[1];
     assert_eq!(*path, BlobPath::Part(0));
     assert!(open(&id(), &key, *path, blob, LIMIT).is_ok());
@@ -458,8 +460,8 @@ fn each_seal_uses_a_fresh_nonce() {
     let (_, content, cover) = &books[0];
     let publication = build(&info(), content, cover.as_ref(), &ReaderConfig::default()).unwrap();
     let key = BookKey::generate().unwrap();
-    let a = publication.seal(&id(), &key).unwrap();
-    let b = publication.seal(&id(), &key).unwrap();
+    let a = publication.seal(&id(), &key, &[]).unwrap();
+    let b = publication.seal(&id(), &key, &[]).unwrap();
     for ((_, a), (_, b)) in a.iter().zip(&b) {
         assert_ne!(
             Envelope::parse(a).unwrap().nonce,
@@ -495,7 +497,7 @@ fn sealed_blobs_are_padded_to_a_bucket() {
         let publication = build(&info(), content, cover.as_ref(), &config).unwrap();
         let key = BookKey::generate().unwrap();
         for ((path, blob), (_, plain)) in publication
-            .seal(&id(), &key)
+            .seal(&id(), &key, &[])
             .unwrap()
             .iter()
             .zip(publication.blobs())
@@ -550,17 +552,20 @@ fn encryption_vector_is_stable() {
     let path = BlobPath::Part(3);
     let nonce: [u8; 12] = std::array::from_fn(|i| 0xa0 + i as u8);
     let padded = pad(b"shelfgauge publication vector: \xd0\xba\xd0\xbd\xd0\xb8\xd0\xb3\xd0\xb0");
-    let blob = encrypt_padded(&id, &key, path, &padded, nonce);
+    // Any blob may carry a header; only manifests do (see `publication.json`).
+    let header = br#"{"header":"authenticated, not encrypted"}"#;
+    let blob = encrypt_padded(&id, &key, path, header, &padded, nonce);
     check_vector(
         "encryption.json",
         &serde_json::json!({
-            "description": "AES-256-GCM of a padded blob: blob = version u16 BE || nonce || ciphertext || tag; associated data = version u16 BE || publication id || path (UTF-8)",
+            "description": "AES-256-GCM of a padded blob: blob = version u16 BE || header length u16 BE || header || nonce || ciphertext || tag; associated data = version u16 BE || publication id || path (UTF-8) || 0 || header",
             "key": hex(key.as_bytes()),
             "publication_id": id.to_string(),
             "path": path.to_string(),
-            "format_version": 1,
+            "format_version": FORMAT_VERSION,
+            "header": hex(header),
             "nonce": hex(&nonce),
-            "associated_data": hex(&shelfgauge::publication::format::associated_data(1, &id, path)),
+            "associated_data": hex(&shelfgauge::publication::format::associated_data(FORMAT_VERSION, &id, path, header)),
             "padded_plaintext": hex(&padded),
             "blob": hex(&blob),
         }),
@@ -613,6 +618,24 @@ fn a_whole_sealed_publication_vector_opens() {
     });
     let key = BookKey::new([0x42; 32]);
     let id: PublicationId = "ffeeddccbbaa99887766554433221100".parse().unwrap();
+    // The manifest's header: the book key sealed under generation 3 of the key of
+    // library `0f…0f` (a record of kind `book_key`, id = the publication id).
+    let library_key = shelfgauge::hub_client::keys::AccountKey::new([0x24; 32]);
+    let sealed_key = shelfgauge::hub_client::keys::encrypt_record(
+        &library_key,
+        "book_key",
+        &id.to_string(),
+        key.as_bytes(),
+        [0x5c; 12],
+    );
+    let header = KeyHeader {
+        library: "0f".repeat(16),
+        key_scope: LIBRARY_SCOPE.into(),
+        key_owner: "0f".repeat(16),
+        key_id: 3,
+        book_key: URL_SAFE_NO_PAD.encode(&sealed_key),
+    }
+    .encode();
     let publication = build(&info(), &content, None, &ReaderConfig::default()).unwrap();
     let path = vectors_dir().join("publication.json");
     if std::env::var_os("SHELFGAUGE_WRITE_VECTORS").is_some() {
@@ -622,15 +645,21 @@ fn a_whole_sealed_publication_vector_opens() {
             .enumerate()
             .map(|(n, (path, plain))| {
                 let nonce: [u8; 12] = std::array::from_fn(|i| (n * 16 + i) as u8);
-                let blob = encrypt_padded(&id, &key, path, &pad(&compress(&plain)), nonce);
+                let header = if path == BlobPath::Manifest {
+                    &header[..]
+                } else {
+                    &[]
+                };
+                let blob = encrypt_padded(&id, &key, path, header, &pad(&compress(&plain)), nonce);
                 (path.to_string(), hex(&blob).into())
             })
             .collect();
         check_vector(
             "publication.json",
             &serde_json::json!({
-                "description": "a sealed publication of the html_tag_soup test page",
+                "description": "a sealed publication of the html_tag_soup test page; the manifest's header holds the book key sealed under the library key",
                 "key": hex(key.as_bytes()),
+                "library_key": hex(library_key.as_bytes()),
                 "publication_id": id.to_string(),
                 "blobs": blobs,
             }),
@@ -639,8 +668,24 @@ fn a_whole_sealed_publication_vector_opens() {
     let vector: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let blob = |path: &str| unhex(vector["blobs"][path].as_str().unwrap());
+    // The book key comes out of the manifest's header with the library key alone.
+    let manifest_blob = blob("manifest");
+    let envelope = shelfgauge::publication::format::Envelope::parse(&manifest_blob).unwrap();
+    let parsed = KeyHeader::decode(envelope.header).unwrap();
+    assert_eq!(
+        (parsed.key_scope.as_str(), parsed.key_id),
+        (LIBRARY_SCOPE, 3)
+    );
+    let opened = shelfgauge::hub_client::keys::open_record(
+        &library_key,
+        "book_key",
+        &id.to_string(),
+        &URL_SAFE_NO_PAD.decode(&parsed.book_key).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(opened, key.as_bytes());
     let manifest =
-        Manifest::decode(&open(&id, &key, BlobPath::Manifest, &blob("manifest"), LIMIT).unwrap())
+        Manifest::decode(&open(&id, &key, BlobPath::Manifest, &manifest_blob, LIMIT).unwrap())
             .unwrap();
     assert_eq!(manifest.title, "Book");
     let parts = (0..manifest.parts.len()).map(|n| {
@@ -818,7 +863,7 @@ fn timing_on_real_books() {
 
             let key = BookKey::generate().unwrap();
             let start = Instant::now();
-            let sealed = publication.seal(&id(), &key).unwrap();
+            let sealed = publication.seal(&id(), &key, &[]).unwrap();
             let seal_time = ms(start);
 
             let start = Instant::now();
@@ -958,7 +1003,7 @@ fn record_plaintexts_are_stable() {
     use shelfgauge::annotations::store::UserData;
     use shelfgauge::hub::{AccountId, Secret};
     use shelfgauge::hub_client::keys::AccountKey;
-    use shelfgauge::hub_client::store::{self, NewHubAccount, ShelfEntry, ShelfState};
+    use shelfgauge::hub_client::store::{self, ShelfEntry, ShelfState};
     use shelfgauge::hub_client::{HubUrl, records};
     use shelfgauge::profiles::ProfileId;
 
@@ -967,16 +1012,20 @@ fn record_plaintexts_are_stable() {
     let owner = ProfileId::OWNER;
     let url = HubUrl::parse("https://hub.example.org").unwrap();
     let key = AccountKey::new([1; 32]);
-    let token = Secret::from_text("token");
-    let account = NewHubAccount {
-        hub_url: &url,
-        account: AccountId::new([2; 16]),
-        key: &key,
-        device_id: 1,
-        token: &token,
-        recovery_code: None,
-    };
-    store::save_account(&conn, owner, &account, 0).unwrap();
+    store::save_library(
+        &conn,
+        &url,
+        AccountId::new([3; 16]),
+        "home",
+        &Secret::from_text("token"),
+        &AccountKey::new([4; 32]),
+        owner,
+        AccountId::new([2; 16]),
+        &key,
+        "admin",
+        0,
+    )
+    .unwrap();
     let content_key: Vec<u8> = (0..16).collect();
     let entry = ShelfEntry {
         content_key: content_key.clone(),
@@ -1047,9 +1096,7 @@ fn book_file_vector_opens() {
     use base64::Engine as _;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use shelfgauge::hub::AccountId;
-    use shelfgauge::hub_client::book_file::{
-        self, FILE_KEY_KIND, FileKeys, SgJson, SnapshotRecord,
-    };
+    use shelfgauge::hub_client::book_file::{self, FileError, SgJson, SnapshotRecord};
     use shelfgauge::hub_client::keys::{AccountKey, encrypt_record, shelf_id};
     use shelfgauge::publication::format::container::{CONTAINER_VERSION, MIME};
 
@@ -1075,8 +1122,16 @@ fn book_file_vector_opens() {
     };
     sealed.sort_by_key(|(p, _)| order(p));
 
+    // The account of the snapshot; the book key is in the manifest's header, under
+    // generation 3 of the key of library `0f…0f` (see `publication.json`).
     let key = AccountKey::new(std::array::from_fn(|i| 0x80 + i as u8));
     let account = AccountId::new([0x24; 16]);
+    let library = AccountId::new([0x0f; 16]);
+    let library_key = AccountKey::new(
+        unhex(publication["library_key"].as_str().unwrap())
+            .try_into()
+            .unwrap(),
+    );
     let content_key = vec![7u8; 16];
     let item = serde_json::json!({
         "publication": id.to_string(),
@@ -1087,7 +1142,7 @@ fn book_file_vector_opens() {
         "title": "Book",
         "authors": "A. Author",
         "updated_at": 1_800_000_000,
-        "format_version": 1,
+        "format_version": FORMAT_VERSION,
     });
     let item_id = shelf_id(&key, &content_key);
     let item_sealed = encrypt_record(
@@ -1100,17 +1155,12 @@ fn book_file_vector_opens() {
     let sg = SgJson {
         format: CONTAINER_VERSION,
         mime: MIME.to_owned(),
-        format_version: 1,
+        format_version: FORMAT_VERSION,
         publication: id.to_string(),
+        library: library.to_string(),
+        key_scope: LIBRARY_SCOPE.to_owned(),
+        key_id: 3,
         account: account.to_string(),
-        key_id: 1,
-        book_key: URL_SAFE_NO_PAD.encode(encrypt_record(
-            &key,
-            FILE_KEY_KIND,
-            &id.to_string(),
-            &book_key,
-            [0x51; 12],
-        )),
         snapshot: vec![SnapshotRecord {
             kind: "shelf_item".into(),
             id: item_id,
@@ -1121,20 +1171,28 @@ fn book_file_vector_opens() {
     check_vector(
         "book_file.json",
         &serde_json::json!({
-            "description": "a book file (.sgbook) of publication.json: a stored zip of mimetype, sg.json and the sealed blobs; sg.json's book_key is the book key sealed as a record of kind 'file_key' with the publication id as its id, under the account key",
+            "description": "a book file (.sgbook, container version 2) of publication.json: a stored zip of mimetype, sg.json and the sealed blobs; the book key is in the manifest's header under the library key (generation key_id); the snapshot is sealed under the account key",
+            "library_key": hex(library_key.as_bytes()),
+            "library": library.to_string(),
+            "key_id": 3,
             "account_key": hex(key.as_bytes()),
             "account": account.to_string(),
-            "key_id": 1,
             "content_key": hex(&content_key),
             "file": hex(&file),
         }),
     );
-    let keys = FileKeys {
-        account,
-        key: &key,
-        key_id: 1,
-    };
-    let opened = book_file::open(&file, keys).unwrap();
+    let generations = [(3, library_key.clone())];
+    // Another library, or a key generation this device does not have yet, decrypts
+    // nothing.
+    assert!(matches!(
+        book_file::open(&file, &AccountId::new([1; 16]), &generations),
+        Err(FileError::OtherLibrary)
+    ));
+    assert!(matches!(
+        book_file::open(&file, &library, &[(2, library_key.clone())]),
+        Err(FileError::UnknownKey(3))
+    ));
+    let opened = book_file::open(&file, &library, &generations).unwrap();
     assert_eq!(opened.id, id);
     assert_eq!(opened.book_key.as_bytes().as_slice(), book_key.as_slice());
     let manifest = Manifest::decode(
@@ -1150,4 +1208,27 @@ fn book_file_vector_opens() {
     .unwrap();
     assert_eq!(manifest.title, "Book");
     assert_eq!(opened.blobs.len(), blobs.len());
+}
+
+#[test]
+fn password_vector_is_stable() {
+    // The keys of a hub password, as the reader app derives them in WASM and the
+    // library on its computer (decomposed input: NFKC makes it "Café ﬁle" → "Café
+    // file").
+    use shelfgauge_core::password::{MIN_ITERATIONS, MIN_MEMORY_KIB, derive};
+    let password = "Cafe\u{301} \u{fb01}le, пароль 7";
+    let salt: [u8; 16] = std::array::from_fn(|i| 0x30 + i as u8);
+    let keys = derive(password, &salt, MIN_MEMORY_KIB, MIN_ITERATIONS).unwrap();
+    check_vector(
+        "password.json",
+        &serde_json::json!({
+            "description": "hub password keys: NFKC, Argon2id (v0x13, p = 1, 32 bytes) with the salt, then HKDF-SHA256 with no salt and infos 'shelfgauge login key' / 'shelfgauge wrapping key' (one 32-byte block each)",
+            "password": password,
+            "salt": hex(&salt),
+            "memory_kib": MIN_MEMORY_KIB,
+            "iterations": MIN_ITERATIONS,
+            "login_key": hex(&keys.login_key),
+            "wrapping_key": hex(&keys.wrapping_key),
+        }),
+    );
 }

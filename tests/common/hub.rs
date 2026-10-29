@@ -16,6 +16,7 @@ use shelfgauge::container::ReadLimits;
 use shelfgauge::format::Registry;
 use shelfgauge::hub::config::HubConfig;
 use shelfgauge::hub::{Hub, HubState};
+use shelfgauge::hub_client::keys::AccountKey;
 use shelfgauge::hub_client::store as hub_store;
 use shelfgauge::library::Library;
 use shelfgauge::profiles::ProfileId;
@@ -172,7 +173,7 @@ impl TestHub {
     }
 
     pub fn device_count(&self) -> usize {
-        self.state.hub().accounts().unwrap()[0].usage.devices as usize
+        self.state.hub().libraries().unwrap()[0].usage.devices as usize
     }
 }
 
@@ -348,24 +349,114 @@ impl Lib {
         self.account_of(ProfileId::OWNER)
     }
 
+    /// The library on its hub.
+    pub fn hub_library(&self) -> hub_store::HubLibrary {
+        hub_store::library(&self.userdata.lock()).unwrap().unwrap()
+    }
+
     pub fn account_of(&self, profile: ProfileId) -> Option<hub_store::HubAccount> {
         hub_store::account(&self.userdata.lock(), profile).unwrap()
     }
 
-    /// A library registered on `hub` with the recovery code saved.
+    /// A library put on `hub` (handle `home`, owner `admin`).
     pub async fn registered(hub: &TestHub) -> Self {
         let lib = Self::new(&hub.url, "Home library");
-        lib.register(&hub.invite()).await;
-        lib.post("/profile/hub", &[("action", "saved")]).await;
+        lib.create_library(&hub.invite()).await;
         lib
     }
 
-    /// Joins the account of `code` (a second library).
-    pub async fn join(&self, code: &str) {
+    /// Puts the library on its hub with the hub invite code `invite`.
+    pub async fn create_library(&self, invite: &str) {
         let reply = self
-            .post("/profile/hub", &[("action", "join"), ("code", code)])
+            .post(
+                "/profile/hub",
+                &[
+                    ("action", "create"),
+                    ("handle", "home"),
+                    ("owner_name", "admin"),
+                    ("invite", invite),
+                ],
+            )
             .await;
         assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.body);
+        assert_eq!(reply.location(), "/profile/hub?done=created");
+    }
+
+    /// Pairs the owner's phone: its device token and the account key it got.
+    pub async fn phone(&self, hub: &TestHub) -> Phone {
+        let reply = self.post("/profile/hub", &[("action", "pair")]).await;
+        assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+        let (secret, key) = pairing_link(&reply.body, &hub.url);
+        let (status, body) = hub
+            .api(
+                Method::POST,
+                "pair",
+                None,
+                Some(serde_json::json!({ "secret": secret })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        Phone {
+            token: body["token"].as_str().unwrap().to_owned(),
+            device: body["device"].as_i64().unwrap(),
+            key: AccountKey::new(
+                base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, key)
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+            ),
+        }
+    }
+
+    /// Invites profile `id` (`invite`) or resets its password (`reset`): the link's
+    /// secret and one-time key.
+    pub async fn invite_link(&self, hub: &TestHub, id: i64, action: &str) -> (String, AccountKey) {
+        let reply = self
+            .post(&format!("/settings/profiles/{id}/{action}"), &[])
+            .await;
+        assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+        assert_eq!(reply.headers[header::CACHE_CONTROL], "no-store");
+        let prefix = format!("{}/invite#", hub.url);
+        let start = reply.body.find(&prefix).expect("the page shows the link") + prefix.len();
+        let fragment: String = reply.body[start..]
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+            .collect();
+        let (secret, key) = fragment.split_once('.').unwrap();
+        let key = AccountKey::new(
+            base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, key)
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        );
+        (secret.to_owned(), key)
+    }
+
+    /// Adds a profile `name` made for the hub (**Invite someone**): its id and the
+    /// invite link's secret and one-time key.
+    pub async fn invite_someone(&self, hub: &TestHub, name: &str) -> (i64, String, AccountKey) {
+        let reply = self
+            .post("/settings/profiles", &[("name", name), ("hub_invite", "1")])
+            .await;
+        assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+        let prefix = format!("{}/invite#", hub.url);
+        let start = reply.body.find(&prefix).expect("the page shows the link") + prefix.len();
+        let fragment: String = reply.body[start..]
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+            .collect();
+        let (secret, key) = fragment.split_once('.').unwrap();
+        let id: i64 = self.value(&format!(
+            "SELECT id FROM profiles WHERE name = '{}'",
+            name.replace('\'', "''")
+        ));
+        let key = AccountKey::new(
+            base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, key)
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        );
+        (id, secret.to_owned(), key)
     }
 
     /// Syncs now (push, pull, merge).
@@ -437,34 +528,86 @@ impl Lib {
             .trim_end_matches("#shelf")
             .to_owned()
     }
+}
 
-    /// Registers the owner profile with `invite` and returns its recovery code text.
-    pub async fn register(&self, invite: &str) -> String {
-        let reply = self
-            .post(
-                "/profile/hub",
-                &[("action", "register"), ("invite", invite)],
+/// The owner's phone as the hub reader holds it.
+pub struct Phone {
+    pub token: String,
+    pub device: i64,
+    pub key: AccountKey,
+}
+
+/// A password body as the hub reader sends it (login key, salt and bundle derived
+/// from `byte`; the bundle seals `account_key` under a wrapping key of `byte`s).
+pub fn password_body(byte: u8, account_key: &AccountKey) -> serde_json::Value {
+    use base64::Engine as _;
+    let b64 = |d: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(d);
+    let bundle =
+        shelfgauge::hub_client::keys::seal_bundle(&AccountKey::new([byte; 32]), account_key)
+            .unwrap();
+    serde_json::json!({
+        "login_key": b64(&[byte; 32]),
+        "salt": b64(&[byte; 16]),
+        "kdf": { "memory_kib": 19456, "iterations": 2 },
+        "bundle": b64(&bundle),
+    })
+}
+
+/// What a member's device has after redeeming an invite: its token and the payload.
+pub struct Member {
+    pub token: String,
+    pub account: String,
+    pub payload: shelfgauge::hub_client::keys::InvitePayload,
+}
+
+impl TestHub {
+    /// Redeems an invite as the person's browser does: preview, open the payload with
+    /// the one-time key, choose `name` and a password.
+    pub async fn redeem(&self, secret: &str, one_time: &AccountKey, name: &str) -> Member {
+        use base64::Engine as _;
+        let (status, preview) = self
+            .api(
+                Method::POST,
+                "invites/preview",
+                None,
+                Some(serde_json::json!({ "secret": secret })),
             )
             .await;
-        assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.body);
-        assert_eq!(reply.location(), "/profile/hub/recovery");
-        let page = self.get("/profile/hub/recovery").await;
-        assert_eq!(page.status, StatusCode::OK);
-        recovery_code(&page.body)
+        assert_eq!(status, StatusCode::OK, "{preview}");
+        let sealed = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(preview["payload"].as_str().unwrap())
+            .unwrap();
+        let payload = shelfgauge::hub_client::keys::open_invite(one_time, &sealed).unwrap();
+        let account_key = AccountKey::new(
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(&payload.account_key)
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        );
+        let (status, body) = self
+            .api(
+                Method::POST,
+                "invites/redeem",
+                None,
+                Some(serde_json::json!({
+                    "secret": secret,
+                    "name": name,
+                    "password": password_body(1, &account_key),
+                })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        Member {
+            token: body["token"].as_str().unwrap().to_owned(),
+            account: body["account"].as_str().unwrap().to_owned(),
+            payload,
+        }
     }
 }
 
 pub fn urlencode(text: &str) -> String {
     percent_encoding::utf8_percent_encode(text, percent_encoding::NON_ALPHANUMERIC).to_string()
-}
-
-/// The recovery code on its page.
-pub fn recovery_code(body: &str) -> String {
-    let start = body.find("SG1-").expect("the page shows the code");
-    body[start..]
-        .chars()
-        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
-        .collect()
 }
 
 /// The pairing link on its page: `(secret, account key text)`.

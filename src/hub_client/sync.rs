@@ -9,9 +9,12 @@ use rusqlite::{Connection, params};
 
 use super::keys::{self, AccountKey};
 use super::records;
-use super::store::{self, HubAccount, ShelfEntry, ShelfKind, ShelfState};
+use super::store::{
+    self, HubAccount, HubLibrary, LegacyAccount, ShelfEntry, ShelfKind, ShelfState,
+};
 use super::{ClientError, HubClient, OutRecord};
 use crate::annotations::store::UserData;
+use crate::hub::AccountId;
 use crate::profiles::ProfileId;
 use crate::storage::StorageError;
 
@@ -67,7 +70,32 @@ struct Pending {
 }
 
 fn kind(name: &str) -> Option<&'static str> {
-    keys::RECORD_KINDS.iter().copied().find(|k| *k == name)
+    ["shelf_item", "annotation", "position"]
+        .into_iter()
+        .find(|k| *k == name)
+}
+
+/// Which account a sync call is for: the library's token naming the account.
+#[derive(Debug, Clone, Copy)]
+pub struct Target<'a> {
+    /// The library's token.
+    pub token: &'a crate::hub::Secret,
+    /// The account's public id.
+    pub id: &'a AccountId,
+}
+
+impl<'a> Target<'a> {
+    /// The target of `account` of `library`; `None` while the account has no id on
+    /// the hub (an invite not yet redeemed) or is gone.
+    pub fn of(library: &'a HubLibrary, account: &'a HubAccount) -> Option<Self> {
+        if account.gone_at.is_some() {
+            return None;
+        }
+        Some(Self {
+            token: &library.token,
+            id: account.account.as_ref()?,
+        })
+    }
 }
 
 /// The record of an outbox entry as it reads now.
@@ -173,6 +201,7 @@ fn forget(
 /// Runs blocking HTTP: call it on a blocking thread.
 pub fn push(
     userdata: &UserData,
+    target: Target<'_>,
     account: &HubAccount,
     client: &HubClient,
 ) -> Result<usize, SyncError> {
@@ -205,7 +234,7 @@ pub fn push(
             });
         }
         if !out.is_empty() {
-            client.push(&account.token, &out)?;
+            client.push(target.token, Some(target.id), &out)?;
         }
         let conn = userdata.lock();
         let mut done = 0;
@@ -240,6 +269,7 @@ pub fn push(
 /// no copy on the hub. Runs blocking HTTP.
 pub fn take_down(
     userdata: &UserData,
+    target: Target<'_>,
     account: &HubAccount,
     client: &HubClient,
     entry: &ShelfEntry,
@@ -247,13 +277,13 @@ pub fn take_down(
     if let Some(id) = entry
         .publication
         .as_ref()
-        .filter(|_| entry.kind == ShelfKind::Upload)
-        && let Err(e) = client.delete_publication(&account.token, id)
+        .filter(|_| entry.kind == ShelfKind::Upload && entry.own)
+        && let Err(e) = client.delete_publication(target.token, id)
     {
         tracing::info!(error = %e, "the hub did not delete a publication");
         return false;
     }
-    if let Err(e) = push(userdata, account, client) {
+    if let Err(e) = push(userdata, target, account, client) {
         tracing::info!(error = %e, "push after removing failed");
         return false;
     }
@@ -275,10 +305,11 @@ pub fn take_down(
 /// the shelf as files never were there and do not expire). Runs blocking HTTP.
 pub fn check_expired(
     userdata: &UserData,
+    target: Target<'_>,
     account: &HubAccount,
     client: &HubClient,
 ) -> Result<usize, SyncError> {
-    let on_hub = client.publications(&account.token)?;
+    let on_hub = client.publications(target.token)?;
     let conn = userdata.lock();
     let mut expired = 0;
     for entry in store::shelf(&conn, account.profile)? {
@@ -325,6 +356,7 @@ pub struct Report {
 /// blocking HTTP.
 pub fn pull(
     userdata: &UserData,
+    target: Target<'_>,
     account: &HubAccount,
     client: &HubClient,
     book_id: &dyn Fn(&[u8]) -> Option<i64>,
@@ -334,7 +366,7 @@ pub fn pull(
     let profile = account.profile;
     let mut since = store::last_seq(&userdata.lock(), profile)?;
     loop {
-        let page = client.pull(&account.token, since)?;
+        let page = client.pull(target.token, Some(target.id), since)?;
         let conn = userdata.lock();
         let tx = conn.unchecked_transaction()?;
         for record in &page.records {
@@ -358,11 +390,54 @@ pub fn pull(
     Ok(())
 }
 
-/// One full sync of `account`: push the outbox, finish removals, pull and merge,
-/// notice expired publications; records the outcome on the account. `instance` is
-/// this library's name on the shelf. Runs blocking HTTP.
+/// Hands the library key generations the account has not got yet to it as
+/// `library_key` records (the library is the only writer of these), newest last;
+/// answers how many. Every key this library hands to its members goes through here.
+/// Runs blocking HTTP.
+pub fn send_library_keys(
+    userdata: &UserData,
+    target: Target<'_>,
+    account: &HubAccount,
+    client: &HubClient,
+) -> Result<usize, SyncError> {
+    let generations = store::library_keys(&userdata.lock())?;
+    let missing: Vec<_> = generations
+        .iter()
+        .filter(|(key_id, _)| *key_id > account.keys_sent)
+        .collect();
+    let Some(newest) = missing.last().map(|(key_id, _)| *key_id) else {
+        return Ok(0);
+    };
+    let now = crate::annotations::now();
+    let out = missing
+        .iter()
+        .map(|(key_id, key)| {
+            let id = keys::library_key_id(*key_id);
+            let plain = keys::library_key_plain(*key_id, key, now);
+            Ok(OutRecord {
+                kind: keys::LIBRARY_KEY_KIND,
+                data: Some(keys::seal_record(
+                    &account.key,
+                    keys::LIBRARY_KEY_KIND,
+                    &id,
+                    &plain,
+                )?),
+                id,
+            })
+        })
+        .collect::<Result<Vec<_>, getrandom::Error>>()
+        .map_err(ClientError::from)?;
+    client.push(target.token, Some(target.id), &out)?;
+    store::set_keys_sent(&userdata.lock(), account.profile, newest)?;
+    Ok(out.len())
+}
+
+/// One full sync of `account`: hand it newer library keys, push the outbox, finish
+/// removals, pull and merge, notice expired publications; records the outcome on the
+/// account. `instance` is this library's name on the shelf. Runs blocking HTTP.
 pub fn sync_once(
     userdata: &UserData,
+    target: Target<'_>,
     account: &HubAccount,
     client: &HubClient,
     book_id: &dyn Fn(&[u8]) -> Option<i64>,
@@ -371,16 +446,25 @@ pub fn sync_once(
 ) -> Result<Report, SyncError> {
     let mut report = Report::default();
     let result = (|| {
-        report.pushed += push(userdata, account, client)?;
+        report.pushed += send_library_keys(userdata, target, account, client)?;
+        report.pushed += push(userdata, target, account, client)?;
         let removing: Vec<ShelfEntry> = store::shelf(&userdata.lock(), account.profile)?
             .into_iter()
             .filter(|e| e.state == ShelfState::Removing)
             .collect();
         for entry in &removing {
-            take_down(userdata, account, client, entry);
+            take_down(userdata, target, account, client, entry);
         }
-        pull(userdata, account, client, book_id, instance, &mut report)?;
-        check_expired(userdata, account, client)?;
+        pull(
+            userdata,
+            target,
+            account,
+            client,
+            book_id,
+            instance,
+            &mut report,
+        )?;
+        check_expired(userdata, target, account, client)?;
         Ok(())
     })();
     let outcome = match &result {
@@ -390,4 +474,57 @@ pub fn sync_once(
     };
     store::record_sync(&userdata.lock(), account.profile, outcome)?;
     result.map(|()| report)
+}
+
+/// The last pull of an account of 0.18–0.20 (decision 26 of Phase 30): pulls its
+/// annotations and positions once more with the old device token and merges them
+/// (shelf items are skipped: their publications do not open any more), then forgets
+/// the account. Kept for the next sync when the hub cannot be reached; forgotten
+/// without a pull when the hub no longer knows the token. Answers whether the account
+/// is done. Runs blocking HTTP.
+pub fn pull_legacy(
+    userdata: &UserData,
+    legacy: &LegacyAccount,
+    book_id: &dyn Fn(&[u8]) -> Option<i64>,
+    instance: &str,
+    report: &mut Report,
+) -> Result<bool, SyncError> {
+    let client = HubClient::new(legacy.hub_url.clone());
+    let mut since = legacy.last_seq;
+    loop {
+        let page = match client.pull(&legacy.token, None, since) {
+            Ok(page) => page,
+            Err(e) if e.is_unauthorized() || e.code() == Some("not_found") => {
+                store::forget_legacy(&userdata.lock(), legacy.profile)?;
+                return Ok(true);
+            }
+            Err(e) => return Err(e.into()),
+        };
+        let conn = userdata.lock();
+        let tx = conn.unchecked_transaction()?;
+        for record in page.records.iter().filter(|r| r.kind != "shelf_item") {
+            report.pulled += 1;
+            match super::merge::apply(&tx, legacy.profile, &legacy.key, record, book_id, instance)?
+            {
+                super::merge::Applied::Kept => {}
+                super::merge::Applied::Annotation(content) => {
+                    report.merged += 1;
+                    report.annotated.insert(content);
+                }
+                _ => report.merged += 1,
+            }
+        }
+        store::set_legacy_seq(&tx, legacy.profile, page.seq)?;
+        tx.commit()?;
+        if !page.more || page.seq <= since {
+            break;
+        }
+        since = page.seq;
+    }
+    store::forget_legacy(&userdata.lock(), legacy.profile)?;
+    tracing::info!(
+        profile = legacy.profile.0,
+        "last pull of an old hub account done"
+    );
+    Ok(true)
 }

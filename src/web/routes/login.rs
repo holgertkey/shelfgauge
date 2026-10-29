@@ -54,7 +54,7 @@ pub(crate) async fn picker(
     if !peer.is_remote() {
         return Ok(Redirect::to(&urls.profiles(Some(&next))).into_response());
     }
-    let profiles = user(&state, |_, conn| Ok(store::list(conn)?)).await?;
+    let profiles = user(&state, |_, conn| Ok(store::list_local(conn)?)).await?;
     if let [only] = profiles.as_slice() {
         return Ok(Redirect::to(&urls.login_profile(only.id.0, Some(&next))).into_response());
     }
@@ -92,7 +92,7 @@ async fn form_page(
     remember: bool,
 ) -> Result<FormPage, AppError> {
     let (profile, count) = user(state, move |_, conn| {
-        Ok((store::get(conn, id)?, store::count(conn)?))
+        Ok((store::get(conn, id)?, store::count_local(conn)?))
     })
     .await?;
     let profile = profile.ok_or(AppError::NotFound)?;

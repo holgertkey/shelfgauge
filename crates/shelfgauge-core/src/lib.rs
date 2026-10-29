@@ -1,5 +1,6 @@
 //! shelfgauge core: the book model, the reader split, HTML rendering and search within
-//! a book.
+//! a book, and what the hub's reader app shares with the library besides: account
+//! addresses and the keys derived from a hub password.
 //!
 //! This is the part of shelfgauge that runs both on the server and on the reading
 //! device: it builds for `wasm32-unknown-unknown`, so a book renders the same in the
@@ -9,8 +10,10 @@
 
 #![warn(missing_docs)]
 
+pub mod address;
 pub mod annotations;
 pub mod config;
 pub mod format;
+pub mod password;
 pub mod publication;
 pub mod render;

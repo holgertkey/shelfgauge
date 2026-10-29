@@ -7,8 +7,9 @@
 //! hold a search query. `profile` is the request's profile id, recorded by the profile
 //! middleware when it is known (never the name); `remote = true` marks a request from
 //! another device (see [`Reach`](super::security::Reach)), and is absent for local
-//! ones. On the hub (`crate::hub`), `account` is the internal id of the account a
-//! device token belongs to. The id is a per-process counter, printed in hex; the internal
+//! ones. On the hub (`crate::hub`), `library` and `account` are the internal ids of
+//! the library and account a token belongs to (a library's token names an account
+//! only when it syncs one). The id is a per-process counter, printed in hex; the internal
 //! error page shows it so a user can find the matching log lines.
 //!
 //! [`catch_panics`] is the innermost layer: a panic in a handler is answered with the
@@ -76,6 +77,7 @@ pub(crate) async fn trace_requests(
         route = %route.unwrap_or("-"),
         profile = tracing::field::Empty,
         remote = tracing::field::Empty,
+        library = tracing::field::Empty,
         account = tracing::field::Empty,
     );
     req.extensions_mut().insert(id);

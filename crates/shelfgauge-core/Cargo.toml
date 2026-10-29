@@ -10,10 +10,14 @@ keywords = ["ebook", "reader", "wasm"]
 categories = ["text-processing", "wasm"]
 
 [dependencies]
+# Hub passwords (`password`): no `getrandom` (salts come from the caller), so the crate
+# still builds for `wasm32-unknown-unknown`.
+argon2 = { version = "0.6.0", default-features = false, features = ["alloc"] }
+hmac = "0.13.0"
+sha2 = "0.11.0"
+unicode-normalization = "0.1.26"
 postcard.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-
-[dev-dependencies]
-serde_json.workspace = true

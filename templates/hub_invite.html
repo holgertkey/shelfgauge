@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block main %}
+{%- if reset %}
+<h1>A new password for {{ name }}</h1>
+<p>Send this link to {{ name }} only. With it they set a new hub password and keep their address, books and marks. It works once, until {{ expires }}.</p>
+{%- else %}
+<h1>Invite {{ name }}</h1>
+<p>Send this link to {{ name }} only, by any messenger or by mail, or let them scan the code. With it they choose their address and password and read every book of this library on their phone or computer. It works once, until {{ expires }}.</p>
+<p class="muted">Every member can open every book this library sends to the hub. As the library’s admin you could read their notes in this library and reset their password; the invite page tells them so.</p>
+{%- endif %}
+<figure class="qr-code">
+  {{ qr|safe }}
+</figure>
+<p class="secret-text"><code>{{ link }}</code></p>
+<p class="hint">The link is shown only now. If it is lost, make a new one: the old one stops working.</p>
+<div class="form-actions">
+  <a class="button primary" href="{{ back }}">Done</a>
+</div>
+{%- endblock %}

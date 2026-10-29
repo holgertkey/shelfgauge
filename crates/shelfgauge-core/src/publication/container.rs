@@ -40,8 +40,15 @@ pub const EXTENSION: &str = "sgbook";
 /// The extensions a reader accepts when opening (a shortened name opens too).
 pub const OPEN_EXTENSIONS: &[&str] = &["sgbook", "sgb"];
 
-/// The version of the container (`sg.json` and this layout).
-pub const CONTAINER_VERSION: u16 = 1;
+/// The version of the container (`sg.json` and this layout). Version 2 (shelfgauge
+/// 0.21) names the publishing library and the generation of its key in `sg.json`
+/// instead of an account; a reader tells a version 1 file ("made by an older
+/// shelfgauge") from a newer one.
+pub const CONTAINER_VERSION: u16 = 2;
+
+/// The container version of the book files of shelfgauge 0.19–0.20, which do not
+/// open any more (their book keys were sealed under accounts that no longer exist).
+pub const OLD_CONTAINER_VERSION: u16 = 1;
 
 /// The name of the entry with the file's keys and metadata.
 pub const SG_JSON: &str = "sg.json";

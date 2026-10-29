@@ -74,6 +74,7 @@ pub(crate) async fn card(
     let mode = SidebarMode::from_headers(&headers);
     let profile = current.id();
     let several = current.several();
+    let admin = current.is_admin();
     let (book, file_present, sidebar, annotations, family, shelf) = state
         .user_db(move |s, conn| {
             let book = book_by_id(conn, id)?.ok_or(AppError::NotFound)?;
@@ -98,7 +99,7 @@ pub(crate) async fn card(
                 _ => Vec::new(),
             };
             let readable = book.status == BookStatus::Ok && file_present;
-            let shelf = super::shelf::view(s, profile, &book, readable)?;
+            let shelf = super::shelf::view(s, profile, admin, &book, readable)?;
             Ok((book, file_present, sidebar, annotations, family, shelf))
         })
         .await?;

@@ -82,6 +82,14 @@ fn hub(data: &std::path::Path, explicit: bool, action: HubAction) -> anyhow::Res
     if let HubAction::Check { url } = &action {
         return check_hub(url);
     }
+    if action == HubAction::Migrate {
+        let (accounts, publications) = Hub::migrate(data)?;
+        println!(
+            "The hub database is up to date; deleted {accounts} accounts and {publications} \
+             publications of shelfgauge 0.18–0.20."
+        );
+        return Ok(());
+    }
 
     let create = explicit && action == HubAction::Serve;
     let opened = Hub::open(data, create)?;
@@ -124,57 +132,60 @@ fn hub(data: &std::path::Path, explicit: bool, action: HubAction) -> anyhow::Res
                 println!("There is no such publication; its id is refused from now on.");
             }
         }
-        HubAction::Accounts => {
-            let accounts = hub.accounts()?;
-            for a in &accounts {
+        HubAction::Libraries => {
+            let libraries = hub.libraries()?;
+            for l in &libraries {
                 let days = |t: i64| (now - t).max(0) / 86_400;
-                let own = if a.quotas.is_empty() {
+                let own = if l.quotas.is_empty() {
                     String::new()
                 } else {
                     format!(
                         "  own quotas: {}",
-                        quota_text(&a.quotas.over(&hub.config().quotas))
+                        quota_text(&l.quotas.over(&hub.config().quotas))
                     )
                 };
                 println!(
-                    "{:>5}  created {} days ago  last seen {}  {} devices  {} publications  \
-                     {} records  {} bytes{own}",
-                    a.id,
-                    days(a.created_at),
-                    a.last_seen_at
-                        .map_or("never".to_owned(), |t| format!("{} days ago", days(t))),
-                    a.usage.devices,
-                    a.usage.publications,
-                    a.usage.records,
-                    a.usage.bytes
+                    "{:>5}  created {} days ago  last seen {} days ago  {} accounts  \
+                     {} devices  {} publications  {} records  {} bytes{own}",
+                    l.id,
+                    days(l.created_at),
+                    days(l.last_seen_at),
+                    l.usage.accounts,
+                    l.usage.devices,
+                    l.usage.publications,
+                    l.usage.records,
+                    l.usage.bytes
                 );
             }
-            match accounts.len() {
-                1 => println!("1 account."),
-                n => println!("{n} accounts."),
+            match libraries.len() {
+                1 => println!("1 library."),
+                n => println!("{n} libraries."),
             }
         }
-        HubAction::Check { .. } => unreachable!("handled before the hub is opened"),
-        HubAction::DeleteAccount { account } => {
-            if hub.delete_account(account)? {
-                println!("Deleted account {account} with its devices, books and reading data.");
+        HubAction::Check { .. } | HubAction::Migrate => {
+            unreachable!("handled before the hub is opened")
+        }
+        HubAction::DeleteLibrary { library } => {
+            if hub.delete_library(library)? {
+                println!(
+                    "Deleted library {library} with its accounts, devices, books and reading \
+                     data."
+                );
             } else {
-                anyhow::bail!("there is no account {account} (see `shelfgauge hub accounts`)");
+                anyhow::bail!("there is no library {library} (see `shelfgauge hub libraries`)");
             }
         }
         HubAction::Quota {
-            account,
+            library,
             max_bytes,
             max_publications,
-            max_devices,
         } => {
-            let Some(mut own) = hub.account_quotas(account)? else {
-                anyhow::bail!("there is no account {account} (see `shelfgauge hub accounts`)");
+            let Some(mut own) = hub.library_quotas(library)? else {
+                anyhow::bail!("there is no library {library} (see `shelfgauge hub libraries`)");
             };
             let changes = [
                 (&mut own.max_bytes, max_bytes),
                 (&mut own.max_publications, max_publications),
-                (&mut own.max_devices, max_devices),
             ];
             let mut changed = false;
             for (field, value) in changes {
@@ -184,11 +195,11 @@ fn hub(data: &std::path::Path, explicit: bool, action: HubAction) -> anyhow::Res
                 }
             }
             if changed {
-                hub.set_account_quotas(account, &own)?;
+                hub.set_library_quotas(library, &own)?;
             }
             let defaults = &hub.config().quotas;
             println!(
-                "Account {account}: {} ({})",
+                "Library {library}: {} ({})",
                 quota_text(&own.over(defaults)),
                 if own.is_empty() {
                     "the hub's quotas"
@@ -201,9 +212,9 @@ fn hub(data: &std::path::Path, explicit: bool, action: HubAction) -> anyhow::Res
             let (code, _) = hub.invite(now)?;
             println!("{}", code.as_str());
             eprintln!(
-                "A one-time invite code, valid for {} days: enter it when registering a \
+                "A one-time invite code, valid for {} days: enter it when creating a \
                  library on this hub.",
-                hub.config().accounts.invite_days
+                hub.config().libraries.invite_days
             );
         }
     }
@@ -247,17 +258,16 @@ fn check_hub(url: &str) -> anyhow::Result<()> {
     anyhow::bail!("the hub serves a reader app that differs from shelfgauge {version}")
 }
 
-/// Quotas as `max 1073741824 bytes, 300 publications, no device limit`.
+/// A library's quotas as `max 1073741824 bytes, no publication limit`.
 fn quota_text(quotas: &shelfgauge::hub::config::QuotasConfig) -> String {
     let limit = |n: u64, what: &str| match n {
         0 => format!("no {what} limit"),
         n => format!("max {n} {what}s"),
     };
     format!(
-        "{}, {}, {}",
+        "{}, {}",
         limit(quotas.max_bytes, "byte"),
-        limit(quotas.max_publications, "publication"),
-        limit(quotas.max_devices, "device")
+        limit(quotas.max_publications, "publication")
     )
 }
 
