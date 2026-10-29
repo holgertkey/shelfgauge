@@ -58,6 +58,8 @@ struct Harness {
     live: LiveConfig,
     scan: Arc<BackgroundScan>,
     router: Router,
+    /// The app's state (for the restart handle).
+    state: AppState,
     /// The `Host` of requests (`127.0.0.1:<port>`).
     host: String,
 }
@@ -130,7 +132,8 @@ fn harness(config_text: &str, overrides: ConfigOverrides) -> Harness {
         host: format!("127.0.0.1:{}", config.server.port),
         live,
         scan,
-        router: common::local(web::router(state)),
+        router: common::local(web::router(state.clone())),
+        state,
     }
 }
 
@@ -862,5 +865,163 @@ async fn formats_in_other_case_are_kept() {
     assert_eq!(
         h.config_file(),
         format!("{text}\n[library]\npage_size = 9\n")
+    );
+}
+
+/// The server and hub form of `/settings/server` with `change` applied.
+async fn save_server(h: &Harness, change: &[(&str, &str)]) -> Reply {
+    let page = h.ok("/settings/server").await;
+    assert_eq!(page.headers[header::CACHE_CONTROL], "no-store");
+    let mut fields = vec![
+        ("action".to_owned(), "save".to_owned()),
+        ("rev".to_owned(), page.rev()),
+        ("bind".to_owned(), "127.0.0.1".to_owned()),
+        ("port".to_owned(), "8742".to_owned()),
+        ("allowed_hosts".to_owned(), String::new()),
+        ("auth".to_owned(), "none".to_owned()),
+        ("hub_url".to_owned(), String::new()),
+        ("instance_name".to_owned(), String::new()),
+        ("sync_interval".to_owned(), "5".to_owned()),
+    ];
+    for (key, value) in change {
+        set(&mut fields, key, value);
+    }
+    h.post("/settings/server", &fields, Some(&h.origin())).await
+}
+
+#[tokio::test]
+async fn server_and_hub_settings_are_saved_in_the_file_for_the_next_start() {
+    let h = harness(COMMENTED, ConfigOverrides::default());
+    let reply = save_server(
+        &h,
+        &[
+            ("bind", "0.0.0.0"),
+            ("port", "9200"),
+            ("allowed_hosts", "192.168.1.20:9200\r\nbooks.home"),
+            ("hub_url", "https://Hub.Example.org/"),
+            ("instance_name", "  Den  "),
+            ("sync_interval", "10"),
+        ],
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.body);
+    assert_eq!(reply.location(), "/settings/server?done=saved");
+    let file = h.config_file();
+    assert!(file.starts_with("# My library."), "{file}");
+    assert!(
+        file.contains("page_size = 100 # entries"),
+        "comments kept: {file}"
+    );
+    let (config, _) = Config::from_toml(&file, &h.library.config_path()).unwrap();
+    assert_eq!(config.server.port, 9200);
+    assert_eq!(config.server.bind.to_string(), "0.0.0.0");
+    assert_eq!(
+        config.server.allowed_hosts,
+        ["192.168.1.20:9200", "books.home"]
+    );
+    assert_eq!(config.hub.url, "https://hub.example.org");
+    assert_eq!(config.hub.instance_name, "Den");
+    assert_eq!(config.hub.sync_interval_minutes, 10);
+    // The running server keeps its settings until the restart.
+    assert_eq!(h.live.get().server.port, 8742);
+    let page = h.ok("/settings/server?done=saved").await;
+    assert!(
+        page.body.contains("Restart shelfgauge to apply"),
+        "{}",
+        page.body
+    );
+    // Saving the same again changes nothing.
+    let same = save_server(
+        &h,
+        &[
+            ("bind", "0.0.0.0"),
+            ("port", "9200"),
+            ("allowed_hosts", "192.168.1.20:9200\nbooks.home"),
+            ("hub_url", "https://hub.example.org"),
+            ("instance_name", "Den"),
+            ("sync_interval", "10"),
+        ],
+    )
+    .await;
+    let after = h.config_file();
+    assert_eq!(
+        after, file,
+        "a save of the same values writes the same text"
+    );
+    assert_eq!(same.location(), "/settings/server?done=unchanged");
+}
+
+#[tokio::test]
+async fn invalid_server_settings_and_stale_forms_write_nothing() {
+    let h = harness(COMMENTED, ConfigOverrides::default());
+    let before = h.config_file();
+    for change in [
+        &[("port", "0")][..],
+        &[("port", "70000")],
+        &[("bind", "localhost")],
+        &[("hub_url", "http://hub.example.org")],
+        &[("sync_interval", "0")],
+        // Logins with passwords need an admin with a password first.
+        &[("auth", "password")],
+    ] {
+        let reply = save_server(&h, change).await;
+        assert_eq!(reply.status, StatusCode::UNPROCESSABLE_ENTITY, "{change:?}");
+        assert_eq!(h.config_file(), before, "{change:?}");
+    }
+    let reply = h
+        .post(
+            "/settings/server",
+            &[
+                ("action".to_owned(), "save".to_owned()),
+                ("rev".to_owned(), "0000000000000000".to_owned()),
+                ("bind".to_owned(), "127.0.0.1".to_owned()),
+                ("port".to_owned(), "9300".to_owned()),
+                ("sync_interval".to_owned(), "5".to_owned()),
+            ],
+            Some(&h.origin()),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(
+        reply.body.contains("changed since this page was shown"),
+        "{}",
+        reply.body
+    );
+    assert_eq!(h.config_file(), before);
+}
+
+#[tokio::test]
+async fn a_restart_is_asked_for_after_the_answer() {
+    let h = harness(COMMENTED, ConfigOverrides::default());
+    let settings = h.ok("/settings").await;
+    assert!(
+        settings.body.contains("/settings/server"),
+        "a link to the page"
+    );
+    let reply = h.form("/settings/restart", &[]).await;
+    assert_eq!(reply.status, StatusCode::OK);
+    assert!(reply.body.contains("restarting"), "{}", reply.body);
+    let restart = h.state.restart();
+    for _ in 0..100 {
+        if restart.requested() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("no restart was asked for");
+}
+
+#[tokio::test]
+async fn the_server_page_says_which_command_line_options_the_restart_keeps() {
+    let plain = harness(COMMENTED, ConfigOverrides::default());
+    let page = plain.ok("/settings/server").await;
+    assert!(!page.body.contains("the restart keeps"), "{}", page.body);
+    let h = harness(COMMENTED, PORT_9100);
+    let page = h.ok("/settings/server").await;
+    assert!(
+        page.body
+            .contains("<code>--port 9100</code>: the restart keeps"),
+        "{}",
+        page.body
     );
 }

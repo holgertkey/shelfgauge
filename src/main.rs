@@ -530,6 +530,7 @@ fn serve(
         .with_annotations(userdata, exporter);
     let url = web::display_url(&config.server, state.urls());
     let sync_state = state.clone();
+    let restart = state.restart();
     let router = web::router(state);
 
     // Handlers may parse books on blocking threads, which need the parser stack.
@@ -539,7 +540,15 @@ fn serve(
         .build()
         .context("cannot start the async runtime")?;
     let result = runtime.block_on(async {
-        let shutdown = shutdown_signal().context("cannot listen for Ctrl+C")?;
+        let signal = shutdown_signal().context("cannot listen for Ctrl+C")?;
+        let restarting = Arc::clone(&restart);
+        // Ctrl+C, or a restart asked for on the settings page.
+        let shutdown = async move {
+            tokio::select! {
+                () = signal => {}
+                () = restarting.wait() => eprintln!("Restarting…"),
+            }
+        };
         println!("Serving {url}  (Ctrl+C to stop)");
         if scan {
             background.start(shelfgauge::scanner::ScanTrigger::Startup);
@@ -555,7 +564,30 @@ fn serve(
     }
     background.shutdown();
     runtime.shutdown_timeout(Duration::from_secs(1));
+    if result.is_ok() && restart.requested() {
+        return restart_program();
+    }
     result
+}
+
+/// Starts this program again with the same arguments, in place of this process where
+/// the system allows it (Unix), else as a new process before this one exits.
+fn restart_program() -> anyhow::Result<()> {
+    let exe = std::env::current_exe().context("cannot find this program to restart it")?;
+    let mut command = std::process::Command::new(exe);
+    command.args(std::env::args_os().skip(1));
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        // Returns only if it failed.
+        let error = command.exec();
+        Err(anyhow::Error::new(error).context("cannot restart"))
+    }
+    #[cfg(not(unix))]
+    {
+        command.spawn().context("cannot restart")?;
+        Ok(())
+    }
 }
 
 /// Listens for Ctrl+C (and SIGTERM on Unix); the returned future completes on the first

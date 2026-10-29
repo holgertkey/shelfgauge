@@ -8,6 +8,76 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-29
+
+Upgrade **the library first**, start it once with the old hub still running, **then
+the hub** (see "Changed" below).
+
+### Added
+
+- **Family reading through the hub.** A library is put on a hub with a **handle**
+  (**My profile → Phone and other devices → Put the library on the hub**); every person
+  reading through it has an account of that library with the address `name@handle`
+  (e.g. `grandma@smiths`) and a password.
+- **Read on phone** on the book card (admins): uploads the book with a progress bar and
+  shows its link and QR code; scanned with the owner's phone the first time, it also
+  signs that phone in (**Pair a new phone with this book** later). Every member of the
+  library opens the link, sent by any means; nobody else does.
+- **Invite someone** (Settings → Profiles): a link and a QR code that work from any
+  network. The person chooses their name, a password, how they appear and a colour, and
+  reads at once; their profile in the library takes that name and colour. **Reset
+  password** (a link that keeps the address, books and notes), **Sign out all
+  devices**, **Invite again** for an account that left or expired, and **Remove**
+  (deletes the account on the hub). The admin sees each member's address, devices and
+  last sync. Invited people read only through the hub: they are not on the computer's
+  profile picker.
+- **The library key**: books and book files are sealed under one key of the library, so
+  they open on every member's device. **Change library key** seals new books under a
+  new one, delivered to every member automatically.
+- In the reader on the phone: **Sign in** with the address and the password (up to 5
+  devices per account; at the limit the page lists the devices to remove one), **My
+  account** with the account's devices (**Remove**), **Change password**, **Change
+  name**, **Leave library** and **Sign out**; a notice when a device is added or the
+  password is changed elsewhere; several libraries in one browser with a switcher and
+  **All shelves**.
+- **Settings → Server and hub**, on the library's computer only: the address and port,
+  other host names, logins from other devices, remote admin, the hub's address, the
+  library's name and the sync interval, saved into `config.toml` (comments kept) with
+  **Restart shelfgauge**; **Change handle** on the same page.
+- **Delete for everyone** on the book card deletes the book on the hub for every member
+  (their readers then say it is no longer on the hub).
+- `hub.toml`: `[passwords]` (Argon2id cost of new passwords; only raised, never below
+  19 MiB and 2 iterations), `[libraries] member_invite_max_days`.
+
+### Changed
+
+- **Accounts of 0.18–0.20 are not carried over**, nor their publications and book
+  files: the library publishes the books again and invites its members. A library
+  0.21.0 pulls the marks made on phones from each old account once more, then forgets
+  it. The hub refuses to start on a database with old accounts and offers
+  `shelfgauge hub migrate --data <dir>` (deletes accounts, devices, publications and
+  marks; takedowns stay). Phones that read through the old hub delete their old state
+  once and say so.
+- `hub.toml`: `[accounts]` is now `[libraries]` (`max_libraries`,
+  `new_libraries_per_address_per_day`, `expiry_days`); an `[accounts]` section is
+  refused with a hint. `[quotas]` `max_bytes` and `max_publications` count per
+  library (its books and all its members' marks); `max_devices` is per account and
+  defaults to 5. `shelfgauge hub accounts` and `delete-account` are now `hub
+  libraries` and `delete-library`; `hub quota` takes a library's number and has no
+  `--max-devices` any more (devices count per account, `[quotas] max_devices`).
+- The hub's database is schema version 4; the library's user data is version 6.
+- Publication format 2 and book files of format 2 (the book key travels in the
+  manifest, sealed under the library key); older ones are refused with "made by an
+  older shelfgauge".
+- The reader's **This device** page is now **My account**.
+
+### Removed
+
+- Recovery codes, **Join your account** and **Leave the hub account**: a forgotten
+  password is reset through the library's admin.
+- Pairing links for every profile's devices: members sign in; only the owner's phone
+  pairs by QR code.
+
 ## [0.20.0] - 2026-10-25
 
 ### Added

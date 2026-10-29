@@ -514,6 +514,18 @@ password (`[server] auth = "password"`, 0.16.0):
   reader (see Profiles) and to a remote admin without `remote_admin`. The admin pages
   are the one place that shows absolute paths (the library root in *About*); error
   messages stay path-free.
+- **Settings → Server and hub** (`/settings/server`, `/settings/restart`, 0.21.0,
+  `web::routes::server_settings`): the keys that need a restart (`[server]` `bind`,
+  `port`, `allowed_hosts`, `auth`, `remote_admin`; `[hub]` `url`, `instance_name`,
+  `sync_interval_minutes`) are edited in the browser, but only on this computer: a
+  remote request gets `403` even with `remote_admin`, so nobody can open the library
+  to the network or point it to another hub from afar. The new values pass
+  `Config::validate` and `Config::from_toml` before `config::edit::edit_restart_keys`
+  writes them (comments kept); a stale form (`rev`) and `auth = "password"` without an
+  admin password are refused; the hub URL is locked while the library is on its hub.
+  **Restart shelfgauge** (`web::Restart`) stops the server gracefully and `main`
+  starts the program again with the same arguments (`exec` on Unix, else a new
+  process). **Change handle** is on the same page.
 - All routes and URLs are built with a configurable `base_path` (reverse proxy on a
   subpath) through one helper (`web::Urls`); `base_path` is limited to unreserved URL
   characters so it is safe in router paths and links.
@@ -574,7 +586,9 @@ daemon logs to journald or the container log), no metrics endpoint.
   span says a request came from another device); `Profile` and the session `Token`
   have redacted `Debug` output; in V2 device
   tokens, pairing secrets, invite codes, recovery codes and their hashes, keys of any
-  kind, public account ids and publication ids (`BookKey`, `PublicationId`, the hub's
+  kind, public account ids and publication ids (since 0.21.0 also hub passwords,
+  login keys, salts, bundles, invite secrets and payloads, the library token, library
+  ids, handles and account names: addresses appear nowhere in logs) (`BookKey`, `PublicationId`, the hub's
   `Secret` and `AccountId` have redacted `Debug` output; checked for building and
   sealing a publication since 0.17.0 and for every hub route since Phase 24: the hub
   logs route templates, accounts as `account = N`, and no bodies; nor the client
@@ -683,6 +697,10 @@ person, not authentication.
 
 ## V2: hub — books on mobile devices (built, 0.18.0)
 
+Accounts, keys and pairing as described in this introduction are those of 0.18–0.20;
+0.21.0 replaced them with libraries, accounts `name@library` with a password, invites
+and a library key (see "Libraries and accounts" below).
+
 Agreed 2026-10-14. A user opens a book on a phone (or any other device) in a browser and
 reads it even when the computer with the library is off, with annotations and the
 reading position shared with the local instance. It replaces the earlier plan of a
@@ -704,13 +722,16 @@ independent features.
   IndexedDB on devices) encrypts the shelf and user-data records; a *book key* per
   publication encrypts its blobs. A *recovery code* (account id + account key + a
   recovery secret, whose hash is all the hub keeps) restores access; without it and
-  without any paired client the hub data is lost (the books are not).
+  without any paired client the hub data is lost (the books are not). (0.21.0: accounts
+  per library with an address and a password; no recovery code — a forgotten password
+  is reset by the library's admin.)
 - **Pairing**: the instance shows a QR code `https://<hub>/pair#<pairing secret>.<account
   key>`; the fragment never reaches the server, the reader app sends only the one-time
   secret and gets a device token. Device list with revocation in the instance's UI.
 - **Personal links**: "Open on phone" on the book card publishes the book and shows a QR
   code for `https://<hub>/r/<publication-id>`. The link carries no key and opens only on
-  devices paired with the account (the book key comes from the shelf record). This keeps
+  devices paired with the account (the book key comes from the shelf record; since
+  0.21.0 on every member's device of the library, through the library key). This keeps
   the hub from becoming a file-sharing service and keeps purchased books with their
   watermarks on the buyer's devices. DRM-protected books are never published (they
   cannot be read at all, see below).
@@ -764,6 +785,95 @@ independent features.
   (re-encrypting all records on a trusted client); copies already cached on a device
   cannot be retracted, nor can exported `.sgbook` files.
 
+### Libraries and accounts (0.21.0)
+
+Phase 30 (decisions in `.debug/docs/sg-v2devplan.md`, Phase 30) replaced the anonymous
+per-profile accounts of 0.18–0.20, their recovery codes and the pairing of every
+profile's devices. The sections below describe 0.18–0.20 where this one does not say
+otherwise.
+
+- **Model**: a *library* on the hub (handle, public id, one *library token*,
+  publications, quotas over its blobs and all its accounts' records); an *account* is
+  one person in one library, addressed `name@handle`, role `owner` (the owner profile)
+  or `reader` (every other profile, other admins too); a *device* is one browser
+  signed in to one account (at most `[quotas] max_devices`, default 5; the library
+  token is no device). A person in several libraries has one account in each, not
+  linked by the hub. The library token publishes, creates invites, lists, signs out
+  and deletes the library's accounts, changes the handle and syncs any of its accounts
+  (`X-Shelfgauge-Account` names the account; the hub checks it is the library's).
+  Only the library publishes; member accounts read.
+- **Addresses** (`shelfgauge_core::address`): name and handle are 3–32 of ASCII
+  `a–z 0–9 . _ -`, first and last a letter or digit, stored in lower case; the name is
+  unique in its library, the handle on the hub; an old name or handle is free at
+  once. Display names (any script) live in the sealed `profile` record.
+- **Passwords** (`shelfgauge_core::password`, also in the WASM module): NFKC, Argon2id
+  with a random 16-byte salt per account (default and built-in minimum m = 19 MiB,
+  t = 2, p = 1; `[passwords]` in `hub.toml` may raise them, never lower; the reader
+  refuses weaker parameters from a hub), HKDF-SHA256 splits the output into a *login
+  key* (the hub keeps its SHA-256, compared in constant time) and a *wrapping key*
+  (seals the *bundle*: the account key). The password and both keys never leave the
+  browser (the owner's optional password is derived on the library's computer, which
+  holds that account key anyway). `POST /api/prelogin` returns salt and parameters;
+  an unknown address gets a stable fake salt (HMAC of the hub's secret and the
+  address). Wrong logins slow down per address and per client address
+  (`LoginLimiter`: a growing delay, never a lock; signed-in devices are never
+  affected). Changing the password, the name, removing another device and leaving ask
+  the current password (the hub checks its login key); signing out this device asks
+  nothing.
+- **Keys**: one random *library key* per library, in generations (`key_id`). Book keys
+  are sealed under it in the manifest's plaintext header (`KeyHeader`, publication
+  format 2), so every member's device opens every book link and book file of the
+  library. Members get the library key as `library_key` records sealed under their
+  account key (the library holds every account key and pushes new generations
+  itself); annotations, positions and the shelf stay sealed under the account key.
+  **Change library key** makes a new generation for new publications; old books keep
+  theirs.
+- **Invites** (`<hub>/invite#<secret>.<one-time key>`): Settings → Profiles → **Invite
+  someone** (a new `hub_only` profile, role `reader`), **Reset password** (the existing
+  account keeps its address, shelf and notes) or **Invite again** (the account left or
+  expired). The library stores with the invite the account key, the current library key
+  generation, the library's name and the name the admin gave, sealed under the one-time
+  key; the hub deletes the payload when the invite is spent or expires
+  (`member_invite_max_days`). `POST /api/invites/preview` shows `@handle` and the kind
+  without spending; `redeem` creates the account (or sets the new password) and the
+  device. The fragment never reaches the hub.
+- **The owner's phone** pairs as before: the QR code of **Read on phone** (or
+  **Pair a new phone with this book**, `/r/<id>#pair=<secret>.<account key>`) adds a
+  device to the `owner` account; the library never adds a device to another account.
+  The owner manages its devices, name and optional password on the computer
+  (`/api/library/owner/*`).
+- **Removing a member** deletes the profile and the account on the hub (queued in
+  `hub_removals` while the hub is unreachable). A removed, left or expired account and
+  a deleted library answer every device with a plain `401`; the hub reader then drops
+  that account's shelf, copies and keys. `[libraries] expiry_days` deletes an account
+  none of whose own devices was seen (the library token does not count; the `owner`
+  account lives while the token is seen) and a library none of whose token and devices
+  was seen.
+- **Hubs of 0.18–0.20**: the hub refuses a schema v3 database with accounts and offers
+  `shelfgauge hub migrate` (deletes accounts, devices, publications, records and blobs,
+  keeps takedowns); `[accounts]` in `hub.toml` is refused with a pointer to
+  `[libraries]`. A library 0.21 pulls each old account once more
+  (`hub_legacy_accounts`) and forgets it; the hub reader deletes the old browser state
+  once and says so. Upgrade order: the library first, then the hub.
+- **Instance data** (`userdata.sqlite` v6): `hub_library` (one row: hub, public id,
+  handle, token), `hub_library_keys`, `hub_accounts` (per profile: role, account key,
+  name, pending invite, `keys_sent`, the hub's device count and last sighting,
+  `gone_at`, sync state), `hub_removals`, `hub_shelf`/`hub_outbox` as in v5 (emptied:
+  format-1 publications do not open any more), `profiles.hub_only` (invited people,
+  not in the picker or on `/login`).
+- **Hub data** (`hub.sqlite` schema v4): libraries, accounts, devices, member and hub
+  invites, publications, blobs, records, takedowns and the hub secret for fake salts.
+  API: `info`, `libraries` (create, with a hub invite code when registration is
+  `invite`), `prelogin`, `login` (the 6th device answers `409 device_limit` with the
+  device list; `remove_device` retries), `invites/preview|redeem`, `pair`,
+  `account` (GET, DELETE = leave), `bundle`, `password`, `name`, `devices` (list,
+  remove, `PUT …/name` for the own device), `library` (DELETE, `handle`, `accounts`,
+  `invites`, `owner/…`), `pairings`, `pub`, `sync`.
+- **Tests**: `tests/hub.rs`, `tests/hub_client.rs` (members too), core unit
+  tests and interop vectors (`tests/fixtures/publication/`, `password.json` among them);
+  browser checks `.debug/TESTS/invite_smoke.mjs`, `hub_smoke.mjs`, `sgbook_smoke.mjs`,
+  `hub_interop.mjs`, `password_interop.mjs`.
+
 ### Publication format (0.17.0)
 
 Built in 0.17.0, nothing is uploaded yet. Types and decoding are in the core crate
@@ -788,7 +898,12 @@ and sealing in the app (`src/publication/`).
   BE][nonce 12][ciphertext + tag]`; associated data `[version u16 BE][publication id
   16][path UTF-8]`. The version is checked before decrypting (unknown versions are
   refused with a clear error) and authenticated through the associated data.
-- **Versions**: `FORMAT_VERSION` (1) and `SUPPORTED_VERSIONS`; postcard is not
+- **Version 2** (0.21.0): the envelope is `[version u16 BE][header length u16 BE]
+  [header][nonce 12][ciphertext + tag]`; only the manifest has a header (`KeyHeader`,
+  compact JSON: library id, key scope `library`, key owner, `key_id`, the book key
+  sealed as a `book_key` record under the library key), authenticated as part of the
+  associated data (`… ‖ path ‖ 0x00 ‖ header`). Version 1 is not read any more.
+- **Versions**: `FORMAT_VERSION` (2 since 0.21.0) and `SUPPORTED_VERSIONS`; postcard is not
   self-describing, so any change to the format types or to the model is a new format
   version.
 - **Refusals**: DRM-protected books; SVG and other non-raster images are left out.
@@ -805,7 +920,10 @@ Built in Phase 24 (0.18.0); the reader app (Phase 26) and the instance side (Pha
 
 - **Data directory**: `hub.toml` (`hub::config`: `[server]` bind/port/allowed hosts/
   base path, default `127.0.0.1:8743`; `[accounts]` registration `invite` | `open`,
-  `max_accounts`, `invite_days`; `[quotas]` per account bytes/publications/devices;
+  `max_accounts`, `invite_days` — since 0.21.0 `[libraries]` with `registration`,
+  `max_libraries`, `invite_days`, `new_libraries_per_address_per_day`, `expiry_days`,
+  `member_invite_max_days`, and `[passwords]`; `[quotas]` per account bytes/publications/devices
+  — since 0.21.0 bytes and publications per library, `max_devices` (5) per account;
   `[limits]` `max_blob_bytes` 64 MiB, `publication_expiry_days`, per-device and
   per-address request rates), `hub.sqlite` (own `user_version` migrations: accounts,
   devices, pairings, invites, publications, blobs, takedowns, records) and `blobs/`
@@ -906,7 +1024,21 @@ Built in Phase 24 (0.18.0); the reader app (Phase 26) and the instance side (Pha
 Phase 26: `assets/hub/` (`hub.js` pages, `store.js` IndexedDB and API calls,
 `crypto.js`, the WASM module `pkg/`), plain JS modules, no framework, no Node build.
 
-- **Pairing** (`/pair#<secret>.<account key>`): the fragment is removed from the
+- **Accounts** (0.21.0, `assets/hub/account.js`): **Sign in** (`/signin`, address and
+  password; at the device limit the page lists the devices to remove one), **Invite**
+  (`/invite#…`: the library's name and `@handle` before anything is spent, then name,
+  display name, colour and password), My account (`/device`: per account the address,
+  devices with **Remove**, **Change password**, **Change name**, **Leave library**,
+  **Sign out**), notices of a new device and of a password changed elsewhere. Several
+  accounts per browser: the registry database `shelfgauge-reader` and one database
+  `shelfgauge-account-<id>` per account (keys non-extractable, records, outbox,
+  copies); a library switcher and **All shelves** when there are two or more. A link
+  or book file finds its account by the library id in the manifest header and opens
+  the book key with that library key generation (an unknown generation pulls once,
+  then says a newer library key is needed). A `401` drops that account only. The
+  database `shelfgauge-hub` of 0.18–0.20 is deleted once (`store.dropOldState`).
+- **Pairing** (`/pair#<secret>.<account key>`; since 0.21.0 only the owner's phone,
+  also through `/r/<id>#pair=…`): the fragment is removed from the
   address and the history (`history.replaceState`) before anything else; only the
   secret goes to `POST /api/pair`, with the device name (from the user agent, e.g.
   "Chrome on Android") sealed with the account key. The account key becomes two
@@ -1022,7 +1154,7 @@ card's shelf section and the sync worker
   connect 10 s, call 60 s. `ClientError` never carries the request URL; the
   `ureq`/`ureq_proto` log targets are always off (at `trace` they would log hub paths,
   which hold publication ids).
-- **Data** (`userdata.sqlite` v5): `hub_accounts` (one per profile: hub URL, public
+- **Data** (`userdata.sqlite` v5; v6 since 0.21.0, see "Libraries and accounts"): `hub_accounts` (one per profile: hub URL, public
   account id, account key, key id, device id and token, the recovery code until "I
   saved it", sync state), `hub_shelf` (books on the profile's shelf: content key,
   publication id, book key, own/other instance, state `uploading | published |
@@ -1039,11 +1171,15 @@ card's shelf section and the sync worker
   same with `"shelf"` (one shelf item per book per account). Device names are sealed
   the same way (kind `device`, empty id). Interop vectors for the reader app:
   `tests/fixtures/publication/records.json` (`SHELFGAUGE_WRITE_VECTORS=1`).
-- **Recovery code**: `SG1-` and Crockford base32 in groups of four (account id,
+- **Recovery code** (removed in 0.21.0): `SG1-` and Crockford base32 in groups of four (account id,
   account key, recovery secret, 2 checksum bytes: 132 digits); case, dashes, spaces
   and `O`/`I`/`L` tolerated. The hub gets only SHA-256 of the secret's text. The
   instance keeps the code only until the person confirms it is saved.
-- **Page**: create an account (with the invite code when the hub's `/api/info` says
+- **Page** (0.18–0.20; since 0.21.0 **My profile → Phone and other devices** creates the
+  library with its handle and the owner's account, pairs the owner's phone, lists its
+  devices, sets its name and optional password, changes the library key and deletes
+  the library; Settings → Profiles invites, resets, signs out and removes members):
+  create an account (with the invite code when the hub's `/api/info` says
   `invite`), then the recovery code (text and inline SVG QR code, `qrcode` with only
   its `svg` feature); join with a recovery code; pair a device (a one-time link shown
   once, `no-store`, never in a URL the instance serves); the device list (names opened
@@ -1051,7 +1187,9 @@ card's shelf section and the sync worker
   token on the hub, best effort, and forgets the account locally; refused while the
   recovery code waits for "I saved it", since the stored code is its only copy). Pages
   showing a secret are `no-store`; form bodies are never logged, only profile ids.
-- **Shelf** (book card, "On your phone"; `web::routes::shelf`): **Open on phone**
+- **Shelf** (book card, "On your phone"; `web::routes::shelf`; since 0.21.0 **Read on
+  phone** for admins, with upload progress from `GET /book/{id}/hub`, and **Delete for
+  everyone**, which deletes the publication for every member): **Open on phone**
   builds the publication (DRM refused), checks the hub's format range and
   `max_blob_bytes`, seals it under a fresh book key and publication id, puts the book
   on the shelf (`uploading`), uploads the blobs with the manifest last (a device never
@@ -1138,7 +1276,12 @@ A publication in one file (decisions in `.debug/docs/sg-v2devplan.md`, Phase 27)
   entries follow each other without gaps, so their data is found by offset (the
   browser slices the `File`, a large file never sits in WASM memory). Written with the
   `zip` crate, with a fixed time and system so the bytes do not depend on the platform.
-- **`sg.json`** (`src/hub_client/book_file.rs`): container and blob format versions,
+- **Container version 2** (0.21.0): `sg.json` names the library, the key scope and
+  `key_id` instead of carrying the book key (the manifest's header has it, sealed under
+  the library key), so a file opens on every member's device; the snapshot is applied
+  only to the account named in `account`. Version 1 files are refused ("made by an
+  older shelfgauge").
+- **`sg.json`** (version 1, `src/hub_client/book_file.rs`): container and blob format versions,
   publication id, account id, key id, the book key sealed as a record of kind
   `file_key` (id = publication id) under the account key, and a snapshot of the book's
   `shelf_item`, `annotation` and `position` records sealed as they are pushed. No new

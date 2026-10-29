@@ -473,6 +473,95 @@ pub fn edit(text: &str, new: &Config) -> Result<String, EditError> {
     Ok(doc.to_string())
 }
 
+/// The keys of `[server]` and `[hub]` that the settings page edits on this computer
+/// only; they apply after a restart.
+pub const RESTART_KEYS: &[&str] = &[
+    "server.bind",
+    "server.port",
+    "server.allowed_hosts",
+    "server.auth",
+    "server.remote_admin",
+    "hub.url",
+    "hub.instance_name",
+    "hub.sync_interval_minutes",
+];
+
+/// The value of restart key `key` in `config`, as TOML.
+fn restart_value(config: &Config, key: &str) -> Value {
+    let server = &config.server;
+    let hub = &config.hub;
+    match key {
+        "server.bind" => Value::from(server.bind.to_string()),
+        "server.port" => Value::from(i64::from(server.port)),
+        "server.allowed_hosts" => Value::Array(
+            server
+                .allowed_hosts
+                .iter()
+                .map(String::as_str)
+                .collect::<Array>(),
+        ),
+        "server.auth" => Value::from(server.auth.as_str()),
+        "server.remote_admin" => Value::from(server.remote_admin),
+        "hub.url" => Value::from(hub.url.as_str()),
+        "hub.instance_name" => Value::from(hub.instance_name.as_str()),
+        "hub.sync_interval_minutes" => Value::from(i64::from(hub.sync_interval_minutes)),
+        _ => unreachable!("not a restart key: {key}"),
+    }
+}
+
+/// The text of `config.toml` with the [restart keys](RESTART_KEYS) of `new` that differ
+/// from `text` set, as [`edit`] does for the other keys (comments, layout and unknown
+/// keys are kept). Not validated: parse the result with [`Config::from_toml`].
+///
+/// # Examples
+///
+/// ```
+/// use shelfgauge::config::Config;
+/// use shelfgauge::config::edit::edit_restart_keys;
+///
+/// let text = "[server]\nport = 8742 # fixed\n";
+/// let mut config = Config::default();
+/// config.server.port = 9000;
+/// config.hub.url = "https://hub.example.org".into();
+/// assert_eq!(
+///     edit_restart_keys(text, &config).unwrap(),
+///     "[server]\nport = 9000 # fixed\n\n[hub]\nurl = \"https://hub.example.org\"\n"
+/// );
+/// ```
+pub fn edit_restart_keys(text: &str, new: &Config) -> Result<String, EditError> {
+    let (old, _) = Config::parse_unvalidated(text).map_err(EditError::Syntax)?;
+    let mut doc: DocumentMut = text.parse().map_err(|e: toml_edit::TomlError| {
+        EditError::Syntax(e.to_string().trim_end().to_owned())
+    })?;
+    for key in RESTART_KEYS {
+        let value = restart_value(new, key);
+        if value.to_string().trim() == restart_value(&old, key).to_string().trim() {
+            continue;
+        }
+        let (section_name, name) = key.split_once('.').expect("dotted keys");
+        let section = doc
+            .entry(section_name)
+            .or_insert_with(|| Item::Table(Table::new()))
+            .as_table_like_mut()
+            .ok_or(EditError::NotATable(if section_name == "hub" {
+                "hub"
+            } else {
+                "server"
+            }))?;
+        let mut replacement = value;
+        match section.get_mut(name) {
+            Some(Item::Value(old)) => {
+                *replacement.decor_mut() = old.decor().clone();
+                *old = replacement;
+            }
+            _ => {
+                section.insert(name, Item::Value(replacement));
+            }
+        }
+    }
+    Ok(doc.to_string())
+}
+
 /// The hash of a config file's content, carried by the form to detect edits made
 /// since it was rendered.
 pub fn file_hash(bytes: &[u8]) -> String {

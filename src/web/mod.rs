@@ -145,6 +145,38 @@ struct Inner {
     addresses: AddressLimiter,
     /// Books being published to the hub: `(profile id, content key)`.
     publishing: PublishingSet,
+    /// A restart asked for on the settings page (the server stops, the program starts
+    /// again with the same arguments).
+    restart: Arc<Restart>,
+}
+
+/// A restart of the program asked for from the browser.
+#[derive(Debug, Default)]
+pub struct Restart {
+    requested: std::sync::atomic::AtomicBool,
+    notify: tokio::sync::Notify,
+}
+
+impl Restart {
+    /// Whether a restart was asked for.
+    pub fn requested(&self) -> bool {
+        self.requested.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Completes when a restart is asked for.
+    pub async fn wait(&self) {
+        let notified = self.notify.notified();
+        if self.requested() {
+            return;
+        }
+        notified.await;
+    }
+
+    fn request(&self) {
+        self.requested
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.notify.notify_waiters();
+    }
 }
 
 /// The books being published, `(profile id, content key)`, with their upload
@@ -279,6 +311,7 @@ impl AppState {
             passwords: PinLimiter::new(),
             addresses: AddressLimiter::new(),
             publishing: Arc::default(),
+            restart: Arc::default(),
         }))
     }
 
@@ -405,6 +438,16 @@ impl AppState {
             key,
             progress,
         })
+    }
+
+    /// The restart handle: [`Restart::wait`] ends the server for a restart.
+    pub fn restart(&self) -> Arc<Restart> {
+        Arc::clone(&self.0.restart)
+    }
+
+    /// Asks for a restart (the settings page, on this computer).
+    pub(crate) fn request_restart(&self) {
+        self.0.restart.request();
     }
 
     /// The progress of the book being published, `(done, total)` blobs; `None` when
@@ -650,6 +693,14 @@ fn admin_routes(urls: &Urls) -> Vec<(String, MethodRouter<AppState>)> {
         (
             urls.settings_action("export"),
             post(routes::settings::export),
+        ),
+        (
+            urls.settings_action("server"),
+            get(routes::server_settings::page).post(routes::server_settings::save),
+        ),
+        (
+            urls.settings_action("restart"),
+            post(routes::server_settings::restart),
         ),
         (urls.manage_profiles(), post(routes::profiles::add)),
         (

@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block main %}
+<h1>Server and hub</h1>
+<p class="muted">How shelfgauge listens and which hub it uses. Changed only on this computer, saved in <code>config.toml</code> and applied by a restart. <a href="{{ settings_action }}">Back to Settings</a></p>
+{%- if let Some(notice) = notice %}
+<div class="notice settings-notice ok" role="status"><span>{{ notice }}</span></div>
+{%- endif %}
+{%- if let Some(error) = error %}
+<div class="notice settings-notice error" role="alert"><span>{{ error }}</span></div>
+{%- endif %}
+
+{%- if !overridden.is_empty() %}
+<div class="notice settings-notice" role="note"><span>Started with <code>{{ overridden|join(" ") }}</code>: the restart keeps these options, so they still win over the address and port saved here.</span></div>
+{%- endif %}
+
+<form class="settings-form" action="{{ action }}" method="post">
+  <input type="hidden" name="action" value="save">
+  <input type="hidden" name="rev" value="{{ rev }}">
+  <section class="settings-section" id="server">
+    <h2>Server</h2>
+    <fieldset class="field">
+      <legend>Listen on</legend>
+      <label class="check"><input type="radio" name="bind" value="127.0.0.1"{% if bind == "127.0.0.1" %} checked{% endif %}> This computer only <span class="muted">(127.0.0.1)</span></label>
+      <label class="check"><input type="radio" name="bind" value="0.0.0.0"{% if bind == "0.0.0.0" %} checked{% endif %}> The home network too <span class="muted">(0.0.0.0; other devices need logins with passwords)</span></label>
+      {%- if bind_other %}
+      <label class="check"><input type="radio" name="bind" value="{{ bind }}" checked> {{ bind }} <span class="muted">(from config.toml)</span></label>
+      {%- endif %}
+    </fieldset>
+    <div class="field">
+      <label for="server-port">Port</label>
+      <input type="number" id="server-port" name="port" min="1" max="65535" value="{{ port }}" required>
+      <p class="hint">Part of the address in the browser: bookmarks and an installed app use it.</p>
+    </div>
+    <div class="field">
+      <label for="server-hosts">Other names of this computer</label>
+      <textarea id="server-hosts" name="allowed_hosts" rows="3" spellcheck="false" aria-describedby="server-hosts-hint">{{ allowed_hosts }}</textarea>
+      <p class="hint" id="server-hosts-hint">One per line, as typed in the address bar (e.g. <code>192.168.1.20:8742</code> or a name behind a reverse proxy).</p>
+    </div>
+    <fieldset class="field">
+      <legend>Other devices</legend>
+      <label class="check"><input type="radio" name="auth" value="none"{% if !auth_password %} checked{% endif %}> Not served <span class="muted">(only this computer)</span></label>
+      <label class="check"><input type="radio" name="auth" value="password"{% if auth_password %} checked{% endif %}> Each person logs in with their profile's password</label>
+      <label class="check"><input type="checkbox" name="remote_admin" value="1"{% if remote_admin %} checked{% endif %}> Admins may use the admin pages from other devices</label>
+    </fieldset>
+  </section>
+  <section class="settings-section" id="hub">
+    <h2>Hub</h2>
+    <div class="field">
+      <label for="hub-url">Hub address</label>
+      <input type="url" id="hub-url" name="hub_url" value="{{ hub_url }}" placeholder="https://hub.example.org"{% if hub_locked %} disabled{% endif %} aria-describedby="hub-url-hint">
+      {%- if hub_locked %}
+      <p class="hint" id="hub-url-hint">The library is on this hub. To use another one, first <a href="{{ hub_action }}#hub-delete">delete the library on this hub</a>: every member is invited again on the new one.</p>
+      {%- else %}
+      <p class="hint" id="hub-url-hint">For reading on phones and anywhere else. Empty: no hub. See the README, “Running your own hub”.</p>
+      {%- endif %}
+    </div>
+    <div class="field">
+      <label for="hub-name">The library's name on the devices</label>
+      <input type="text" id="hub-name" name="instance_name" value="{{ instance_name }}" maxlength="64" placeholder="the library folder's name">
+    </div>
+    <div class="field">
+      <label for="hub-sync">Minutes between syncs</label>
+      <input type="number" id="hub-sync" name="sync_interval" min="1" max="1440" value="{{ sync_interval }}" required>
+    </div>
+  </section>
+  <div class="form-actions">
+    <button type="submit" class="primary">Save</button>
+  </div>
+</form>
+
+<section class="settings-section" id="restart">
+  <h2>Restart</h2>
+  <p class="muted">Applies what is saved in config.toml. Open pages reconnect after a few seconds.</p>
+  <form action="{{ restart_action }}" method="post">
+    <button type="submit">Restart shelfgauge</button>
+  </form>
+</section>
+
+{%- if let Some(handle) = handle %}
+<section class="settings-section" id="handle">
+  <h2>The library's handle</h2>
+  <p>Every member's address ends in <code>@{{ handle }}</code>. A new handle changes every address at once; the devices stay signed in, but tell the members.</p>
+  <form class="settings-form" action="{{ action }}" method="post">
+    <input type="hidden" name="action" value="handle">
+    <div class="field">
+      <label for="new-handle">New handle</label>
+      <input type="text" id="new-handle" name="handle" maxlength="32" autocomplete="off" spellcheck="false" required>
+    </div>
+    <div class="form-actions">
+      <button type="submit">Change handle</button>
+    </div>
+  </form>
+</section>
+{%- endif %}
+{%- endblock %}

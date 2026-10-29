@@ -1,11 +1,11 @@
-# shelfgauge v0.20.0
+# shelfgauge v0.21.0
 
 A single-binary tool that indexes a folder tree of ebooks — FB2, EPUB, plain text and
 (optionally) HTML files, plain or inside `.zip` archives — into a local SQLite
 database and serves a browsable, searchable web library on `localhost`, with an
 in-browser reader.
 
-**Current version:** 0.20.0
+**Current version:** 0.21.0
 
 ## Status
 
@@ -16,6 +16,13 @@ serves it as a web library: browse by author or by folder, open a book card (cov
 series, genres, annotation), search by title, author, series or annotation, and read
 books in the browser, with search inside the open book. A statistics page shows what
 is in the library, the state of the index and duplicates. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design.
+
+**Reading on phones, for the whole family**: put the library on a [hub](#running-a-hub)
+(self-hosted, end-to-end encrypted) and press **Read on phone** on a book card: one QR
+code opens the book on your phone and signs the phone in. **Invite someone** (Settings → Profiles) gives
+a link that works from anywhere; the person picks an address like `grandma@smiths` and a
+password, reads every book the library sends, offline too, and their bookmarks and
+notes sync with the library.
 
 ## Installation
 
@@ -305,7 +312,8 @@ the configuration are shared.
 use their defaults, unknown keys are reported as warnings, and invalid values stop the
 program with a message naming the key. `--port` and `--bind` override the file.
 
-All sections but `[server]` and `[hub]` can also be changed on the **Settings** page. It edits the
+All sections can also be changed in the browser: `[server]` and `[hub]` on **Settings →
+Server and hub** (on this computer only), the others on the **Settings** page. It edits the
 file in place, keeping your comments, key order and unknown keys, writes only the keys
 you changed, and checks the new values the way the program does at startup, so a save
 never produces a file the next start rejects. If the file was changed since the page
@@ -318,12 +326,12 @@ as it is now. When changes take effect:
 | `[reader]` | At once: parts are made when a page is opened; links to places in books keep working. |
 | `[annotations]` | At once: the limits for the next quote or note, the retention at the next cleanup after a scan. |
 | `[scan]` | At the next scan. The page tells how many books a change would remove from the index (a format turned off, a new exclude pattern) and offers **Rescan now**; no scan starts by itself. |
-| `[server]` | Only in `config.toml`, after a restart: changing the address or port from the browser could cut off access to the page itself. The page shows the running values and which command-line options override them. |
-| `[hub]` | Only in `config.toml`, after a restart. |
+| `[server]` | After a restart: **Settings → Server and hub** saves the address, port, other host names, the login from other devices and remote admin, then offers **Restart shelfgauge** (the program starts again with the same command line). Only on this computer, never from another device; `base_path` stays in `config.toml`. The page shows the running values and which command-line options override them. |
+| `[hub]` | After a restart, on the same page; the hub's address is locked while the library is on its hub (delete it there first). |
 
 | Key | Default | Meaning |
 |---|---|---|
-| `server.bind` | `"127.0.0.1"` | Address to listen on. Only loopback addresses are accepted (there is no built-in authentication; see [Remote access](#remote-access)). |
+| `server.bind` | `"127.0.0.1"` | Address to listen on. Another address (e.g. `"0.0.0.0"` for the home network) needs `auth = "password"`; see [Remote access](#remote-access). |
 | `server.port` | `8742` | Fixed port. If it is busy, shelfgauge exits with an error instead of picking another one: the port is part of the browser origin. |
 | `server.allowed_hosts` | `[]` | Extra host names accepted in the `Host` and `Origin` headers, e.g. `["books.example.org"]` behind a reverse proxy. An entry without a port matches any port. |
 | `server.base_path` | `"/"` | URL prefix when served on a sub-path of a reverse proxy, e.g. `"/books"` (letters, digits, `-`, `.`, `_`, `~`, `/`). |
@@ -341,7 +349,7 @@ as it is now. When changes take effect:
 | `annotations.max_text_length` | `10000` | The longest text that can be saved as a quote, in characters (about 3–4 book pages); `1`–`1000000`. |
 | `annotations.max_note_length` | `10000` | The longest note, in characters; `1`–`1000000`. Lowering a limit never changes saved quotes. |
 | `annotations.removed_book_retention_days` | `30` | Days to keep the bookmarks and quotes of a book that was removed from the library, in case it comes back (a moved folder, an unmounted drive); `0` deletes them at the next scan. |
-| `hub.url` | `""` | The [hub](#running-a-hub) for reading on phones, e.g. `"https://hub.example.org"`; empty = none. HTTPS is required (`http://` only for `127.0.0.1`, `::1` or `localhost`); certificates are checked against the computer's trust store. It is used when a profile creates or joins an account; an account stays on the hub it was made on. |
+| `hub.url` | `""` | The [hub](#running-a-hub) for reading on phones, e.g. `"https://hub.example.org"`; empty = none. HTTPS is required (`http://` only for `127.0.0.1`, `::1` or `localhost`); certificates are checked against the computer's trust store. It is used when the library is put on the hub; it cannot change while the library is there. |
 | `hub.instance_name` | `""` | The name of this library on your other devices; empty = the library folder's name. |
 | `hub.sync_interval_minutes` | `5` | Minutes between syncs with the hub; `1`–`1440`. |
 
@@ -358,9 +366,10 @@ library must be on; shelfgauge has no offline copy of the books.
    one line on standard input). Every person who reads from other devices sets their
    own password on **My profile** (at least 10 characters; a few words are easier to
    type on a phone than a jumble).
-2. In `.shelfgauge/config.toml`, section `[server]`: `auth = "password"`, plus the
-   address or names under which the other devices reach the computer (below). Restart
-   shelfgauge; it refuses to start while no admin has a password.
+2. On **Settings → Server and hub** (on this computer), or in `.shelfgauge/config.toml`,
+   section `[server]`: `auth = "password"`, plus the address or names under which the
+   other devices reach the computer (below). Restart shelfgauge (**Restart shelfgauge**
+   on that page); it refuses to start while no admin has a password.
 
 **The PIN is for this computer, the password for other devices.** The two are
 independent: a PIN is never accepted from another device, and the password is never
@@ -456,11 +465,10 @@ that is allowed depends on the books' licenses and is the operator's responsibil
 
 A hub keeps encrypted copies of books and of reading data (bookmarks, quotes, the
 reading position) for the phones and other devices of one or more libraries, so books
-can be read when the computer with the library is off. It never sees a title or a
-line of text: everything is encrypted before it is uploaded, and the keys stay on the
-libraries and devices of an account. A library's profiles create an account, pair
-their devices, put books on their shelf and sync their marks; the devices read in the
-hub's reader app (see **Reading on your phone** below).
+can be read when the computer with the library is off. It never sees a title, a line
+of text or a password: everything is encrypted before it is uploaded, and the keys
+stay on the library and on its members' devices. The devices read in the hub's reader
+app (see **Reading on your phone** below).
 
 ```sh
 shelfgauge hub --data /srv/shelfgauge-hub     # creates the directory and hub.toml
@@ -468,16 +476,16 @@ shelfgauge hub invite --data /srv/shelfgauge-hub
 ```
 
 The data directory holds `hub.toml` (settings, restart after editing), `hub.sqlite`
-and `blobs/`. Without `--data`, the current directory must already be a hub. Accounts
-are anonymous (no e-mail); a library registers one with a one-time **invite code**
-from `shelfgauge hub invite` (valid 7 days), unless `[accounts] registration = "open"`.
-Other commands: `shelfgauge hub accounts` lists accounts by internal number with their
-usage (no secrets), `shelfgauge hub takedown <publication-id>` deletes a publication
-(the id from its `/r/<id>` link) and refuses that id from now on, `shelfgauge hub
-delete-account <number>` deletes an account with everything it stores, and
-`shelfgauge hub quota <number> --max-bytes 2GiB` gives one account its own quotas
-(`--max-publications`, `--max-devices`; `0` is no limit, `default` the hub's value;
-without options it shows them).
+and `blobs/`. Without `--data`, the current directory must already be a hub. A library
+puts itself on the hub with a one-time **invite code** from `shelfgauge hub invite`
+(valid 7 days), unless `[libraries] registration = "open"`. Other commands:
+`shelfgauge hub libraries` lists the libraries by internal number with their accounts,
+devices and usage (no handles, names or secrets), `shelfgauge hub takedown
+<publication-id>` deletes a publication (the id from its `/r/<id>` link) and refuses
+that id from now on, `shelfgauge hub delete-library <number>` deletes a library with
+its accounts and everything they store, and `shelfgauge hub quota <number> --max-bytes
+2GiB` gives one library its own quotas (also `--max-publications`; `0` is no limit,
+`default` the hub's value; without options it shows them).
 
 The hub listens on `127.0.0.1:8743` and has no TLS of its own: **put it behind a
 reverse proxy with HTTPS**, which phones also need for offline reading. With Caddy:
@@ -494,96 +502,127 @@ instead of per proxy (with nginx, pass `proxy_set_header Host $host;` as for a l
 and `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`). Settings in
 `hub.toml`:
 
-- `[quotas]` per account: `max_bytes`, `max_publications`, `max_devices` (0 = no
-  limit, the default);
+- `[libraries]`: `registration` (`"invite"` or `"open"`), `max_libraries` (0 = no
+  limit), `invite_days` (7), `new_libraries_per_address_per_day` (3, with open
+  registration), `expiry_days` (an account none of whose own devices made a request
+  for that many days is deleted, and a library none of whose devices nor the library
+  itself was seen; 0 = never, the default), `member_invite_max_days` (7: how long the
+  invites libraries give their members stay valid at most);
+- `[quotas]`: `max_bytes` and `max_publications` per library (its books and all its
+  members' marks; 0 = no limit, the default), `max_devices` per account (5);
 - `[limits]`: `max_blob_bytes` (one part or image of a book, 64 MiB),
-  `max_total_bytes` (all accounts together; beyond it the hub takes no new books or
+  `max_total_bytes` (all libraries together; beyond it the hub takes no new books or
   marks; 0 = no limit, the default), `publication_expiry_days` (a book not opened for
   that many days is deleted; 0 = never, the default), `requests_per_minute` per
-  device (600) and `public_requests_per_hour` (60) for registering, pairing and
-  recovering per client address (an IPv6 address counts by its /64);
-- `[accounts]`: `registration`, `max_accounts`, `invite_days`,
-  `new_accounts_per_address_per_day` (3, with open registration),
-  `account_expiry_days` (an account none of whose libraries and devices made a
-  request for that many days is deleted; 0 = never, the default);
+  device (600) and `public_requests_per_hour` (60) for creating libraries, signing in
+  and redeeming invites per client address (an IPv6 address counts by its /64);
+  wrong passwords slow down further attempts for that address, but never lock it;
+- `[passwords]`: `memory_kib` (19456) and `iterations` (2), the Argon2id cost of new
+  and changed passwords; they can be raised, never lowered below these values (the
+  reader refuses weaker ones);
 - `[server] trusted_proxies`: addresses or ranges (`10.0.0.0/8`) of reverse proxies
   whose `X-Forwarded-For` names the client;
 - `[operator]`: `name` and `contact` (an e-mail address or `https://` URL for abuse
   reports) and `terms_file` (`terms.txt` in the data directory, plain text), shown at
-  `/terms` and on the reader's This device page.
+  `/terms` and on the reader's My account page.
 
-**Connecting a library**: set `url` in the `[hub]` section of the library's
-`config.toml` and restart. Then each profile opens **My profile → Phone and other
-devices**: **Create account** (with the invite code) shows a **recovery code** (text
-and QR code) to keep somewhere safe: with it another library joins the same account
-(**Join your account**), and without it and without a paired device the synced data is
-lost with the library. **Pair a device** shows a one-time QR code (valid 10 minutes)
-that carries the account key in the part of the link no server sees; the device list
-shows every library and device of the account and removes one. **Leave the hub
-account** makes the library forget the account (its local bookmarks stay); it is
-offered once the recovery code is saved.
+**Upgrading from 0.18–0.20**: the accounts of those versions are not carried over
+(books are published again by the library, and every member gets an invite). Upgrade
+**the library first**, start it once with the old hub still running (it pulls the
+marks made on phones one last time), **then the hub**: on a database with old accounts
+it refuses to start, says what is there and offers `shelfgauge hub migrate --data
+<dir>`, which deletes the old accounts, devices, publications and marks (takedowns
+stay). An `[accounts]` section in `hub.toml` must be renamed to `[libraries]`
+(`max_accounts` → `max_libraries`, `new_accounts_per_address_per_day` →
+`new_libraries_per_address_per_day`, `account_expiry_days` → `expiry_days`). Phones
+that read through the old hub forget their old pairing and say so.
 
-**Putting a book on the shelf**: the book card of a profile with a hub account has
-**On your phone → Open on phone**. The library uploads an encrypted copy (DRM-protected
-books never leave the library) with the book's bookmarks, quotes and reading position;
-the card then shows the book's link and QR code, which open only on paired devices.
-**Remove from shelf** deletes the hub's copy and its marks there; the library keeps
-its own. A copy deleted by the hub's `publication_expiry_days` shows as expired with
-**Publish again**.
+**Putting the library on the hub**: on **Settings → Server and hub** (on the library's
+computer) enter the hub's address and restart; then **My profile → Phone and other
+devices → Put the library on the hub** asks for the library's **handle** and your
+name. Together they make your address on the hub, e.g. `olga@smiths`: names and handles
+are 3 to 32 Latin letters, digits, dots, dashes or underscores. The handle can be
+changed on Settings → Server and hub (every member's address changes; their devices
+stay signed in). **Delete the library on this hub** removes it with all its accounts
+and books there (nothing on the computer).
 
-**Syncing**: the library syncs the bookmarks, quotes, notes and reading positions of the
-books on the shelf with the hub in the background: soon after a change and every
-`sync_interval_minutes` (and **Sync now** on the hub page). Several libraries of one
-account share the shelf and the marks; the newest change wins, also a deletion. Marks
-of a book a library does not have wait there while the book is on the shelf (they are
-not cleaned up like the marks of a removed book) and attach when it appears.
+**Read on phone**: the book card has **Read on phone** for admins. The library
+uploads an encrypted copy (DRM-protected books never leave the library), shows the
+progress, and then the book's link and a QR code. Scanned with your own phone the
+first time, it also signs the phone in to your account (later: **Pair a new phone
+with this book**). The link opens on the devices of every member of the library and
+nowhere else; send it by any means. **Delete for everyone** deletes the hub's copy
+for every member (their readers then say it is no longer on the hub); the library
+keeps its own marks. A copy deleted by
+the hub's `publication_expiry_days` shows as expired with **Publish again**.
 
-**Reading on your phone**: open the pairing link on the phone (scan the QR code of
-**Pair a device**); the browser is then paired and shows your shelf at the hub's
-address: the books of your account, those you are reading first, each with the
-library it comes from. Any modern browser works; the hub must be reached over HTTPS
-(the browser's encryption and offline storage need it). A book reads as in the
-library: the same text layout, contents, notes in a panel, focus mode with the status
-line, reading settings (kept on the phone), search in the book, bookmarks and quotes
-with notes; the reading position is saved. Marks and the position sync with your
-libraries; a book opened from the shelf continues where you stopped, on whichever
-device that was. A book once opened is kept on the phone (encrypted) and opens
-without a connection, also when the hub is down; marks made meanwhile sync when it is
-back. A browser that is not paired sees no content, also with a book's link.
+**Invite someone**: **Settings → Profiles → Invite someone** asks only a name (e.g.
+"Grandma"), adds a profile for that person and shows a link and a QR code that work
+from any network. The person opens it, chooses the name part of their address
+(`grandma@smiths`), a password (at least 10 characters; a passphrase is easiest) and
+how they appear, and reads at once. They sign in on up to 5 devices (each browser is
+one) with the address and the password, and manage those devices themselves in **My
+account**. The invite page tells them what you can do: this computer holds the keys of
+every account of the library, so you could read their notes, and you can **Reset
+password** (a new link: they keep their address, books and notes; you never learn the
+password). **Sign out all devices** is for a lost phone; **Remove** deletes the
+person's account on the hub and the profile here, and their devices drop the library's
+books at the next connection. If someone may have kept a copy of the library's key,
+**Change library key** (My profile → Phone and other devices) seals new books under a
+new one; members get it automatically. Every member can open every book the library
+has put on the hub. People invited this way read only through the hub: they are not
+offered on this computer's profile picker.
+
+**Syncing**: the library syncs the bookmarks, quotes, notes and reading positions of
+every account's books with the hub in the background: soon after a change and every
+`sync_interval_minutes` (and **Sync now**). Each person's marks stay theirs; the
+newest change wins, also a deletion. Marks of a book the library no longer has wait
+there while the book is on a shelf and attach when it appears.
+
+**Reading on your phone**: open a book link or an invite on the phone, or the hub's
+address and **Sign in**. The shelf shows the books you opened, those you are reading
+first. Any modern browser works; the hub must be reached over HTTPS (the browser's
+encryption and offline storage need it). A book reads as in the library: the same
+text layout, contents, notes in a panel, focus mode with the status line, reading
+settings (kept on the phone), search in the book, bookmarks and quotes with notes; the
+reading position is saved and continues on whichever device you stopped. A book once
+opened is kept on the phone (encrypted) and opens without a connection, also when the
+hub is down; marks made meanwhile sync when it is back. A person in several libraries
+signs in to each (**Add a library** in My account); the shelf then has a library
+switcher and **All shelves**. A browser shared by two people should be signed out of
+all accounts before it changes hands.
 
 On an iPhone or iPad, **add the reader to the home screen** (Share → Add to Home
-Screen): Safari deletes the data of sites not visited for a week, which would unpair
-the browser and drop its copies, while a home screen app keeps them (your marks are
-safe in the library either way; pair again if it happens). Removing a device in the
-library, or a book from the shelf, removes it from the phone at its next connection.
+Screen): Safari deletes the data of sites not visited for a week, which would sign the
+browser out and drop its copies, while a home screen app keeps them (your marks are
+safe in the library either way; sign in again if it happens).
 
-**This device** (the button at the right of the top bar on My books) shows which library
-the phone is paired with, when it last synced and what waits to be sent (**Update
-now**), what it keeps offline (**Remove downloaded books** frees the space; they
-download again when opened), your account's usage on the hub, the hub's version, and
-who runs it with their contact and terms of use when the hub names them.
-**Forget this device** sends the marks made on the phone, unpairs it on the hub and
-removes its books, marks and keys; without a connection it asks first and warns about
-changes not sent yet, and the library lists the device until you remove it there.
+**My account** (the button at the right of the top bar on My books) shows each
+account's address and devices (**Remove**; a new device is announced on the others),
+**Change password**, **Change name** and **Leave library** (these ask the current
+password), what the phone keeps offline (**Remove downloaded books** frees the space),
+the hub's version, and who runs it with their contact and terms of use when the hub
+names them. **Sign out of this library** sends the marks made on the phone and removes
+the library's books, marks and keys from the browser (**Sign out of all** before
+handing the browser to someone else). A forgotten password: ask the library's admin for **Reset password**.
 
 **Book files** (`.sgbook`): instead of putting a book on the hub, **Download book
-file** on the book card writes it into one file that you pass to your devices by any
-means (messenger, e-mail, USB, a synced folder) and open in the reader with **Open
-file** on My books, or by dropping it on the page. The hub keeps no copy; your marks
-and position still sync through it. The file is encrypted for your account: it opens
-only on your paired devices, also without a connection, and is useless to anyone
-else. An installed reader opens it by double-click on a computer with Chrome or Edge,
-and through **Share** on an Android phone; on an iPhone or iPad and in Firefox use
-Open file. Books protected by DRM are never exported. Each download is a new copy;
-files downloaded earlier keep opening. Removing the book from the shelf removes the
-copy from the phone; opening the file again puts the book back.
+file** on the book card writes it into one file that you pass by any means
+(messenger, e-mail, USB, a synced folder) and open in the reader with **Open file** on
+My books, or by dropping it on the page. The hub keeps no copy; marks and position
+still sync through it. The file opens on the devices of every member of the library,
+also without a connection, and is useless to anyone else. An installed reader opens it
+by double-click on a computer with Chrome or Edge, and through **Share** on an Android
+phone; on an iPhone or iPad and in Firefox use Open file. Books protected by DRM are
+never exported. Each download is a new copy; files downloaded earlier keep opening
+(files made before 0.21.0 do not). Removing the book from the shelf removes the copy
+from the phone; opening the file again puts the book back.
 
 Without `trusted_proxies`, all clients behind a proxy on the same machine share one
-budget for registering, pairing and recovering, and with open registration also the 3
-new accounts a day (when upgrading an open hub to 0.20.0, set `trusted_proxies` or
-`new_accounts_per_address_per_day`). The hub logs no
-tokens, secrets, account or publication ids, nor client addresses; `--log-format json`
-suits a log collector.
+budget for creating libraries, signing in and redeeming invites, and with open
+registration also the 3 new libraries a day. The hub logs no passwords, tokens,
+secrets, addresses, library, account or publication ids, nor client addresses;
+`--log-format json` suits a log collector.
 
 **Checking a hub**: `shelfgauge hub check https://hub.example.org` (no data directory
 needed) fetches every file of the reader app from the hub and compares it with the
@@ -623,15 +662,16 @@ What a hub for people you do not know needs beyond the recipe above:
   WantedBy=multi-user.target
   ```
 
-- **Limits in `hub.toml`** (a start; adjust to the disk): `registration = "open"`
-  (or `"invite"` for a closed beta), `max_accounts` set (never 0 on an open hub),
-  `new_accounts_per_address_per_day = 3`, `account_expiry_days = 365`;
-  `[quotas] max_bytes = 1073741824` (1 GiB), `max_publications = 300`,
-  `max_devices = 10`; `[limits] publication_expiry_days = 180` and `max_total_bytes`
+- **Limits in `hub.toml`** (a start; adjust to the disk): `[libraries]
+  registration = "open"` (or `"invite"` for a closed beta), `max_libraries` set (never
+  0 on an open hub), `new_libraries_per_address_per_day = 3`, `expiry_days = 365`;
+  `[quotas] max_bytes = 1073741824` (1 GiB per library), `max_publications = 300`,
+  `max_devices = 5`; `[limits] publication_expiry_days = 180` and `max_total_bytes`
   at about 80 % of the free disk; `trusted_proxies` for the proxy.
 - **Terms and contact**: `[operator] name` and `contact`, and a `terms.txt` written by
   you for your jurisdiction (this project gives no legal text). Points to cover: what
-  is stored (encrypted books and marks, device names, times of use), that the hub
+  is stored (encrypted books and marks, library handles and account names, device
+  names, times of use), that the hub
   cannot read them, the limits and when books and accounts are deleted, how to report
   abuse and how takedowns work (`hub takedown <publication id>`), no warranty.
 - **Backups**: the database first, then the blobs (a blob without a database row is
@@ -644,7 +684,8 @@ What a hub for people you do not know needs beyond the recipe above:
   says `"accepting": false` when `max_total_bytes` is reached), disk space, and the
   logs of the unit (`journalctl -u shelfgauge-hub`); keep proxy access logs short or
   off (Caddy writes none unless `log` is set).
-- **Updates**: replace the binary and restart; the database migrates itself. Visitors
+- **Updates**: replace the binary and restart; the database migrates itself (from
+  0.18–0.20, see "Upgrading" above: `hub migrate` and the order library, then hub). Visitors
   can compare the hub with a release using `shelfgauge hub check`.
 
 ## Changelog
@@ -657,4 +698,4 @@ MIT — see [LICENSE](LICENSE).
 
 ---
 
-_shelfgauge v0.20.0 — MIT License_
+_shelfgauge v0.21.0 — MIT License_

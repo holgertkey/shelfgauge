@@ -1579,3 +1579,45 @@ async fn the_owners_phone_gets_the_library_key_and_opens_a_book_with_it() {
     let (key_id, _) = book_key_of(&manifest, &id, &[(1, key)]);
     assert_eq!(key_id, 1);
 }
+
+#[tokio::test]
+async fn the_handle_changes_on_the_server_page_and_the_hub_url_is_locked() {
+    let hub = TestHub::start().await;
+    let lib = Lib::registered(&hub).await;
+    let (_, secret, one_time) = lib.invite_someone(&hub, "Olga").await;
+    let olga = hub.redeem(&secret, &one_time, "olga").await;
+    let page = lib.get("/settings/server").await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert!(page.body.contains("@home"), "{}", page.body);
+    assert!(
+        page.body.contains("delete the library on this hub"),
+        "the hub address is locked"
+    );
+    let bad = lib
+        .post("/settings/server", &[("action", "handle"), ("handle", "x")])
+        .await;
+    assert_eq!(bad.status, StatusCode::UNPROCESSABLE_ENTITY);
+    let changed = lib
+        .post(
+            "/settings/server",
+            &[("action", "handle"), ("handle", "Smith-Family")],
+        )
+        .await;
+    assert_eq!(changed.location(), "/settings/server?done=handle");
+    assert_eq!(lib.hub_library().handle, "smith-family");
+    // The member's device stays signed in; the new address signs in.
+    let (status, _) = hub.api(Method::GET, "sync", Some(&olga.token), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = hub
+        .api(
+            Method::POST,
+            "login",
+            None,
+            Some(serde_json::json!({
+                "address": "olga@smith-family",
+                "login_key": URL_SAFE_NO_PAD.encode([1u8; 32]),
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+}

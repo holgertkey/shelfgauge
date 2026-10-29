@@ -27,6 +27,7 @@ pub(crate) mod profiles;
 pub(crate) mod read;
 pub(crate) mod scan;
 pub(crate) mod search;
+pub(crate) mod server_settings;
 pub(crate) mod settings;
 pub(crate) mod shelf;
 pub(crate) mod sidebar;

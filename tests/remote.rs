@@ -612,6 +612,21 @@ async fn admin_pages_from_other_devices_follow_remote_admin() {
     let token = lib.phone_session().await;
     let reply = lib.get(Via::Phone, "/settings", Some(&token)).await;
     assert_eq!(reply.status, StatusCode::OK);
+    // `[server]` and `[hub]` change only on this computer, also for a remote admin.
+    assert!(!reply.body.contains("/settings/server\""), "{}", reply.body);
+    for (path, post) in [
+        ("/settings/server", false),
+        ("/settings/server", true),
+        ("/settings/restart", true),
+    ] {
+        let reply = if post {
+            lib.post(Via::Phone, path, Some(&token), "action=save")
+                .await
+        } else {
+            lib.get(Via::Phone, path, Some(&token)).await
+        };
+        assert_eq!(reply.status, StatusCode::FORBIDDEN, "{path} post={post}");
+    }
     // Not even an admin removes the password of this very login from another device.
     let reply = lib
         .post(

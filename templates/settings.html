@@ -62,7 +62,11 @@
 
 <section class="settings-section" id="server">
   <h2>Server</h2>
-  <p class="muted">Change these in config.toml and restart shelfgauge: changing them from the browser could cut off access to this page.</p>
+  {%- if layout.profile.remote %}
+  <p class="muted">These change only on the computer with the library: changing them from another device could cut off access to this page.</p>
+  {%- else %}
+  <p class="muted">Change them, with the hub, in <a href="{{ layout.urls.settings_action("server") }}">Server and hub</a> (applied by a restart), or in config.toml.</p>
+  {%- endif %}
   <dl class="facts settings-facts">
     {%- for row in server %}
     <dt>{{ row.label }}</dt>
