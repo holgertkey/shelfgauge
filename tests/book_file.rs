@@ -307,7 +307,7 @@ async fn a_file_book_points_to_the_newest_file_and_can_be_uploaded() {
     // The older file still opens on its own.
     open_all(&first);
 
-    // "Open on phone" uploads a new publication.
+    // "Read on phone" uploads a new publication.
     assert_eq!(lib.publish(book).await, "published");
     let entry = lib.shelf()[0].clone();
     assert_eq!(entry.kind, ShelfKind::Upload);

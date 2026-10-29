@@ -10,6 +10,8 @@
 //!
 //! Publication ids and book keys are never logged; only profile and book ids.
 
+use std::sync::Arc;
+
 use axum::extract::rejection::FormRejection;
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderValue, header};
@@ -42,6 +44,8 @@ pub(crate) struct ShelfView {
     pub(crate) other: Option<String>,
     /// The book link and its QR code, when it is published.
     pub(crate) link: Option<(String, String)>,
+    /// Whether the profile is the owner (it may pair a phone with the book).
+    pub(crate) owner: bool,
     pub(crate) action: String,
 }
 
@@ -92,6 +96,7 @@ pub(crate) fn view(
         }
     };
     Ok(Some(ShelfView {
+        owner: profile.is_owner(),
         state: state_name,
         other,
         link,
@@ -104,13 +109,13 @@ pub(crate) fn notice(code: &str) -> Option<(&'static str, &'static str)> {
     Some(match code {
         "published" => (
             "ok",
-            "The book is on your shelf: scan the code with your phone, or send the link to \
+            "The book is on the hub: scan the code with your phone, or send the link to \
              anyone in the library.",
         ),
         "removed" => (
             "ok",
-            "The book is off your shelf: the hub's copy and its marks there are deleted. \
-             Your marks in this library stay.",
+            "The book is deleted on the hub, for every member: its copy and your marks \
+             there are gone. Your marks in this library stay.",
         ),
         "removing" => (
             "error",
@@ -153,6 +158,33 @@ fn failure(e: &ClientError) -> &'static str {
     }
 }
 
+/// `GET /book/{id}/hub`: the progress of the book's upload by this profile, as JSON
+/// `{uploading, done, total}` (blobs), for the book card while it publishes.
+pub(crate) async fn progress(
+    State(state): State<AppState>,
+    current: CurrentProfile,
+    Path(id): Path<String>,
+) -> Result<Response, AppError> {
+    let id = parse_id(&id)?;
+    let key = state
+        .db(move |conn| {
+            let book = book_by_id(conn, id)?.ok_or(AppError::NotFound)?;
+            content_key(&book).ok_or(AppError::NotFound)
+        })
+        .await?;
+    let progress = state.upload_progress(current.id(), &key);
+    let (done, total) = progress.unwrap_or((0, 0));
+    Ok((
+        [(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))],
+        axum::Json(serde_json::json!({
+            "uploading": progress.is_some(),
+            "done": done,
+            "total": total,
+        })),
+    )
+        .into_response())
+}
+
 /// The form of `POST /book/{id}/hub`.
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct ShelfForm {
@@ -188,10 +220,65 @@ pub(crate) async fn save(
             Err(code) => code,
         },
         "publish" => publish(&state, library, account, id).await?,
+        "pair" if profile.is_owner() => {
+            return pair_with_book(&state, &current, library, account, id).await;
+        }
         "remove" => remove(&state, library, account, id).await?,
         _ => return Err(AppError::BadRequest("unknown action".to_owned())),
     };
     Ok(Redirect::to(&format!("{}?hub={code}#shelf", state.urls().book(id))).into_response())
+}
+
+/// The owner's phone paired with the book open: a pairing secret and the book link
+/// that carries it ([`HubUrl::book_pair_link`](crate::hub_client::HubUrl::book_pair_link)).
+async fn pair_with_book(
+    state: &AppState,
+    current: &CurrentProfile,
+    library: HubLibrary,
+    account: HubAccount,
+    id: i64,
+) -> Result<Response, AppError> {
+    let content = state
+        .db(move |conn| {
+            let book = book_by_id(conn, id)?.ok_or(AppError::NotFound)?;
+            content_key(&book).ok_or(AppError::NotFound)
+        })
+        .await?;
+    let publication = {
+        let conn = state.userdata().lock();
+        store::shelf_entry(&conn, account.profile, &content)?
+            .filter(|e| e.state == ShelfState::Published && e.kind == ShelfKind::Upload)
+            .and_then(|e| e.publication)
+            .ok_or(AppError::NotFound)?
+    };
+    let token = library.token.clone();
+    let pairing = match call(library.hub_url.clone(), move |c| c.create_pairing(&token)).await? {
+        Ok(pairing) => pairing,
+        Err(e) => {
+            let code = failure(&e);
+            return Ok(
+                Redirect::to(&format!("{}?hub={code}#shelf", state.urls().book(id)))
+                    .into_response(),
+            );
+        }
+    };
+    tracing::info!(
+        profile = account.profile.0,
+        book_id = id,
+        "hub pairing link shown"
+    );
+    let link = library
+        .hub_url
+        .book_pair_link(&publication, &pairing.secret, &account.key);
+    super::hub::pair_page(
+        state,
+        current,
+        crate::web::layout::SidebarMode::default(),
+        link,
+        Some(super::date_time(pairing.expires_at)),
+        state.urls().book(id),
+    )
+    .await
 }
 
 /// The cover of `book` from the cover cache, if any.
@@ -236,7 +323,7 @@ async fn publish(
         return Ok("protected");
     };
     // A second click (or tab) while it uploads, or on a published book, changes nothing.
-    let Some(_publishing) = state.begin_publishing(profile, &info.content_key) else {
+    let Some(publishing) = state.begin_publishing(profile, &info.content_key) else {
         return Ok("busy");
     };
     let entry = {
@@ -249,6 +336,7 @@ async fn publish(
     let instance = super::hub::instance_name(state);
     let userdata = state.userdata_handle();
     let url = library.hub_url.clone();
+    let progress = Arc::clone(&publishing.progress);
     let code = call(url, move |client| {
         Ok(upload(
             &userdata,
@@ -258,6 +346,7 @@ async fn publish(
             &info,
             &publication,
             &instance,
+            &progress,
         ))
     })
     .await?
@@ -272,8 +361,10 @@ async fn publish(
     Ok(code)
 }
 
-/// Seals and uploads `publication`, puts it on the shelf and pushes its records; the
-/// `hub` code of the outcome. Runs blocking HTTP.
+/// Seals and uploads `publication`, puts it on the shelf and pushes its records,
+/// counting the blobs sent in `progress`; the `hub` code of the outcome. Runs
+/// blocking HTTP.
+#[allow(clippy::too_many_arguments)]
 fn upload(
     userdata: &crate::annotations::store::UserData,
     library: &HubLibrary,
@@ -282,6 +373,7 @@ fn upload(
     info: &BookInfo,
     publication: &Publication,
     instance: &str,
+    progress: &crate::web::UploadProgress,
 ) -> &'static str {
     let profile = account.profile;
     let Some(target) = Target::of(library, account) else {
@@ -359,6 +451,7 @@ fn upload(
     // The manifest last: a device never sees a publication with missing parts.
     let mut blobs = sealed;
     blobs.rotate_left(1);
+    progress.start(blobs.len());
     for (path, blob) in &blobs {
         if let Err(e) = client.put_blob(&library.token, &pub_id, *path, blob) {
             tracing::info!(profile = profile.0, error = %e, "publishing failed");
@@ -368,6 +461,7 @@ fn upload(
             restore(userdata, profile, &info.content_key, previous.as_ref());
             return failure(&e);
         }
+        progress.advance();
     }
     {
         let conn = userdata.lock();

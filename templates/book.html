@@ -47,49 +47,53 @@
       {%- when "protected" %}
       <p class="muted">Books protected by DRM never leave this library.</p>
       {%- when "none" %}
-      <p class="muted">Put the book on your shelf to read it on your paired phone and other devices, also when this computer is off. The hub keeps an encrypted copy that only your devices can open. Or download it as a book file and open that on your devices: the hub then keeps no copy.</p>
-      <form method="post" action="{{ shelf.action }}" class="actions">
-        <button type="submit" name="action" value="publish">Open on phone</button>
+      <p class="muted">Send the book to the hub to read it on your phone, and to let every member of the library read it on theirs, also when this computer is off. The hub keeps an encrypted copy that only the library’s members can open. Or download it as a book file that opens on their devices: the hub then keeps no copy.</p>
+      <form method="post" action="{{ shelf.action }}" class="actions" data-upload-progress>
+        <button type="submit" name="action" value="publish">Read on phone</button>
         <button type="submit" name="action" value="export">Download book file</button>
       </form>
       {%- when "published" %}
-      <p>On your shelf{% if let Some(other) = shelf.other %}, from {{ other }}{% endif %}: it shows on your paired devices, with your marks and position.</p>
+      <p>On the hub{% if let Some(other) = shelf.other %}, from {{ other }}{% endif %}: scan the code with your phone, or send the link to anyone in the library. It opens with your marks and position.</p>
       {%- if let Some((link, svg)) = shelf.link %}
-      <details class="book-link">
+      <details class="book-link" open>
         <summary>Book link and QR code</summary>
         <figure class="qr-code">{{ svg|safe }}</figure>
         <p class="secret-text"><code>{{ link }}</code></p>
-        <p class="hint">Opens only on your paired devices.</p>
+        <p class="hint">Opens on the devices of the library’s members, never anywhere else.</p>
       </details>
       {%- endif %}
-      <form method="post" action="{{ shelf.action }}" class="actions">
+      <form method="post" action="{{ shelf.action }}" class="actions" data-upload-progress>
+        {%- if shelf.owner %}
+        <button type="submit" name="action" value="pair">Pair a new phone with this book</button>
+        {%- endif %}
         <button type="submit" name="action" value="export">Download book file</button>
-        <button type="submit" name="action" value="remove">Remove from shelf</button>
+        <button type="submit" name="action" value="remove">Delete for everyone</button>
       </form>
       {%- when "file" %}
-      <p>On your shelf as a book file: open the file in the reader on your paired devices (Open file there). Your marks and position are synced through the hub; the book itself is not on it.</p>
-      <form method="post" action="{{ shelf.action }}" class="actions">
+      <p>On your shelf as a book file: open the file in the hub reader on any member’s device (Open file there). Your marks and position are synced through the hub; the book itself is not on it.</p>
+      <form method="post" action="{{ shelf.action }}" class="actions" data-upload-progress>
         <button type="submit" name="action" value="export">Download book file</button>
-        <button type="submit" name="action" value="publish">Open on phone</button>
-        <button type="submit" name="action" value="remove">Remove from shelf</button>
+        <button type="submit" name="action" value="publish">Read on phone</button>
+        <button type="submit" name="action" value="remove">Delete for everyone</button>
       </form>
       <p class="hint">Each download is a new copy; files downloaded before keep opening on your devices.</p>
       {%- when "expired" %}
       <p>The hub deleted its copy because it was not opened for a long time. Your marks and position stay.</p>
-      <form method="post" action="{{ shelf.action }}" class="actions">
+      <form method="post" action="{{ shelf.action }}" class="actions" data-upload-progress>
         <button type="submit" name="action" value="publish">Publish again</button>
         <button type="submit" name="action" value="export">Download book file</button>
-        <button type="submit" name="action" value="remove">Remove from shelf</button>
+        <button type="submit" name="action" value="remove">Delete for everyone</button>
       </form>
       {%- when "uploading" %}
       <p>The upload was interrupted.</p>
-      <form method="post" action="{{ shelf.action }}" class="actions">
+      <form method="post" action="{{ shelf.action }}" class="actions" data-upload-progress>
         <button type="submit" name="action" value="publish">Try again</button>
-        <button type="submit" name="action" value="remove">Remove from shelf</button>
+        <button type="submit" name="action" value="remove">Delete for everyone</button>
       </form>
       {%- when _ %}
       <p>Being taken off your shelf: the hub's copy is deleted at the next sync.</p>
       {%- endmatch %}
+      <p class="hint upload-progress" role="status" hidden></p>
     </section>
     {%- endif %}
     {%- if !file_present %}

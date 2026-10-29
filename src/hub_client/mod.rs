@@ -151,6 +151,19 @@ impl HubUrl {
         format!("{}/pair#{}.{}", self.0, secret.as_str(), key.to_text())
     }
 
+    /// The link of a publication that also pairs the owner's phone: the book link
+    /// with the pairing secret and the owner's account key in the fragment
+    /// (`#pair=<secret>.<key>`); a phone already signed in to the library just opens
+    /// the book.
+    pub fn book_pair_link(&self, id: &PublicationId, secret: &Secret, key: &AccountKey) -> String {
+        format!(
+            "{}/r/{id}#pair={}.{}",
+            self.0,
+            secret.as_str(),
+            key.to_text()
+        )
+    }
+
     /// The link of a member invite: the secret and the one-time key that opens its
     /// payload, in the fragment.
     pub fn invite_link(&self, secret: &Secret, one_time: &AccountKey) -> String {

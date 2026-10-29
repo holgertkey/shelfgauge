@@ -147,13 +147,45 @@ struct Inner {
     publishing: PublishingSet,
 }
 
-/// The books being published: `(profile id, content key)`.
-type PublishingSet = Arc<Mutex<std::collections::HashSet<(i64, Vec<u8>)>>>;
+/// The books being published, `(profile id, content key)`, with their upload
+/// progress.
+type PublishingSet = Arc<Mutex<std::collections::HashMap<(i64, Vec<u8>), Arc<UploadProgress>>>>;
+
+/// How far an upload got: blobs sent of all (0 of 0 while the book is sealed).
+#[derive(Debug, Default)]
+pub(crate) struct UploadProgress {
+    done: std::sync::atomic::AtomicU32,
+    total: std::sync::atomic::AtomicU32,
+}
+
+impl UploadProgress {
+    /// Sets the number of blobs to send.
+    pub(crate) fn start(&self, total: usize) {
+        let total = u32::try_from(total).unwrap_or(u32::MAX);
+        self.total
+            .store(total, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Counts one blob sent.
+    pub(crate) fn advance(&self) {
+        self.done.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// `(done, total)`.
+    pub(crate) fn get(&self) -> (u32, u32) {
+        (
+            self.done.load(std::sync::atomic::Ordering::Relaxed),
+            self.total.load(std::sync::atomic::Ordering::Relaxed),
+        )
+    }
+}
 
 /// A book being published (see [`AppState::begin_publishing`]); dropping it ends that.
 pub(crate) struct Publishing {
     set: PublishingSet,
     key: (i64, Vec<u8>),
+    /// Its progress, also seen by [`AppState::upload_progress`].
+    pub(crate) progress: Arc<UploadProgress>,
 }
 
 impl Drop for Publishing {
@@ -363,10 +395,28 @@ impl AppState {
     ) -> Option<Publishing> {
         let key = (profile.0, content_key.to_vec());
         let mut set = self.0.publishing.lock().unwrap_or_else(|e| e.into_inner());
-        set.insert(key.clone()).then(|| Publishing {
+        if set.contains_key(&key) {
+            return None;
+        }
+        let progress = Arc::new(UploadProgress::default());
+        set.insert(key.clone(), Arc::clone(&progress));
+        Some(Publishing {
             set: Arc::clone(&self.0.publishing),
             key,
+            progress,
         })
+    }
+
+    /// The progress of the book being published, `(done, total)` blobs; `None` when
+    /// it is not being published.
+    pub(crate) fn upload_progress(
+        &self,
+        profile: crate::profiles::ProfileId,
+        content_key: &[u8],
+    ) -> Option<(u32, u32)> {
+        let set = self.0.publishing.lock().unwrap_or_else(|e| e.into_inner());
+        set.get(&(profile.0, content_key.to_vec()))
+            .map(|progress| progress.get())
     }
 
     /// The user-data database, shared (for work on another thread).
@@ -669,6 +719,7 @@ pub fn router(state: AppState) -> Router {
         .route(&urls.path("/sidebar/folder"), get(routes::sidebar::folder))
         .route(&urls.my_profile(), get(routes::profiles::my_profile))
         .route(&urls.profile_hub(), get(routes::hub::page))
+        .route(&urls.path("/book/{id}/hub"), get(routes::shelf::progress))
         .route_layer(profile())
         .route_layer(auth());
     let admin = admin_routes(urls)

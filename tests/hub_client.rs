@@ -656,7 +656,7 @@ async fn open_on_phone_publishes_the_book_with_its_marks() {
     // Not on the shelf yet: nothing is queued.
     assert_eq!(lib.outbox(), 0);
     let card = lib.get(&format!("/book/{book}")).await;
-    assert!(card.body.contains("Open on phone"), "{}", card.body);
+    assert!(card.body.contains("Read on phone"), "{}", card.body);
 
     assert_eq!(lib.publish(book).await, "published");
     let shelf = lib.shelf();
@@ -670,8 +670,8 @@ async fn open_on_phone_publishes_the_book_with_its_marks() {
     assert_eq!(lib.outbox(), 0, "everything was pushed");
 
     let card = lib.get(&format!("/book/{book}?hub=published")).await;
-    assert!(card.body.contains("The book is on your shelf"));
-    assert!(card.body.contains("Remove from shelf"));
+    assert!(card.body.contains("The book is on the hub"));
+    assert!(card.body.contains("Delete for everyone"));
     assert!(card.body.contains(&format!("{}/r/{id}", hub.url)));
 
     // A device opens the manifest with the book key from the shelf item.
@@ -788,8 +788,8 @@ async fn removing_from_the_shelf_deletes_the_copy_and_the_records() {
     // The bookmark stays in this library; the book can go on the shelf again.
     let card = lib.get(&format!("/book/{book}?hub=removed")).await;
     assert!(card.body.contains("Bookmarks (1)"), "{}", card.body);
-    assert!(card.body.contains("Open on phone"));
-    assert!(card.body.contains("The book is off your shelf"));
+    assert!(card.body.contains("Read on phone"));
+    assert!(card.body.contains("The book is deleted on the hub"));
 }
 
 #[tokio::test]
@@ -861,7 +861,7 @@ async fn drm_books_never_go_on_the_shelf() {
         "{}",
         card.body
     );
-    assert!(!card.body.contains("Open on phone"));
+    assert!(!card.body.contains("Read on phone"));
     assert_eq!(lib.publish(book).await, "protected");
     assert!(lib.shelf().is_empty());
     let token = lib.phone(&hub).await.token;
@@ -1001,6 +1001,285 @@ async fn a_double_click_on_open_on_phone_uploads_once() {
     let before = lib.shelf()[0].publication;
     assert_eq!(lib.publish(book).await, "published");
     assert_eq!(lib.shelf()[0].publication, before);
+}
+
+/// A library on the hub with a bookmark on a published book and the owner's phone,
+/// which has pulled everything.
+async fn with_phone() -> (TestHub, Lib, common::hub::Phone, i64, String) {
+    let hub = TestHub::start().await;
+    let lib = Lib::registered(&hub).await;
+    let book = lib.book("book.txt");
+    let mark = lib.bookmark(book, "b2").await;
+    assert_eq!(lib.publish(book).await, "published");
+    let phone = lib.phone(&hub).await;
+    (hub, lib, phone, book, mark)
+}
+
+/// The note and deletion time of annotation `id` in the library.
+fn note(lib: &Lib, id: &str) -> (Option<String>, Option<i64>) {
+    lib.userdata
+        .lock()
+        .query_row(
+            &format!("SELECT note, deleted_at FROM annotations WHERE id = '{id}'"),
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap()
+}
+
+#[tokio::test]
+async fn the_library_and_the_owners_phone_share_the_marks() {
+    let (hub, lib, phone, book, mark) = with_phone().await;
+    let records = phone.pull(&hub).await;
+    assert!(records.iter().any(|(k, _, _)| k == "shelf_item"));
+    // The phone adds a bookmark and moves the position.
+    let mut added = phone.record(&hub, "annotation", &mark).await;
+    let new_id = "1b4e28ba-2fa1-11d2-883f-0016d3cca427";
+    added["id"] = serde_json::json!(new_id);
+    added["start_block"] = serde_json::json!(4);
+    added["end_block"] = serde_json::json!(4);
+    let t = shelfgauge::annotations::now();
+    added["created_at"] = serde_json::json!(t);
+    added["updated_at"] = serde_json::json!(t);
+    phone.push(&hub, "annotation", new_id, Some(added)).await;
+    let content = lib.shelf()[0].content_key.clone();
+    let position_id = keys::position_id(&phone.key, &content);
+    let position = serde_json::json!({
+        "content_key": URL_SAFE_NO_PAD.encode(&content), "block": 5, "offset": 0,
+        "suffix": "", "progress": 100, "book_title": "T", "book_authors": "A",
+        "updated_at": t,
+    });
+    phone
+        .push(&hub, "position", &position_id, Some(position))
+        .await;
+
+    lib.sync().await;
+    let card = lib.get(&format!("/book/{book}")).await;
+    assert!(card.body.contains("Bookmarks (2)"), "{}", card.body);
+    assert!(card.body.contains("read?at=b5"), "{}", card.body);
+    assert_eq!(lib.outbox(), 0, "a merge is not pushed back");
+    let exported = std::fs::read_dir(lib.library.annotations_dir())
+        .map(|d| d.count())
+        .unwrap_or(0);
+    assert!(exported > 0, "the export follows the merge");
+}
+
+#[tokio::test]
+async fn a_newer_edit_beats_a_deletion_and_a_newer_deletion_beats_an_edit() {
+    let (hub, lib, phone, _book, mark) = with_phone().await;
+    let t = shelfgauge::annotations::now();
+
+    // The phone deletes at t, the library edits the note at t + 10: the edit wins.
+    let mut deleted = phone.record(&hub, "annotation", &mark).await;
+    deleted["deleted_at"] = serde_json::json!(t);
+    deleted["updated_at"] = serde_json::json!(t);
+    phone
+        .push(&hub, "annotation", &mark, Some(deleted.clone()))
+        .await;
+    lib.sql(&format!(
+        "UPDATE annotations SET note = 'kept', updated_at = {} WHERE id = '{mark}'",
+        t + 10
+    ));
+    lib.sync().await;
+    assert_eq!(note(&lib, &mark), (Some("kept".into()), None));
+    let on_hub = phone.record(&hub, "annotation", &mark).await;
+    assert_eq!(on_hub["note"], "kept");
+    assert_eq!(on_hub["deleted_at"], serde_json::Value::Null);
+
+    // Now the deletion is newer: it wins.
+    lib.sql(&format!(
+        "UPDATE annotations SET note = 'lost', updated_at = {} WHERE id = '{mark}'",
+        t + 20
+    ));
+    lib.sync().await;
+    let mut deleted = phone.record(&hub, "annotation", &mark).await;
+    deleted["deleted_at"] = serde_json::json!(t + 30);
+    deleted["updated_at"] = serde_json::json!(t + 30);
+    phone.push(&hub, "annotation", &mark, Some(deleted)).await;
+    lib.sync().await;
+    assert_eq!(note(&lib, &mark).1, Some(t + 30));
+    let reason: String = lib.value(&format!(
+        "SELECT deleted_reason FROM annotations WHERE id = '{mark}'"
+    ));
+    assert_eq!(reason, "user");
+    assert_eq!(lib.outbox(), 0);
+}
+
+#[tokio::test]
+async fn edits_at_the_same_second_end_the_same_everywhere() {
+    let (hub, lib, phone, _book, mark) = with_phone().await;
+    let t = shelfgauge::annotations::now() + 5;
+    lib.sql(&format!(
+        "UPDATE annotations SET note = 'from home', updated_at = {t} WHERE id = '{mark}'"
+    ));
+    lib.sync().await;
+    // The phone saved its edit in the same second, after the library's reached the hub.
+    let mut edited = phone.record(&hub, "annotation", &mark).await;
+    assert_eq!(edited["note"], "from home");
+    edited["note"] = serde_json::json!("from the phone");
+    phone.push(&hub, "annotation", &mark, Some(edited)).await;
+    lib.sync().await;
+    // The bytewise larger plaintext wins: "from the phone" > "from home".
+    assert_eq!(note(&lib, &mark).0.as_deref(), Some("from the phone"));
+    assert_eq!(
+        phone.record(&hub, "annotation", &mark).await["note"],
+        "from the phone",
+        "the library did not push its losing edit over it"
+    );
+}
+
+#[tokio::test]
+async fn a_shelf_item_deleted_on_the_phone_takes_the_book_off_the_shelf() {
+    let (hub, lib, phone, book, mark) = with_phone().await;
+    let content = lib.shelf()[0].content_key.clone();
+    let id = keys::shelf_id(&phone.key, &content);
+    phone.push(&hub, "shelf_item", &id, None).await;
+    lib.sync().await;
+    assert!(lib.shelf().is_empty());
+    let kept: i64 = lib.value(&format!(
+        "SELECT count(*) FROM annotations WHERE id = '{mark}' AND deleted_at IS NULL"
+    ));
+    assert_eq!(kept, 1, "local marks stay");
+    let card = lib.get(&format!("/book/{book}")).await;
+    assert!(card.body.contains("Read on phone"), "{}", card.body);
+}
+
+#[tokio::test]
+async fn records_of_a_book_this_library_lacks_are_kept_for_later() {
+    let hub = TestHub::start().await;
+    let lib = Lib::with_books(&hub.url, "Laptop", &[]);
+    lib.create_library(&hub.invite()).await;
+    let phone = lib.phone(&hub).await;
+    // The phone has a book from elsewhere on the shelf, with a mark.
+    let content = vec![9u8; 16];
+    let item = serde_json::json!({
+        "publication": null, "book_key": null,
+        "content_key": URL_SAFE_NO_PAD.encode(&content), "kind": "file",
+        "instance": "Elsewhere", "title": "Far book", "authors": "A",
+        "updated_at": 1_800_000_000, "format_version": 2,
+    });
+    let shelf_id = keys::shelf_id(&phone.key, &content);
+    phone.push(&hub, "shelf_item", &shelf_id, Some(item)).await;
+    let mark = "0f8fad5b-d9cb-469f-a165-70867728950e";
+    let annotation = serde_json::json!({
+        "id": mark, "content_key": URL_SAFE_NO_PAD.encode(&content),
+        "start_block": 2, "start_offset": 0, "end_block": 2, "end_offset": 0, "text": "",
+        "prefix": "", "suffix": "s", "section_title": null, "note": null,
+        "book_title": "Far book", "book_authors": "A", "created_at": 1, "updated_at": 5,
+        "deleted_at": null,
+    });
+    phone.push(&hub, "annotation", mark, Some(annotation)).await;
+    lib.sync().await;
+    assert_eq!(
+        lib.shelf().len(),
+        1,
+        "the shelf lists the book from Elsewhere"
+    );
+    let orphan: i64 = lib.value(&format!(
+        "SELECT book_id FROM annotations WHERE id = '{mark}' AND deleted_at IS NULL"
+    ));
+    assert_eq!(orphan, 0, "no book here yet");
+    assert_eq!(lib.outbox(), 0);
+
+    // A scan's cleanup keeps them while the book is on the shelf, even with no
+    // retention (regression: they were marked removed and purged).
+    let exporter = shelfgauge::annotations::export::Exporter::new(
+        lib.library.annotations_dir(),
+        "http://127.0.0.1:8742/",
+    );
+    shelfgauge::annotations::attach::cleanup_library(&lib.library, &lib.userdata, &exporter, 0)
+        .unwrap();
+    let kept: i64 = lib.value(&format!(
+        "SELECT count(*) FROM annotations WHERE id = '{mark}' AND deleted_at IS NULL"
+    ));
+    assert_eq!(kept, 1);
+}
+
+#[tokio::test]
+async fn marks_at_places_the_book_does_not_have_do_not_break_its_pages() {
+    // A buggy device could push them; the hub cannot forge them (AEAD).
+    let (hub, lib, phone, book, mark) = with_phone().await;
+    let t = shelfgauge::annotations::now() + 5;
+    let base = phone.record(&hub, "annotation", &mark).await;
+    for (id, start, start_offset, end_offset) in [
+        ("far-away-0000", 99_999, 0, 4),
+        ("backwards-0000", 2, 10, 3),
+    ] {
+        let mut odd = base.clone();
+        odd["id"] = serde_json::json!(id);
+        odd["start_block"] = serde_json::json!(start);
+        odd["end_block"] = serde_json::json!(start);
+        odd["start_offset"] = serde_json::json!(start_offset);
+        odd["end_offset"] = serde_json::json!(end_offset);
+        odd["created_at"] = serde_json::json!(t);
+        odd["updated_at"] = serde_json::json!(t);
+        phone.push(&hub, "annotation", id, Some(odd)).await;
+    }
+    lib.sync().await;
+    let merged: i64 = lib
+        .value("SELECT count(*) FROM annotations WHERE id IN ('far-away-0000', 'backwards-0000')");
+    assert_eq!(merged, 2);
+    for uri in [
+        format!("/book/{book}"),
+        format!("/book/{book}/annotations"),
+        format!("/book/{book}/read"),
+        format!("/book/{book}/read?part=2"),
+    ] {
+        let reply = lib.get(&uri).await;
+        assert_eq!(reply.status, StatusCode::OK, "{uri}: {}", reply.body);
+    }
+}
+
+#[tokio::test]
+async fn a_member_and_the_owner_sync_separate_accounts() {
+    let hub = TestHub::start().await;
+    let lib = Lib::registered(&hub).await;
+    let book = lib.book("book.txt");
+    let owner_mark = lib.bookmark(book, "b2").await;
+    assert_eq!(lib.publish(book).await, "published");
+    let (anna, secret, one_time) = lib.invite_someone(&hub, "Anna").await;
+    let member = hub.redeem(&secret, &one_time, "anna").await;
+    let member_key = AccountKey::new(
+        URL_SAFE_NO_PAD
+            .decode(&member.payload.account_key)
+            .unwrap()
+            .try_into()
+            .unwrap(),
+    );
+    // Anna's device bookmarks the book in her account.
+    let mut mark = common::hub::pull_records(
+        &hub,
+        &lib.phone(&hub).await.token,
+        &lib.account().unwrap().key,
+    )
+    .await
+    .into_iter()
+    .find(|(k, id, _)| k == "annotation" && *id == owner_mark)
+    .and_then(|(_, _, p)| p)
+    .unwrap();
+    let anna_mark = "2c1e28ba-2fa1-11d2-883f-0016d3cca427";
+    mark["id"] = serde_json::json!(anna_mark);
+    common::hub::push_record(
+        &hub,
+        &member.token,
+        &member_key,
+        "annotation",
+        anna_mark,
+        Some(mark),
+    )
+    .await;
+    lib.sync().await;
+    let profile_of = |id: &str| -> i64 {
+        lib.value(&format!(
+            "SELECT profile_id FROM annotations WHERE id = '{id}'"
+        ))
+    };
+    assert_eq!(profile_of(&owner_mark), 1);
+    assert_eq!(profile_of(anna_mark), anna);
+    // Each account on the hub holds only its own records.
+    let anna_records = common::hub::pull_records(&hub, &member.token, &member_key).await;
+    assert!(anna_records.iter().any(|(_, id, _)| id == anna_mark));
+    assert!(!anna_records.iter().any(|(_, id, _)| *id == owner_mark));
 }
 
 #[tokio::test]
@@ -1182,4 +1461,98 @@ async fn hub_check_finds_a_reader_app_that_differs() {
     assert_eq!(report.differing, ["/assets/hub.js"]);
     assert_eq!(report.missing, [("/sw.js".to_owned(), 404)]);
     assert!(!report.csp_matches);
+}
+
+#[tokio::test]
+async fn the_owner_pairs_a_new_phone_with_the_book_open() {
+    let hub = TestHub::start().await;
+    let lib = Lib::registered(&hub).await;
+    let book = lib.book("book.txt");
+    assert_eq!(lib.publish(book).await, "published");
+    let id = lib.shelf()[0].publication.unwrap().to_string();
+    let card = lib.get(&format!("/book/{book}")).await;
+    assert!(
+        card.body.contains("Pair a new phone with this book"),
+        "{}",
+        card.body
+    );
+    let page = lib
+        .post(&format!("/book/{book}/hub"), &[("action", "pair")])
+        .await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+    assert_eq!(page.headers[header::CACHE_CONTROL], "no-store");
+    let prefix = format!("{}/r/{id}#pair=", hub.url);
+    let start = page
+        .body
+        .find(&prefix)
+        .expect("the book link with the pairing")
+        + prefix.len();
+    let fragment: String = page.body[start..]
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        .collect();
+    let (secret, key) = fragment.split_once('.').unwrap();
+    assert_eq!(key, lib.account().unwrap().key.to_text());
+    let (status, _) = hub
+        .api(
+            Method::POST,
+            "pair",
+            None,
+            Some(serde_json::json!({ "secret": secret })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn a_reader_profile_sends_no_book_to_the_hub() {
+    use shelfgauge::profiles::session::{self, Level};
+    use shelfgauge::profiles::{Role, store as profiles};
+
+    let hub = TestHub::start().await;
+    let lib = Lib::registered(&hub).await;
+    let book = lib.book("book.txt");
+    let reader = {
+        let conn = lib.userdata.lock();
+        let anna = profiles::create(&conn, "Anna", 1, Role::Reader, 0)
+            .unwrap()
+            .id;
+        session::create(&conn, anna, Level::Local, false, 0).unwrap()
+    };
+    lib.act_as(Some(reader.as_str()));
+    let card = lib.get(&format!("/book/{book}")).await;
+    assert_eq!(card.status, StatusCode::OK);
+    assert!(!card.body.contains("Read on phone"), "{}", card.body);
+    let refused = lib
+        .post(&format!("/book/{book}/hub"), &[("action", "publish")])
+        .await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN);
+    assert!(lib.shelf().is_empty());
+}
+
+#[tokio::test]
+async fn the_card_asks_for_the_upload_progress() {
+    let hub = TestHub::start().await;
+    let lib = Lib::registered(&hub).await;
+    let book = lib.book("book.txt");
+    let card = lib.get(&format!("/book/{book}")).await;
+    assert!(card.body.contains("data-upload-progress"), "{}", card.body);
+    let idle = lib.get(&format!("/book/{book}/hub")).await;
+    assert_eq!(idle.status, StatusCode::OK);
+    assert_eq!(idle.headers[header::CACHE_CONTROL], "no-store");
+    let state: serde_json::Value = serde_json::from_str(&idle.body).unwrap();
+    assert_eq!(
+        state,
+        serde_json::json!({ "uploading": false, "done": 0, "total": 0 })
+    );
+    // While a second request publishes the same book, the first one's progress shows.
+    let (published, during) = tokio::join!(lib.publish(book), async {
+        lib.get(&format!("/book/{book}/hub")).await
+    });
+    assert_eq!(published, "published");
+    let during: serde_json::Value = serde_json::from_str(&during.body).unwrap();
+    assert!(
+        during["done"].as_u64() <= during["total"].as_u64(),
+        "{during}"
+    );
 }

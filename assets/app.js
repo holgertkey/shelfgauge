@@ -630,8 +630,42 @@ function setupKeys() {
   });
 }
 
+// "Read on phone" uploads while its form is sent: the card asks the server how many
+// parts are up and shows it. The form is still sent normally.
+function setupUploadProgress() {
+  for (const form of document.querySelectorAll("form[data-upload-progress]")) {
+    const line = form.parentElement.querySelector(".upload-progress");
+    if (!line) {
+      continue;
+    }
+    form.addEventListener("submit", (event) => {
+      if (!event.submitter || event.submitter.value !== "publish") {
+        return;
+      }
+      line.hidden = false;
+      line.textContent = "Sealing the book…";
+      const poll = async () => {
+        try {
+          const response = await fetch(form.action, { headers: { Accept: "application/json" } });
+          if (response.ok) {
+            const state = await response.json();
+            if (state.uploading && state.total > 0) {
+              line.textContent = `Uploading: ${state.done} of ${state.total} parts`;
+            }
+          }
+        } catch (e) {
+          // The next poll tries again; the page changes when the upload ends.
+        }
+        setTimeout(poll, 700);
+      };
+      setTimeout(poll, 300);
+    });
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   setupTheme();
+  setupUploadProgress();
   setupSaveNotice();
   setupProfileMenu();
   setupSidebarToggle();

@@ -537,6 +537,85 @@ pub struct Phone {
     pub key: AccountKey,
 }
 
+impl Phone {
+    /// Every record of the account, opened with its key: `(kind, id, plaintext)`
+    /// (`None` for a deletion).
+    pub async fn pull(&self, hub: &TestHub) -> Vec<(String, String, Option<serde_json::Value>)> {
+        pull_records(hub, &self.token, &self.key).await
+    }
+
+    /// Pushes one record sealed with the account key (`None` deletes it).
+    pub async fn push(
+        &self,
+        hub: &TestHub,
+        kind: &str,
+        id: &str,
+        plain: Option<serde_json::Value>,
+    ) {
+        push_record(hub, &self.token, &self.key, kind, id, plain).await;
+    }
+
+    /// The plaintext of record `id` of `kind`.
+    pub async fn record(&self, hub: &TestHub, kind: &str, id: &str) -> serde_json::Value {
+        self.pull(hub)
+            .await
+            .into_iter()
+            .find(|(k, i, _)| k == kind && i == id)
+            .and_then(|(_, _, plain)| plain)
+            .unwrap_or_else(|| panic!("no {kind} {id}"))
+    }
+}
+
+/// Every record of a device's account, opened with `key`.
+pub async fn pull_records(
+    hub: &TestHub,
+    token: &str,
+    key: &AccountKey,
+) -> Vec<(String, String, Option<serde_json::Value>)> {
+    hub.records(token)
+        .await
+        .into_iter()
+        .map(|(kind, id, data)| {
+            let plain = data.map(|d| {
+                let bytes = shelfgauge::hub_client::keys::open_record(key, &kind, &id, &d).unwrap();
+                serde_json::from_slice(&bytes).unwrap()
+            });
+            (kind, id, plain)
+        })
+        .collect()
+}
+
+/// Pushes one record of a device's account sealed with `key` (`None` deletes it).
+pub async fn push_record(
+    hub: &TestHub,
+    token: &str,
+    key: &AccountKey,
+    kind: &str,
+    id: &str,
+    plain: Option<serde_json::Value>,
+) {
+    use base64::Engine as _;
+    let data = plain.map(|p| {
+        let sealed = shelfgauge::hub_client::keys::seal_record(
+            key,
+            kind,
+            id,
+            &serde_json::to_vec(&p).unwrap(),
+        )
+        .unwrap();
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sealed)
+    });
+    let (status, body) = hub
+        .api(
+            Method::POST,
+            "sync",
+            Some(token),
+            Some(serde_json::json!({ "records": [{ "kind": kind, "id": id, "data": data }] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
 /// A password body as the hub reader sends it (login key, salt and bundle derived
 /// from `byte`; the bundle seals `account_key` under a wrapping key of `byte`s).
 pub fn password_body(byte: u8, account_key: &AccountKey) -> serde_json::Value {
