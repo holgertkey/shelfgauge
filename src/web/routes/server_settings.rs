@@ -132,6 +132,17 @@ fn file_config(state: &AppState) -> (Config, String, Option<String>) {
     }
 }
 
+/// Whether logins with passwords are on now or will be at the next start (config.toml):
+/// then an admin must keep a password, or shelfgauge would not start.
+pub(crate) fn password_login(state: &AppState) -> bool {
+    state.auth().is_configured() || file_config(state).0.server.auth == AuthMode::Password
+}
+
+/// Why the last admin password stays (Settings → Profiles and My profile).
+pub(crate) const LAST_ADMIN_PASSWORD: &str = "That would leave no admin with a password \
+    while logins with passwords are on, and shelfgauge would not start. Give another admin \
+    a password first, or turn logins with passwords off (Settings → Server and hub).";
+
 async fn page_response(
     state: &AppState,
     current: &CurrentProfile,

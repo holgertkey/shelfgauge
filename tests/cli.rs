@@ -565,7 +565,48 @@ fn password_login_setup() {
     assert!(remote.contains("location: /login?next=/\r\n"), "{remote}");
     server.stop();
 
+    // The only admin password stays while `auth = "password"`: the next start needs it.
+    let output = run(dir.path(), &["profiles", "remove-password", "Me"]);
+    assert!(!output.status.success());
+    let err = stderr(&output);
+    assert!(
+        err.contains("only admin password") && err.contains("set-password Me"),
+        "{err}"
+    );
+    run(dir.path(), &["profiles", "add", "Anna", "--admin"]);
+    run_with_input(
+        dir.path(),
+        &["profiles", "set-password", "Anna"],
+        "anna's long password\n",
+    );
+    let output = run(dir.path(), &["profiles", "remove", "Anna", "--yes"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let output = run(dir.path(), &["profiles", "remove", "Anna", "--yes"]);
+    assert!(!output.status.success(), "removed already");
+
+    // A second admin with a password: the owner's may go, then that admin is the last.
+    run(dir.path(), &["profiles", "add", "Bea", "--admin"]);
+    run_with_input(
+        dir.path(),
+        &["profiles", "set-password", "Bea"],
+        "bea's long password\n",
+    );
     let output = run(dir.path(), &["profiles", "remove-password", "Me"]);
     assert!(output.status.success(), "{}", stderr(&output));
-    assert!(stdout(&run(dir.path(), &["profiles", "list"])).contains("no password"));
+    assert!(
+        stdout(&run(dir.path(), &["profiles", "list"]))
+            .contains("Me  admin, owner  no PIN  no password")
+    );
+    let output = run(dir.path(), &["profiles", "remove", "Bea", "--yes"]);
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("Bea has the only admin password"));
+
+    // With `auth = "none"` nothing is kept.
+    std::fs::write(
+        dir.path().join(".shelfgauge/config.toml"),
+        format!("[server]\nport = {port}\n"),
+    )
+    .unwrap();
+    let output = run(dir.path(), &["profiles", "remove", "Bea", "--yes"]);
+    assert!(output.status.success(), "{}", stderr(&output));
 }

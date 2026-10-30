@@ -328,6 +328,20 @@ pub fn admin_has_password(conn: &Connection) -> Result<bool, StorageError> {
     )?)
 }
 
+/// Whether this profile holds the only admin password: removing that password, making
+/// the profile a reader or deleting it would leave `[server] auth = "password"` without
+/// an admin who can log in, and shelfgauge would not start (see [`admin_has_password`]).
+pub fn holds_last_admin_password(conn: &Connection, id: ProfileId) -> Result<bool, StorageError> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM profiles
+                        WHERE id = ?1 AND role = 'admin' AND password_hash IS NOT NULL)
+            AND NOT EXISTS (SELECT 1 FROM profiles
+                            WHERE id <> ?1 AND role = 'admin' AND password_hash IS NOT NULL)",
+        [id],
+        |row| row.get(0),
+    )?)
+}
+
 /// Sets whether the other profiles see what this one is reading.
 pub fn set_sharing(conn: &Connection, id: ProfileId, share: bool) -> Result<(), ProfileError> {
     changed(conn.execute(
@@ -472,10 +486,37 @@ mod tests {
         assert_eq!(changed_at, Some(6));
         set_password_hash(&conn, ProfileId::OWNER, None, 7).unwrap();
         assert!(!admin_has_password(&conn).unwrap());
+        assert!(!holds_last_admin_password(&conn, ProfileId::OWNER).unwrap());
         assert!(matches!(
             set_password_hash(&conn, ProfileId(99), None, 7),
             Err(ProfileError::NotFound)
         ));
+    }
+
+    #[test]
+    fn the_last_admin_password_is_the_only_one_of_an_admin() {
+        let data = UserData::open_in_memory().unwrap();
+        let conn = data.lock();
+        let owner = ProfileId::OWNER;
+        let anna = create(&conn, "Anna", 1, Role::Reader, 0).unwrap().id;
+        assert!(
+            !holds_last_admin_password(&conn, owner).unwrap(),
+            "no password"
+        );
+        set_password_hash(&conn, owner, Some("$argon2id$o"), 1).unwrap();
+        set_password_hash(&conn, anna, Some("$argon2id$a"), 1).unwrap();
+        // A reader's password does not count.
+        assert!(holds_last_admin_password(&conn, owner).unwrap());
+        assert!(!holds_last_admin_password(&conn, anna).unwrap());
+        // Two admins with passwords: neither is the last.
+        set_role(&conn, anna, Role::Admin).unwrap();
+        assert!(!holds_last_admin_password(&conn, owner).unwrap());
+        assert!(!holds_last_admin_password(&conn, anna).unwrap());
+        // The owner without one: Anna's is the last.
+        set_password_hash(&conn, owner, None, 2).unwrap();
+        assert!(holds_last_admin_password(&conn, anna).unwrap());
+        assert!(!holds_last_admin_password(&conn, owner).unwrap());
+        assert!(!holds_last_admin_password(&conn, ProfileId(99)).unwrap());
     }
 
     #[test]

@@ -12,7 +12,7 @@ use clap::Parser;
 use shelfgauge::annotations::attach;
 use shelfgauge::annotations::export::Exporter;
 use shelfgauge::annotations::store::UserData;
-use shelfgauge::config::{Config, ConfigOverrides, LiveConfig};
+use shelfgauge::config::{AuthMode, Config, ConfigOverrides, LiveConfig};
 use shelfgauge::container::ReadLimits;
 use shelfgauge::format::PARSER_STACK_SIZE;
 use shelfgauge::library::Library;
@@ -68,7 +68,7 @@ fn main() -> anyhow::Result<()> {
         Mode::ExportAnnotations { profile } => {
             export_annotations(&library, &config, profile.as_deref())
         }
-        Mode::Profiles(action) => profiles(&library, action),
+        Mode::Profiles(action) => profiles(&library, &config, action),
         Mode::Errors => errors(&library),
         Mode::Hub(_) => unreachable!("handled before the library is opened"),
     }
@@ -328,8 +328,29 @@ fn find_profile(user: &rusqlite::Connection, name: &str) -> anyhow::Result<Profi
     )
 }
 
+/// Refuses to take away the only admin password while config.toml has
+/// `auth = "password"`: the next start would fail.
+fn keep_last_admin_password(
+    conn: &rusqlite::Connection,
+    config: &Config,
+    profile: &Profile,
+) -> anyhow::Result<()> {
+    if config.server.auth == AuthMode::Password
+        && profile_store::holds_last_admin_password(conn, profile.id)?
+    {
+        anyhow::bail!(
+            "{name} has the only admin password, and config.toml has `auth = \"password\"`: \
+             without it shelfgauge would not start. Give another admin a password first \
+             (`shelfgauge profiles set-password <name>`), or set `auth = \"none\"`; to \
+             replace a forgotten password, run `shelfgauge profiles set-password {name}`",
+            name = profile.name
+        );
+    }
+    Ok(())
+}
+
 /// `shelfgauge profiles …`.
-fn profiles(library: &Library, action: ProfilesAction) -> anyhow::Result<()> {
+fn profiles(library: &Library, config: &Config, action: ProfilesAction) -> anyhow::Result<()> {
     let user = open_userdata(library)?;
     let conn = user.lock();
     match action {
@@ -365,6 +386,7 @@ fn profiles(library: &Library, action: ProfilesAction) -> anyhow::Result<()> {
             if profile.id.is_owner() {
                 anyhow::bail!("the owner profile {} cannot be removed", profile.name);
             }
+            keep_last_admin_password(&conn, config, &profile)?;
             if !yes
                 && !confirm(&format!(
                     "Delete the profile {} with its bookmarks, quotes and reading places? \
@@ -396,6 +418,7 @@ fn profiles(library: &Library, action: ProfilesAction) -> anyhow::Result<()> {
         }
         ProfilesAction::RemovePassword { name } => {
             let profile = find_profile(&conn, &name)?;
+            keep_last_admin_password(&conn, config, &profile)?;
             let now = shelfgauge::annotations::now();
             profile_store::set_password_hash(&conn, profile.id, None, now)?;
             let ended = session::end_password_sessions(&conn, profile.id, None)?;

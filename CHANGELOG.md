@@ -8,6 +8,15 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+### Changed
+
+- **The only admin password stays while logins with passwords are on** (now or, by
+  `config.toml`, at the next start): **Remove password**, making that admin a reader and
+  deleting the profile are refused on My profile, Settings → Profiles and in
+  `shelfgauge profiles remove-password` / `remove`, with a note saying why. Before, the
+  removal went through and shelfgauge did not start the next time. A forgotten password
+  is replaced with `shelfgauge profiles set-password NAME`.
+
 ## [0.21.0] - 2026-10-29
 
 Upgrade **the library first**, start it once with the old hub still running, **then

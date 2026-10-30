@@ -147,7 +147,7 @@
             <button type="submit">Remove PIN</button>
           </form>
           {%- endif %}
-          {%- if profile.has_password %}
+          {%- if profile.has_password && !profile.last_admin_password %}
           <form action="{{ layout.urls.manage_profile(profile.id, "remove-password") }}" method="post" class="inline-form">
             <button type="submit">Remove password</button>
           </form>
@@ -156,6 +156,9 @@
           <a class="button danger" href="{{ layout.urls.manage_profile(profile.id, "delete") }}">Delete…</a>
           {%- endif %}
         </div>
+        {%- if profile.last_admin_password %}
+        <p class="hint">The only admin password, and logins with passwords are on: without it shelfgauge would not start. Its password is not removed{% if !profile.owner %}, nor is the profile made a reader or deleted{% endif %}, until another admin has a password or logins with passwords are off (Settings → Server and hub).</p>
+        {%- endif %}
       </details>
     </li>
     {%- endfor %}

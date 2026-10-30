@@ -294,7 +294,10 @@ the configuration are shared.
   can read `.shelfgauge/userdata.sqlite`. It is asked only on this computer.
 - **Password** (optional): the login from a phone or another computer, see
   [Remote access](#remote-access). Set on **My profile**; an admin can remove another
-  profile's, and `shelfgauge profiles remove-password NAME` removes a forgotten one.
+  profile's, and `shelfgauge profiles set-password NAME` replaces a forgotten one
+  (`remove-password NAME` removes it). While logins with passwords are on, the only
+  admin password stays: it is not removed, nor its profile made a reader or deleted,
+  until another admin has a password or `auth` is `"none"` again.
 - **Colors**: a profile's color is its avatar and the color of links and buttons.
 - **Family activity** (off by default): with **Show my reading to the other profiles**
   on **My profile**, the others see the books you are reading and how far you are, on

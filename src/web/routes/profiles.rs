@@ -22,6 +22,7 @@ use rusqlite::Connection;
 use serde::Deserialize;
 
 use super::annotations::ApiError;
+use super::server_settings::{LAST_ADMIN_PASSWORD, password_login};
 use super::{parse_id, render};
 use crate::annotations::attach;
 use crate::annotations::now;
@@ -72,6 +73,8 @@ pub(crate) struct ProfileView {
     pub(crate) hub: Option<super::members::HubStatus>,
     /// Made by a hub invite.
     pub(crate) hub_only: bool,
+    /// Holds the only admin password while logins with passwords are on: it stays.
+    pub(crate) last_admin_password: bool,
 }
 
 impl ProfileView {
@@ -90,6 +93,7 @@ impl ProfileView {
                 .map_or_else(|| "never".to_owned(), super::date),
             hub: None,
             hub_only: profile.hub_only,
+            last_admin_password: false,
         }
     }
 }
@@ -583,6 +587,9 @@ fn my_profile_page(
     let theme = settings.get("theme").unwrap_or("");
     let summary = reader_summary(&settings);
     let urls = state.urls();
+    let mut view = ProfileView::new(profile);
+    view.last_admin_password = password_login(state)
+        && store::holds_last_admin_password(&state.userdata().lock(), profile.id)?;
     Ok(MyProfilePage {
         layout: Layout::new(
             state,
@@ -590,7 +597,7 @@ fn my_profile_page(
             "My profile",
             sidebar::build(conn, state, mode, &Focus::None)?,
         ),
-        profile: ProfileView::new(profile),
+        profile: view,
         several: current.several(),
         share: profile.share_activity,
         colors: colors(profile.color),
@@ -964,6 +971,18 @@ async fn save_password(
             )],
         ));
     }
+    if remove && password_login(state) {
+        let last = user(state, move |_, conn| {
+            Ok(store::holds_last_admin_password(conn, id)?)
+        })
+        .await?;
+        if last {
+            return Ok(Saved::Refused(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                vec![("current_password", LAST_ADMIN_PASSWORD.to_owned())],
+            ));
+        }
+    }
     if current.profile.has_password {
         if let CheckedPassword::Wrong(status, message) =
             check_password(state, id, form.current_password.clone()).await?
@@ -1124,15 +1143,27 @@ impl ProfilesSection {
                     "Your own password can be removed only on the computer with the library."
                         .to_owned(),
                 ),
+                "last-admin-password" => ("error", LAST_ADMIN_PASSWORD.to_owned()),
                 _ => return None,
             })
         });
+        // The only admin with a password keeps it, its role and its profile.
+        let holders: Vec<ProfileId> = profiles
+            .iter()
+            .filter(|p| p.is_admin() && p.has_password)
+            .map(|p| p.id)
+            .collect();
+        let last = match holders[..] {
+            [id] if password_login(state) => Some(id),
+            _ => None,
+        };
         Ok(Self {
             can_add: profiles.len() < crate::profiles::MAX_PROFILES,
             profiles: profiles
                 .iter()
                 .map(|p| {
                     let mut view = ProfileView::new(p);
+                    view.last_admin_password = last == Some(p.id);
                     view.hub = library.as_ref().map(|l| {
                         super::members::status(
                             accounts.iter().find(|a| a.profile == p.id),
@@ -1307,6 +1338,12 @@ pub(crate) async fn manage(
     let profile = user(&state, move |_, conn| Ok(store::get(conn, id)?))
         .await?
         .ok_or(AppError::NotFound)?;
+    // Removing the password, the role or the profile of the only admin with a password
+    // is refused while logins with passwords are on (see `password_login`).
+    let guard = password_login(&state);
+    let last = move |conn: &Connection| -> Result<bool, AppError> {
+        Ok(guard && store::holds_last_admin_password(conn, id)?)
+    };
     let done: &'static str = match action.as_str() {
         "invite" | "reset" => {
             let kind = if action == "invite" {
@@ -1357,6 +1394,9 @@ pub(crate) async fn manage(
                 .and_then(Role::parse)
                 .ok_or_else(|| AppError::BadRequest("unknown role".into()))?;
             user(&state, move |_, conn| {
+                if role != Role::Admin && last(conn)? {
+                    return Ok("last-admin-password");
+                }
                 match store::set_role(conn, id, role) {
                     Ok(()) => Ok("role"),
                     Err(e) => refused(e),
@@ -1378,15 +1418,22 @@ pub(crate) async fn manage(
         // As on My profile: not the password of this very login.
         "remove-password" if current.remote && id == current.id() => "own-password",
         "remove-password" => {
-            user(&state, move |_, conn| {
+            let removed = user(&state, move |_, conn| {
+                if last(conn)? {
+                    return Ok(false);
+                }
                 store::set_password_hash(conn, id, None, now()).map_err(profile_error)?;
                 session::end_password_sessions(conn, id, None)?;
-                Ok(())
+                Ok(true)
             })
             .await?;
-            state.passwords().success(id);
-            tracing::info!(profile = id.0, "password removed by an admin");
-            "password-removed"
+            if removed {
+                state.passwords().success(id);
+                tracing::info!(profile = id.0, "password removed by an admin");
+                "password-removed"
+            } else {
+                "last-admin-password"
+            }
         }
         "export" => {
             let summary = state
@@ -1413,15 +1460,23 @@ pub(crate) async fn manage(
                 let url = format!("{}?mismatch=1", urls.manage_profile(id.0, "delete"));
                 return Ok(Redirect::to(&url).into_response());
             } else {
-                user(&state, move |_, conn| {
+                let deleted = user(&state, move |_, conn| {
+                    if last(conn)? {
+                        return Ok(false);
+                    }
                     super::members::queue_removal(conn, id)?;
-                    store::delete(conn, id).map_err(profile_error)
+                    store::delete(conn, id).map_err(profile_error)?;
+                    Ok(true)
                 })
                 .await?;
-                state.pins().success(id);
-                tracing::info!(profile = id.0, "profile deleted");
-                super::members::remove_now(&state).await;
-                "deleted"
+                if deleted {
+                    state.pins().success(id);
+                    tracing::info!(profile = id.0, "profile deleted");
+                    super::members::remove_now(&state).await;
+                    "deleted"
+                } else {
+                    "last-admin-password"
+                }
             }
         }
         _ => return Err(AppError::NotFound),

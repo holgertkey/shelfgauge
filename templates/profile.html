@@ -76,7 +76,7 @@
       <p class="field-error" id="current-password-error">{{ error }}</p>
       {%- endif %}
       {%- if profile.owner %}
-      <p class="hint">Forgot it? Run <code>shelfgauge profiles remove-password &lt;name&gt;</code> on the computer with the library.</p>
+      <p class="hint">Forgot it? Run <code>shelfgauge profiles set-password &lt;name&gt;</code> on the computer with the library.</p>
       {%- else %}
       <p class="hint">Forgot it? An admin can remove it in Settings → Profiles.</p>
       {%- endif %}
@@ -99,10 +99,13 @@
     </div>
     <div class="form-actions">
       <button type="submit" class="primary" name="action" value="set-password">{% if profile.has_password %}Change password{% else %}Set password{% endif %}</button>
-      {%- if profile.has_password && !remote %}
+      {%- if profile.has_password && !remote && !profile.last_admin_password %}
       <button type="submit" name="action" value="remove-password">Remove password</button>
       {%- endif %}
     </div>
+    {%- if profile.last_admin_password %}
+    <p class="hint">This is the only admin password, and logins with passwords are on: it can be changed but not removed, or shelfgauge would not start. To remove it, give another admin a password first, or turn logins with passwords off (Settings → Server and hub).</p>
+    {%- endif %}
   </form>
 </section>
 

@@ -18,7 +18,7 @@ use shelfgauge::container::ReadLimits;
 use shelfgauge::format::Registry;
 use shelfgauge::library::Library;
 use shelfgauge::profiles::session::Level;
-use shelfgauge::profiles::{ProfileId, store as profiles};
+use shelfgauge::profiles::{ProfileId, password, store as profiles};
 use shelfgauge::scanner::{BackgroundScan, ScanProgress, Scanner};
 use shelfgauge::storage::books::all_books;
 use shelfgauge::storage::{open_read_pool, open_writer};
@@ -781,6 +781,101 @@ async fn readers_get_no_admin_pages_and_the_owner_stays() {
         .await;
     assert!(reply.location().ends_with("delete?mismatch=1"));
     assert!(profiles::get(&lib.userdata.lock(), anna).unwrap().is_some());
+}
+
+/// The only admin password stays while config.toml turns logins with passwords on for
+/// the next start (this server runs without them): its removal, making its profile a
+/// reader and deleting the profile are refused, on Settings → Profiles and My profile.
+#[tokio::test]
+async fn the_last_admin_password_stays_while_the_next_start_needs_it() {
+    let lib = Lib::new();
+    let (anna, reply) = lib.add(None, "name=Anna&role=admin").await;
+    let owner_token = reply.cookie().unwrap();
+    let anna_token = lib.select(anna).await;
+    let hash = password::hash("anna's long password").unwrap();
+    profiles::set_password_hash(&lib.userdata.lock(), anna, Some(&hash), 0).unwrap();
+    let anna_url = |action: &str| format!("/settings/profiles/{anna}/{action}");
+
+    // Without logins with passwords nothing is kept.
+    let settings = lib.get("/settings", Some(&owner_token)).await;
+    assert!(
+        !settings.body.contains("The only admin password")
+            && settings.body.contains(&anna_url("remove-password")),
+        "{}",
+        settings.body
+    );
+
+    std::fs::write(lib.library.config_path(), "[server]\nauth = \"password\"\n").unwrap();
+    let settings = lib.get("/settings", Some(&owner_token)).await;
+    assert!(
+        settings.body.contains("The only admin password")
+            && !settings.body.contains(&anna_url("remove-password")),
+        "{}",
+        settings.body
+    );
+    for (action, body) in [
+        ("remove-password", ""),
+        ("role", "role=reader"),
+        ("delete", "name=Anna"),
+    ] {
+        let reply = lib.form(&anna_url(action), Some(&owner_token), body).await;
+        assert_eq!(
+            reply.location(),
+            "/settings?profile=last-admin-password#profiles",
+            "{action}"
+        );
+    }
+    let kept = profiles::get(&lib.userdata.lock(), anna).unwrap().unwrap();
+    assert!(kept.is_admin() && kept.has_password);
+    let notice = lib
+        .get("/settings?profile=last-admin-password", Some(&owner_token))
+        .await;
+    assert!(
+        notice.body.contains("no admin with a password"),
+        "{}",
+        notice.body
+    );
+    // Anna on My profile: no Remove password, and a post of it is refused.
+    let page = lib.get("/profile", Some(&anna_token)).await;
+    assert!(
+        page.body.contains("This is the only admin password")
+            && !page.body.contains(r#"value="remove-password""#),
+        "{}",
+        page.body
+    );
+    let reply = lib
+        .form(
+            "/profile",
+            Some(&anna_token),
+            "action=remove-password&current_password=anna%27s+long+password",
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(
+        reply.body.contains("no admin with a password"),
+        "{}",
+        reply.body
+    );
+
+    // Once the owner has a password too, Anna's may go.
+    profiles::set_password_hash(&lib.userdata.lock(), ProfileId::OWNER, Some(&hash), 0).unwrap();
+    let reply = lib
+        .form(&anna_url("remove-password"), Some(&owner_token), "")
+        .await;
+    assert_eq!(
+        reply.location(),
+        "/settings?profile=password-removed#profiles"
+    );
+    // The owner's is the last now; with logins with passwords off in the file, it goes.
+    std::fs::write(lib.library.config_path(), "[server]\nauth = \"none\"\n").unwrap();
+    let reply = lib
+        .form(
+            "/profile",
+            Some(&owner_token),
+            "action=remove-password&current_password=anna%27s+long+password",
+        )
+        .await;
+    assert_eq!(reply.location(), "/profile?done=password-removed");
 }
 
 #[tokio::test]

@@ -658,7 +658,11 @@ person, not authentication.
   address, then every login from it is refused. Setting or changing a password ends the
   profile's other password sessions (the current one and local ones stay); removing
   it, by the person locally, an admin or `shelfgauge profiles remove-password`, ends
-  all of them. The plan's `POST /profile/password` became the actions `set-password`
+  all of them. While `auth = "password"` runs or is in `config.toml` for the next start,
+  the only admin password stays (`store::holds_last_admin_password`): removing it,
+  making its profile a reader or deleting the profile is refused on My profile,
+  Settings → Profiles (`last-admin-password`) and in the CLI (`remove-password`,
+  `remove`), since the next start would fail without it. The plan's `POST /profile/password` became the actions `set-password`
   and `remove-password` of `POST /profile`, like the PIN's.
 - **Roles**: `admin` sees Settings, Rescan, maintenance and Settings → Profiles (add,
   rename, recolor, role, remove PIN, delete with typed-name confirmation and "Export

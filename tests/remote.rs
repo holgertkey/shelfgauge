@@ -884,7 +884,40 @@ async fn password_changes_and_removal() {
         lib.get(Via::Phone, "/", Some(&anna_token)).await.location(),
         "/login?next=/"
     );
-    // On this computer the owner removes their own password.
+    // The owner's is now the only admin password, and logins with passwords are on: it
+    // stays, or shelfgauge would not start.
+    let page = lib
+        .get(Via::Local, "/profile", Some(at_home.as_str()))
+        .await;
+    assert!(
+        !page.body.contains(r#"value="remove-password""#)
+            && page.body.contains("This is the only admin password"),
+        "{}",
+        page.body
+    );
+    let reply = lib
+        .post(
+            Via::Local,
+            "/profile",
+            Some(at_home.as_str()),
+            "action=remove-password&current_password=a+new+passphrase",
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(
+        reply.body.contains("no admin with a password"),
+        "{}",
+        reply.body
+    );
+    assert!(
+        profiles::get(&lib.userdata.lock(), ProfileId::OWNER)
+            .unwrap()
+            .unwrap()
+            .has_password
+    );
+    // With another admin with a password, the owner removes their own on this computer.
+    profiles::set_role(&lib.userdata.lock(), anna, Role::Admin).unwrap();
+    lib.set_password(anna, "anna's long password");
     let reply = lib
         .post(
             Via::Local,
