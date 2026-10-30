@@ -80,6 +80,12 @@ readable on the phone without them.
   Because of this page, Chrome cannot install the reader as an app behind a free
   ngrok domain (it fetches the app manifest without the cookie); reading in the
   browser works.
+- A phone updates its reader (after the hub is updated, or the first time after
+  shelfgauge 0.22.0) only with that cookie, since the browser fetches the new version
+  without the reader's header. When **My account** shows the hub's version as unknown,
+  or a new hub version does not arrive, open `https://your-name.ngrok-free.dev/terms`
+  on the phone (a page the reader does not keep offline), press **Visit**, then open
+  the shelf again.
 - 1 GB of traffic and 20 000 HTTP requests a month; illustrated books use the
   traffic up fast.
 

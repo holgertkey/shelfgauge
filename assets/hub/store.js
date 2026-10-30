@@ -258,7 +258,9 @@ export async function api(path, options = {}, token) {
   }
   const response = await fetch(`${base}/api/${path}`, Object.assign({}, options, { headers, cache: "no-store" }));
   if ((response.headers.get("Content-Type") || "").startsWith("text/html")) {
-    throw new Unreachable("Something between this device and the hub answered instead of it (a proxy's warning or a Wi-Fi sign-in page). Open the hub's address in the browser once, then try again.");
+    // The app's own pages come from the worker's cache, so the person is sent to one
+    // it does not keep, where such a page can show.
+    throw new Unreachable(`Something between this device and the hub answered instead of it (a proxy's warning or a Wi-Fi sign-in page). Open ${location.origin}${base}/terms in the browser, follow that page, then try again.`);
   }
   if (response.status === 401 && token) {
     throw new Unpaired("This device is no longer signed in.");
