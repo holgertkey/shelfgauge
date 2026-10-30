@@ -2105,14 +2105,16 @@ async fn a_trusted_proxy_gives_each_client_its_own_budget() {
     );
 }
 
-#[tokio::test]
-async fn forwarded_values_of_an_untrusted_peer_are_ignored() {
-    let hub = TestHub::new(|c| c.limits.public_requests_per_hour = 1);
-    for (value, expected) in [
-        ("192.0.2.1", StatusCode::FORBIDDEN),
-        ("192.0.2.2", StatusCode::TOO_MANY_REQUESTS),
-    ] {
-        let answer = hub
+/// Two pairing attempts from a loopback peer with the given `X-Forwarded-For` values,
+/// on a hub with one public request per hour: their statuses.
+async fn pair_twice(edit: impl FnOnce(&mut HubConfig), values: [&str; 2]) -> [StatusCode; 2] {
+    let hub = TestHub::new(|c| {
+        c.limits.public_requests_per_hour = 1;
+        edit(c);
+    });
+    let mut statuses = [StatusCode::OK; 2];
+    for (status, value) in statuses.iter_mut().zip(values) {
+        *status = hub
             .call_with(
                 Method::POST,
                 "/api/pair",
@@ -2123,9 +2125,60 @@ async fn forwarded_values_of_an_untrusted_peer_are_ignored() {
                         .header("x-forwarded-for", value)
                 },
             )
-            .await;
-        assert_eq!(answer.status, expected, "{value}");
+            .await
+            .status;
     }
+    statuses
+}
+
+/// By default loopback is a trusted proxy (Caddy or the ngrok agent on the hub's
+/// machine): each forwarded client has its own budget without a line in hub.toml.
+#[tokio::test]
+async fn loopback_is_a_trusted_proxy_by_default() {
+    assert_eq!(
+        HubConfig::default().server.trusted_proxies,
+        ["127.0.0.1", "::1"]
+    );
+    assert_eq!(
+        pair_twice(|_| {}, ["192.0.2.1", "192.0.2.2"]).await,
+        [StatusCode::FORBIDDEN, StatusCode::FORBIDDEN]
+    );
+    assert_eq!(
+        pair_twice(|_| {}, ["192.0.2.1", "192.0.2.1"]).await,
+        [StatusCode::FORBIDDEN, StatusCode::TOO_MANY_REQUESTS]
+    );
+}
+
+/// An explicit `trusted_proxies = []` trusts no peer: forwarded values of the loopback
+/// peer are ignored and all its clients share one budget.
+#[tokio::test]
+async fn forwarded_values_of_an_untrusted_peer_are_ignored() {
+    assert_eq!(
+        pair_twice(
+            |c| c.server.trusted_proxies.clear(),
+            ["192.0.2.1", "192.0.2.2"]
+        )
+        .await,
+        [StatusCode::FORBIDDEN, StatusCode::TOO_MANY_REQUESTS]
+    );
+}
+
+/// `deploy/hub/hub.toml.example` stays a valid hub.toml with no unknown keys, the
+/// loopback proxies of the default and the public-hub limits of docs/HUB.md.
+#[test]
+fn the_example_hub_toml_is_valid() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("deploy/hub/hub.toml.example");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let (config, unknown) = HubConfig::from_toml(&text, &path).unwrap();
+    assert!(unknown.is_empty(), "{unknown:?}");
+    assert_eq!(config.server, {
+        let mut server = HubConfig::default().server;
+        server.allowed_hosts = vec!["hub.example.org".into()];
+        server
+    });
+    assert_eq!(config.libraries.registration, Registration::Invite);
+    assert_ne!(config.libraries.max_libraries, 0);
+    assert_ne!(config.limits.max_total_bytes, 0);
 }
 
 /// One GET against a hub opened in `dir` with `config`.
@@ -2235,6 +2288,10 @@ async fn unknown_hosts_are_rejected() {
         })
         .await;
     assert_eq!(proxied.status, StatusCode::OK);
+    assert!(
+        String::from_utf8_lossy(&foreign.body).contains("`[server] allowed_hosts`"),
+        "the refusal names the setting"
+    );
 }
 
 #[tokio::test]

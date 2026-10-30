@@ -1,0 +1,16 @@
+# Caddy in front of a shelfgauge hub; see docs/HUB.md.
+#
+# The site address comes from Caddy's environment:
+#   SHELFGAUGE_HUB_DOMAIN=hub.example.org  gets and renews a certificate for that name
+#                                         (ports 80 and 443, DNS pointing here);
+#   SHELFGAUGE_HUB_DOMAIN=:8080            plain HTTP on port 8080, to try this file
+#                                         behind ngrok on a laptop.
+# Or replace the placeholder with the name. The same name goes into the hub's
+# `[server] allowed_hosts`.
+
+{$SHELFGAUGE_HUB_DOMAIN} {
+	# No `log` directive: Caddy writes no access log, so no client addresses are kept.
+	# Caddy passes the Host header through and sets X-Forwarded-For, which the hub
+	# trusts from loopback by default (`[server] trusted_proxies`).
+	reverse_proxy 127.0.0.1:8743
+}

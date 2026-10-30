@@ -8,7 +8,26 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+### Added
+
+- **Hub deployment kit** in `deploy/hub/`: a `Caddyfile` (the domain from
+  `SHELFGAUGE_HUB_DOMAIN`, no access log), the systemd unit and a `hub.toml.example`
+  with the settings of a public hub; the guide [`docs/HUB.md`](docs/HUB.md) goes from a
+  test through ngrok on a laptop to a VPS. The README's hub sections link to them.
+- **The hub says what a proxy in front of it needs**: at start, a hub listening on
+  loopback with no `[server] allowed_hosts` says to add the proxy's or ngrok's host
+  name there (and says when `trusted_proxies` is empty); a request refused by `Host`
+  is logged once per name with that hint, no longer on every request.
+
 ### Changed
+
+- **The hub trusts `X-Forwarded-For` from loopback by default**: `[server]
+  trusted_proxies` defaults to `["127.0.0.1", "::1"]`, so behind Caddy or ngrok on the
+  same machine each client has its own budget for signing in, invites and new
+  libraries without a line in `hub.toml`. Hubs created before keep the
+  `trusted_proxies = []` written into their `hub.toml`, which now means "trust no
+  proxy" (all clients share one budget, as before): delete that line to get the new
+  default.
 
 - **The only admin password stays while logins with passwords are on** (now or, by
   `config.toml`, at the next start): **Remove password**, making that admin a reader and

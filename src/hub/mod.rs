@@ -29,6 +29,7 @@ mod limits;
 mod shell;
 mod store;
 
+use std::collections::HashSet;
 use std::fmt;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -609,6 +610,9 @@ struct Inner {
     new_libraries: WindowLimiter,
     logins: LoginLimiter,
     trusted_proxies: Vec<IpRange>,
+    /// The `Host` names already logged as refused (`None`: no readable `Host`), at most
+    /// [`MAX_LOGGED_HOSTS`].
+    refused_hosts: Mutex<HashSet<Option<String>>>,
     /// Whether the hub is below `max_total_bytes`, and when that was checked.
     accepting: Mutex<Option<(std::time::Instant, bool)>>,
     clock: Clock,
@@ -656,6 +660,7 @@ impl HubState {
             new_libraries,
             logins: LoginLimiter::default(),
             trusted_proxies,
+            refused_hosts: Mutex::new(HashSet::new()),
             accepting: Mutex::new(None),
             clock,
             slow_request: trace::SLOW_REQUEST,
@@ -746,19 +751,81 @@ pub fn bind(config: &HubConfig) -> Result<std::net::TcpListener, crate::web::Web
     crate::web::bind(&server, crate::web::Auth::Password)
 }
 
+/// The most refused `Host` names logged by name; anyone can send any name, so the
+/// set of names already logged stays small, and further names are logged at debug
+/// level without the name.
+const MAX_LOGGED_HOSTS: usize = 32;
+
+/// The characters of a refused `Host` value that are logged and remembered.
+const MAX_HOST_LEN: usize = 253;
+
+/// Logs pointers for a hub that runs behind a reverse proxy or tunnel on its own
+/// machine: an empty `allowed_hosts` (every request through the proxy would be refused
+/// by `Host`) and an empty `trusted_proxies` (all its clients share one budget).
+pub fn log_start_hints(config: &HubConfig) {
+    let server = &config.server;
+    if !server.bind.to_canonical().is_loopback() {
+        return;
+    }
+    if server.allowed_hosts.is_empty() {
+        tracing::warn!(
+            "the hub answers only to its local address: behind a reverse proxy or ngrok, \
+             add its host name to `[server] allowed_hosts` in hub.toml"
+        );
+    }
+    if server.trusted_proxies.is_empty() {
+        tracing::info!(
+            "`[server] trusted_proxies` is empty: all clients behind a proxy or ngrok on \
+             this machine share one request budget; delete the line to trust loopback"
+        );
+    }
+}
+
 /// Middleware: rejects requests whose `Host` is not on the allowlist.
 async fn check_host(State(state): State<HubState>, req: Request, next: Next) -> Response {
     let host = request_host(&req);
     match host {
         Some(host) if state.0.hosts.allows(host) => next.run(req).await,
         _ => {
-            tracing::warn!(host = ?host, "rejected a request with an unknown Host");
+            state.log_refused_host(host);
             (
                 StatusCode::FORBIDDEN,
                 "403 Forbidden: unknown Host header.\n\nTo reach this hub under another \
-                 name, add it to `server.allowed_hosts` in hub.toml.\n",
+                 name (behind a reverse proxy or ngrok), add it to `[server] allowed_hosts` \
+                 in hub.toml and restart the hub.\n",
             )
                 .into_response()
+        }
+    }
+}
+
+impl HubState {
+    /// Logs a request refused by `Host`: a warning with the name (escaped, at most
+    /// [`MAX_HOST_LEN`] characters) the first time it is refused, else (and beyond [`MAX_LOGGED_HOSTS`] names) a debug event
+    /// without it.
+    fn log_refused_host(&self, host: Option<&str>) {
+        // A header can be much longer than a host name (253 bytes at most).
+        let host = host.map(|host| match host.char_indices().nth(MAX_HOST_LEN) {
+            Some((end, _)) => &host[..end],
+            None => host,
+        });
+        let key = host.map(str::to_ascii_lowercase);
+        let first = {
+            let mut seen = self
+                .0
+                .refused_hosts
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            seen.len() < MAX_LOGGED_HOSTS && seen.insert(key)
+        };
+        if first {
+            tracing::warn!(
+                host = ?host,
+                "rejected a request with an unknown Host; add the name to \
+                 `[server] allowed_hosts` if the hub should answer to it (logged once per name)"
+            );
+        } else {
+            tracing::debug!("rejected a request with an unknown Host");
         }
     }
 }

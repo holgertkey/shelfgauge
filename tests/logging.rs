@@ -902,6 +902,100 @@ async fn hub_secrets_and_publication_ids_are_never_logged() {
     }
 }
 
+/// A request refused by `Host` is logged once per name, the name escaped, without the
+/// client's address; further refusals of the same name only at debug level.
+#[tokio::test]
+async fn hub_host_refusals_are_logged_once_per_name() {
+    use shelfgauge::hub::config::HubConfig;
+    use shelfgauge::hub::{Hub, HubState};
+
+    drop(Capture::default().dispatch("off", LogFormat::Text, false));
+    let data = tempfile::tempdir().unwrap();
+    let hub = Hub::with_config(data.path(), HubConfig::default()).unwrap();
+    let app = common::from_peer(
+        shelfgauge::hub::router(HubState::new(hub)),
+        "198.51.100.77:40000",
+    );
+    let capture = Capture::default();
+    let _log = tracing::dispatcher::set_default(&capture.dispatch(
+        "shelfgauge=info",
+        LogFormat::Text,
+        false,
+    ));
+    let long = format!("{}.example", "x".repeat(400));
+    for host in [
+        "odd\"\tname.example",
+        "odd\"\tname.example",
+        "other.example",
+        &long,
+    ] {
+        let request = Request::builder()
+            .uri("/api/info")
+            .header(header::HOST, host)
+            .header("x-forwarded-for", "203.0.113.9")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+    let log = capture.text();
+    let refusals = log
+        .matches("rejected a request with an unknown Host")
+        .count();
+    assert_eq!(refusals, 3, "once per name:\n{log}");
+    assert!(
+        log.contains(&format!("\"{}\")", "x".repeat(253))),
+        "cut:\n{log}"
+    );
+    assert!(!log.contains(&"x".repeat(254)), "cut:\n{log}");
+    assert!(
+        log.contains(r#"host=Some("odd\"\tname.example")"#),
+        "the name is escaped:\n{log}"
+    );
+    assert!(log.contains("other.example"), "{log}");
+    assert!(log.contains("allowed_hosts"), "{log}");
+    for address in ["198.51.100.77", "203.0.113.9"] {
+        assert!(!log.contains(address), "{address} logged:\n{log}");
+    }
+}
+
+/// At start, a hub on loopback says what a reverse proxy or ngrok in front of it needs.
+#[test]
+fn hub_start_hints_name_the_missing_settings() {
+    use shelfgauge::hub::config::HubConfig;
+
+    let hints = |edit: fn(&mut HubConfig)| {
+        let mut config = HubConfig::default();
+        edit(&mut config);
+        let capture = Capture::default();
+        let _log = tracing::dispatcher::set_default(&capture.dispatch(
+            "shelfgauge=info",
+            LogFormat::Text,
+            false,
+        ));
+        shelfgauge::hub::log_start_hints(&config);
+        capture.text()
+    };
+    let default = hints(|_| {});
+    assert!(
+        default.contains("add its host name to `[server] allowed_hosts`"),
+        "{default}"
+    );
+    assert!(!default.contains("trusted_proxies"), "{default}");
+    let proxied = hints(|c| c.server.allowed_hosts = vec!["hub.example.org".into()]);
+    assert_eq!(proxied, "", "nothing is missing");
+    let untrusted = hints(|c| {
+        c.server.allowed_hosts = vec!["hub.example.org".into()];
+        c.server.trusted_proxies.clear();
+    });
+    assert!(
+        untrusted.contains("`[server] trusted_proxies` is empty"),
+        "{untrusted}"
+    );
+    let public = hints(|c| c.server.bind = "0.0.0.0".parse().unwrap());
+    assert_eq!(public, "", "no proxy on this machine is assumed");
+}
+
 #[tokio::test]
 async fn hub_account_secrets_are_never_logged_by_the_library() {
     use base64::Engine as _;

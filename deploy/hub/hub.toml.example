@@ -1,0 +1,42 @@
+# A start for a hub behind Caddy (or ngrok) on the same machine; see docs/HUB.md.
+# Copy it to <data>/hub.toml before the first start, or merge it into the hub.toml
+# the hub created (that file describes every key). Restart the hub after editing.
+# Lines marked CHANGE need your values.
+
+[server]
+bind = "127.0.0.1"
+port = 8743
+# CHANGE: the name the hub is reached under (the Caddyfile's domain, or the ngrok
+# domain, e.g. "your-name.ngrok-free.dev").
+allowed_hosts = ["hub.example.org"]
+# Caddy and the ngrok agent run on this machine and name the client in
+# X-Forwarded-For. This is the default; a proxy on another machine goes here too.
+trusted_proxies = ["127.0.0.1", "::1"]
+
+[libraries]
+# "invite": libraries join with a code from `shelfgauge hub invite`; "open": anyone
+# who reaches the hub (then keep max_libraries set, never 0).
+registration = "invite"
+max_libraries = 100
+new_libraries_per_address_per_day = 3
+# Accounts and libraries unused for a year are deleted (0 = never).
+expiry_days = 365
+
+[operator]
+# CHANGE: who runs the hub and where to report abuse (an e-mail address or an
+# https:// URL); terms of use as plain text in the data directory.
+name = ""
+contact = ""
+terms_file = "terms.txt"
+
+[quotas]
+# Per library: 1 GiB and 300 books; per account: 5 devices.
+max_bytes = 1073741824
+max_publications = 300
+max_devices = 5
+
+[limits]
+# CHANGE: about 80 % of the free disk (here 20 GiB); 0 = no limit.
+max_total_bytes = 21474836480
+# Books not opened for half a year are deleted (0 = never).
+publication_expiry_days = 180

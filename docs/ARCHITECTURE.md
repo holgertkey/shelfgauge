@@ -966,7 +966,8 @@ Built in Phase 24 (0.18.0); the reader app (Phase 26) and the instance side (Pha
   publication and remembers its id.
 - **Public hub readiness** (0.20.0):
   - *Client address* (`hub::limits::client_key`): the TCP peer; for a peer in
-    `[server] trusted_proxies` (addresses or CIDR ranges, empty by default) the
+    `[server] trusted_proxies` (addresses or CIDR ranges; loopback by default since
+    Phase 30.5, empty before) the
     rightmost `X-Forwarded-For` entry that is not itself trusted (Caddy replaces a
     client's value, nginx's `$proxy_add_x_forwarded_for` appends to it; both are
     right this way). No usable value, or an untrusted loopback peer, gives the shared
@@ -1002,6 +1003,17 @@ Built in Phase 24 (0.18.0); the reader app (Phase 26) and the instance side (Pha
     compares bytes and the start page's CSP. With the same version this proves what
     the hub serves now to this client — not what it serves others or what a device
     has cached.
+- **Deployment kit** (Phase 30.5): `deploy/hub/` holds the `Caddyfile` (site address
+  from `SHELFGAUGE_HUB_DOMAIN`, no access log), the systemd unit and
+  `hub.toml.example` (a test keeps it valid); `docs/HUB.md` is the guide (ngrok on a
+  laptop, then a VPS). Not packaged for crates.io (`exclude`). TLS stays outside the
+  hub. `trusted_proxies` defaults to `["127.0.0.1", "::1"]`, since Caddy and the ngrok
+  agent run on the hub's machine and append `X-Forwarded-For` (a local process can
+  thereby choose its own public budget; `trusted_proxies = []` turns it off). A hub on
+  loopback logs at start what a proxy in front of it needs (`hub::log_start_hints`:
+  an empty `allowed_hosts`, an empty `trusted_proxies`), and a request refused by
+  `Host` is logged with the name (escaped) once per name, for the first 32 names,
+  then at debug level without it.
 - **Layers**: the request trace (`request{id, method, route, account}`), the hardening
   headers with the §11 CSP (`script-src 'self' 'wasm-unsafe-eval'`, `img-src 'self'
   blob:`, no inline code) and `Referrer-Policy: no-referrer`, and the `Host` allowlist

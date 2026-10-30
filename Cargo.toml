@@ -7,7 +7,7 @@ default-members = [".", "crates/*"]
 # requirement on `shelfgauge-core` below as well (publishing needs it, and Cargo refuses
 # to build while the two differ); the `+BUILD` counter is changed only here.
 [workspace.package]
-version = "0.21.0+002"
+version = "0.21.0+003"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/holgertkey/shelfgauge"
@@ -30,7 +30,7 @@ repository.workspace = true
 readme = "README.md"
 keywords = ["ebook", "fb2", "epub", "txt", "html"]
 categories = ["command-line-utilities", "web-programming::http-server"]
-exclude = [".github/", "crates/"]
+exclude = [".github/", "crates/", "deploy/"]
 build = "build.rs"
 
 [dependencies]

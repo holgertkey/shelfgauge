@@ -6,9 +6,10 @@
 //!   without a token (sign-in, invites, pairing, new libraries), one day for the
 //!   libraries created with open registration. Keyed by [`client_key`]: the peer, or
 //!   for a peer in `[server] trusted_proxies` the client it names in
-//!   `X-Forwarded-For`. Requests from an untrusted loopback peer (a reverse proxy on
-//!   this machine that is not listed) share one budget. An IPv6 client is counted by
-//!   its /64, the block one subscriber usually gets.
+//!   `X-Forwarded-For` (by default loopback is trusted: Caddy or the ngrok agent on
+//!   the hub's machine). Requests from an untrusted loopback peer (a proxy on this
+//!   machine with `trusted_proxies = []`) share one budget. An IPv6 client is counted
+//!   by its /64, the block one subscriber usually gets.
 //!
 //! - [`LoginLimiter`]: failed password checks per address (or account) and per client
 //!   address, answered with a growing delay, never a lock, on the hub's clock.

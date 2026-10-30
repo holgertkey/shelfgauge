@@ -491,19 +491,12 @@ its accounts and everything they store, and `shelfgauge hub quota <number> --max
 `default` the hub's value; without options it shows them).
 
 The hub listens on `127.0.0.1:8743` and has no TLS of its own: **put it behind a
-reverse proxy with HTTPS**, which phones also need for offline reading. With Caddy:
-
-```
-hub.example.org {
-	reverse_proxy 127.0.0.1:8743
-}
-```
-
-and in the `[server]` section of `hub.toml` `allowed_hosts = ["hub.example.org"]` and
-`trusted_proxies = ["127.0.0.1", "::1"]`, so the hub counts its limits per client
-instead of per proxy (with nginx, pass `proxy_set_header Host $host;` as for a library
-and `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`). Settings in
-`hub.toml`:
+reverse proxy with HTTPS**, which phones also need for offline reading.
+**[docs/HUB.md](docs/HUB.md)** shows how, from a test on a real phone through ngrok to
+a server with Caddy, with ready files in [`deploy/hub/`](deploy/hub/) (a `Caddyfile`,
+the systemd unit and `hub.toml.example`). Behind a proxy, `[server] allowed_hosts`
+must name the hub's public name (`allowed_hosts = ["hub.example.org"]`); the hub says
+so at start. Settings in `hub.toml`:
 
 - `[libraries]`: `registration` (`"invite"` or `"open"`), `max_libraries` (0 = no
   limit), `invite_days` (7), `new_libraries_per_address_per_day` (3, with open
@@ -524,7 +517,9 @@ and `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`). Settings in
   and changed passwords; they can be raised, never lowered below these values (the
   reader refuses weaker ones);
 - `[server] trusted_proxies`: addresses or ranges (`10.0.0.0/8`) of reverse proxies
-  whose `X-Forwarded-For` names the client;
+  whose `X-Forwarded-For` names the client; by default `["127.0.0.1", "::1"]`, a
+  proxy or ngrok on the hub's machine (hubs created before 0.22.0 have
+  `trusted_proxies = []` in their `hub.toml`: delete the line);
 - `[operator]`: `name` and `contact` (an e-mail address or `https://` URL for abuse
   reports) and `terms_file` (`terms.txt` in the data directory, plain text), shown at
   `/terms` and on the reader's My account page.
@@ -621,7 +616,7 @@ never exported. Each download is a new copy; files downloaded earlier keep openi
 (files made before 0.21.0 do not). Removing the book from the shelf removes the copy
 from the phone; opening the file again puts the book back.
 
-Without `trusted_proxies`, all clients behind a proxy on the same machine share one
+With `trusted_proxies = []`, all clients behind a proxy on the same machine share one
 budget for creating libraries, signing in and redeeming invites, and with open
 registration also the 3 new libraries a day. The hub logs no passwords, tokens,
 secrets, addresses, library, account or publication ids, nor client addresses;
@@ -635,58 +630,25 @@ and to you, not what it serves to others, and not the copy a phone already keeps
 
 ### Running a public hub
 
-What a hub for people you do not know needs beyond the recipe above:
+What a hub for people you do not know needs beyond the recipe above; the setup on a
+server (DNS, firewall, own user, systemd unit, Caddy, backups, watching, updates) is in
+[docs/HUB.md](docs/HUB.md).
 
 - **A server**: a small VPS with local SSD and traffic included; books are stored
   encrypted as they are uploaded (a plain-text book is 0.1–1.5 MB, an illustrated one
   tens of MB).
-- **HTTPS**: Caddy as above (it gets and renews the certificate itself); a firewall
-  that lets in only 22, 80 and 443 (`ufw allow 22,80,443/tcp`).
-- **Its own user** (`useradd --system shelfgauge`, owner of the data directory) **and a
-  systemd unit**, `/etc/systemd/system/shelfgauge-hub.service`:
-
-  ```ini
-  [Unit]
-  Description=shelfgauge hub
-  After=network-online.target
-  Wants=network-online.target
-
-  [Service]
-  User=shelfgauge
-  ExecStart=/usr/local/bin/shelfgauge hub --data /srv/shelfgauge-hub --log-format json
-  Restart=on-failure
-  NoNewPrivileges=yes
-  ProtectSystem=strict
-  ProtectHome=yes
-  PrivateTmp=yes
-  ReadWritePaths=/srv/shelfgauge-hub
-
-  [Install]
-  WantedBy=multi-user.target
-  ```
-
-- **Limits in `hub.toml`** (a start; adjust to the disk): `[libraries]
-  registration = "open"` (or `"invite"` for a closed beta), `max_libraries` set (never
-  0 on an open hub), `new_libraries_per_address_per_day = 3`, `expiry_days = 365`;
-  `[quotas] max_bytes = 1073741824` (1 GiB per library), `max_publications = 300`,
-  `max_devices = 5`; `[limits] publication_expiry_days = 180` and `max_total_bytes`
-  at about 80 % of the free disk; `trusted_proxies` for the proxy.
+- **Limits in `hub.toml`**: [`deploy/hub/hub.toml.example`](deploy/hub/hub.toml.example)
+  is a start (adjust to the disk): `max_libraries` set (never 0 with
+  `registration = "open"`), `expiry_days = 365`, 1 GiB and 300 books per library,
+  `publication_expiry_days = 180`, `max_total_bytes` at about 80 % of the free disk.
 - **Terms and contact**: `[operator] name` and `contact`, and a `terms.txt` written by
   you for your jurisdiction (this project gives no legal text). Points to cover: what
   is stored (encrypted books and marks, library handles and account names, device
   names, times of use), that the hub
   cannot read them, the limits and when books and accounts are deleted, how to report
   abuse and how takedowns work (`hub takedown <publication id>`), no warranty.
-- **Backups**: the database first, then the blobs (a blob without a database row is
-  harmless, the reverse is a broken book):
-  `sqlite3 /srv/shelfgauge-hub/hub.sqlite ".backup /backup/hub.sqlite"`, then
-  `rsync -a /srv/shelfgauge-hub/blobs/ /backup/blobs/` (or Litestream for the database
-  and the same `rsync`). Restore both, with `hub.toml` and `terms.txt`, into a data
-  directory and start the hub.
-- **Watching it**: an external check of `GET https://hub.example.org/api/info` (it
-  says `"accepting": false` when `max_total_bytes` is reached), disk space, and the
-  logs of the unit (`journalctl -u shelfgauge-hub`); keep proxy access logs short or
-  off (Caddy writes none unless `log` is set).
+- **Privacy of the logs**: keep proxy access logs short or off (the `Caddyfile` of
+  `deploy/hub/` writes none).
 - **Updates**: replace the binary and restart; the database migrates itself (from
   0.18–0.20, see "Upgrading" above: `hub migrate` and the order library, then hub). Visitors
   can compare the hub with a release using `shelfgauge hub check`.

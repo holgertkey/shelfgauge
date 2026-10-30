@@ -105,6 +105,7 @@ fn hub(data: &std::path::Path, explicit: bool, action: HubAction) -> anyhow::Res
     match action {
         HubAction::Serve => {
             let listener = hub::bind(hub.config())?;
+            hub::log_start_hints(hub.config());
             let state = HubState::new(hub);
             let url = state.display_url();
             let runtime = tokio::runtime::Builder::new_multi_thread()

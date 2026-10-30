@@ -34,9 +34,10 @@ allowed_hosts = []
 # URL prefix of all routes, when the proxy serves the hub under a path.
 base_path = "/"
 # Addresses or CIDR ranges of reverse proxies whose X-Forwarded-For names the client
-# (e.g. ["127.0.0.1", "::1"] for a proxy on this machine). Empty: all clients behind a
-# proxy on this machine share one budget of `public_requests_per_hour`.
-trusted_proxies = []
+# (the default: a proxy or tunnel agent on this machine, such as Caddy or ngrok). Empty:
+# all clients behind a proxy on this machine share one budget of
+# `public_requests_per_hour`.
+trusted_proxies = ["127.0.0.1", "::1"]
 
 [libraries]
 # Who may create a library on this hub: "invite" (a one-time code from
@@ -48,8 +49,8 @@ max_libraries = 0
 # How long a hub invite code is valid, in days.
 invite_days = 7
 # With open registration: libraries created per client address (an IPv6 /64) and day
-# (0 = no limit). Behind a reverse proxy, set `server.trusted_proxies`, or all clients
-# share this budget.
+# (0 = no limit). Behind a reverse proxy on another machine, add it to
+# `server.trusted_proxies`, or all clients share this budget.
 new_libraries_per_address_per_day = 3
 # A member account none of whose devices made a request for this many days is deleted;
 # a library is deleted with everything it stores when neither it nor any device of its
@@ -129,7 +130,8 @@ pub struct HubServerConfig {
     /// URL prefix for all routes; normalized to `/` or `/a/b` (no trailing slash).
     pub base_path: String,
     /// Addresses or CIDR ranges of reverse proxies whose `X-Forwarded-For` names the
-    /// client of a request (for the per-address limits).
+    /// client of a request (for the per-address limits); by default loopback (a proxy
+    /// or tunnel agent on the hub's machine).
     pub trusted_proxies: Vec<String>,
 }
 
@@ -140,7 +142,7 @@ impl Default for HubServerConfig {
             port: DEFAULT_HUB_PORT,
             allowed_hosts: Vec::new(),
             base_path: "/".to_owned(),
-            trusted_proxies: Vec::new(),
+            trusted_proxies: vec!["127.0.0.1".to_owned(), "::1".to_owned()],
         }
     }
 }
