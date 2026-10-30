@@ -2400,6 +2400,46 @@ async fn the_base_path_prefixes_every_route() {
     );
 }
 
+/// Behind a proxy that answers with its own HTML page (ngrok's free-plan warning, a
+/// Wi-Fi sign-in page) the reader sends ngrok's skip header with every API call and
+/// takes an HTML answer for the hub out of reach, and the worker keeps and serves only
+/// ciphertext (the browser check is `.debug/TESTS/hub_smoke.mjs`, modes warn/portal).
+#[tokio::test]
+async fn the_reader_does_not_take_a_proxy_page_for_the_hub() {
+    let hub = TestHub::open();
+    let store = String::from_utf8(hub.get("/assets/store.js", None).await.body).unwrap();
+    assert!(
+        store.contains(r#"{ "ngrok-skip-browser-warning": "1" }"#),
+        "the skip header"
+    );
+    assert!(
+        store.contains(r#"startsWith("text/html")"#),
+        "HTML is not the hub"
+    );
+    let sw = String::from_utf8(hub.get("/sw.js", None).await.body).unwrap();
+    assert!(
+        sw.contains(r#"response.headers.get("Content-Type") === "application/octet-stream""#),
+        "{sw}"
+    );
+    assert_eq!(
+        sw.matches("isBlob(").count(),
+        4,
+        "kept, served and checked: {sw}"
+    );
+    // The blobs the worker checks are served with that type.
+    let lib = hub.library("smiths").await;
+    let id = pub_id(4);
+    hub.publish(&lib, &id, 10).await;
+    let manifest = hub
+        .get(&format!("/api/pub/{id}/manifest"), Some(&lib.token))
+        .await;
+    assert_eq!(manifest.status, StatusCode::OK);
+    assert_eq!(
+        manifest.headers[header::CONTENT_TYPE],
+        "application/octet-stream"
+    );
+}
+
 #[tokio::test]
 async fn the_service_worker_and_manifest_make_the_reader_installable() {
     for (base, prefix) in [("/", ""), ("/hub", "/hub")] {

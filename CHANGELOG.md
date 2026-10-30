@@ -19,6 +19,17 @@ Build numbers (`+NNN`) do not get their own sections.
   name there (and says when `trusted_proxies` is empty); a request refused by `Host`
   is logged once per name with that hint, no longer on every request.
 
+### Fixed
+
+- **Books open behind ngrok's free plan** without its cookie (e.g. when the reader
+  starts from its offline copy and never shows ngrok's warning page): the reader sent
+  API calls that ngrok answered with that page, and a book failed with "unsupported
+  version 15393". The reader now sends ngrok's `ngrok-skip-browser-warning` header,
+  takes an HTML answer of something in between (also a Wi-Fi sign-in page) for the hub
+  being out of reach and reads offline copies instead, and its Service Worker keeps
+  and serves only the hub's ciphertext (copies of such pages kept before are fetched
+  again).
+
 ### Changed
 
 - **The hub trusts `X-Forwarded-For` from loopback by default**: `[server]

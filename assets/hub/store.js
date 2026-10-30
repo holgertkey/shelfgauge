@@ -244,13 +244,22 @@ export class Unreachable extends Error {}
 /** Thrown when the hub is full (`507 hub_full`): changes wait here. */
 export class HubFull extends Error {}
 
-/** A call to the hub's API, with a token if given. */
+/**
+ * A call to the hub's API, with a token if given. The hub answers its API with JSON
+ * or ciphertext, never HTML: an HTML page is from something in between (ngrok's
+ * warning page, a Wi-Fi sign-in page) and counts as the hub being out of reach.
+ */
 export async function api(path, options = {}, token) {
-  const headers = Object.assign({}, options.headers);
+  // ngrok's free plan answers browser requests without its cookie with a warning
+  // page; this header lets them through (other proxies ignore it).
+  const headers = Object.assign({ "ngrok-skip-browser-warning": "1" }, options.headers);
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
   const response = await fetch(`${base}/api/${path}`, Object.assign({}, options, { headers, cache: "no-store" }));
+  if ((response.headers.get("Content-Type") || "").startsWith("text/html")) {
+    throw new Unreachable("Something between this device and the hub answered instead of it (a proxy's warning or a Wi-Fi sign-in page). Open the hub's address in the browser once, then try again.");
+  }
   if (response.status === 401 && token) {
     throw new Unpaired("This device is no longer signed in.");
   }

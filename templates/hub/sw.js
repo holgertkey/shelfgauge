@@ -111,22 +111,35 @@ function within(request, ms) {
   });
 }
 
+/**
+ * Whether `response` is a blob of the hub (ciphertext). A proxy in between may answer
+ * `200` with its own HTML page (ngrok's free-plan warning, a Wi-Fi sign-in page):
+ * never kept, and a copy kept by an older worker is not served.
+ */
+function isBlob(response) {
+  return response.ok && response.headers.get("Content-Type") === "application/octet-stream";
+}
+
 async function blob(request, url, manifest) {
   const cache = await caches.open(BLOBS);
   const key = url.origin + url.pathname;
-  const cached = await cache.match(key);
+  let cached = await cache.match(key);
+  if (cached && !isBlob(cached)) {
+    await cache.delete(key);
+    cached = undefined;
+  }
   if (!manifest) {
     if (cached) {
       return cached;
     }
     const response = await fetch(request);
-    if (response.ok) {
+    if (isBlob(response)) {
       await keep(cache, key, response.clone());
     }
     return response;
   }
   const response = await within(request, cached ? MANIFEST_WAIT_MS : 60000);
-  if (response && response.ok) {
+  if (response && isBlob(response)) {
     await keep(cache, key, response.clone());
     return response;
   }
@@ -140,8 +153,9 @@ async function blob(request, url, manifest) {
     }
     return response;
   }
-  // Out of reach, slow, or the proxy says the hub is down (5xx): the copy, if any.
-  if (cached && (!response || response.status >= 500)) {
+  // Out of reach, slow, the proxy says the hub is down (5xx) or answers with its own
+  // page: the copy, if any.
+  if (cached && (!response || response.status >= 500 || response.ok)) {
     return cached;
   }
   return response || fetch(request);

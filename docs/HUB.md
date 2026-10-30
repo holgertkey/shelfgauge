@@ -75,7 +75,8 @@ readable on the phone without them.
 **Free plan limits** (from ngrok's documentation; check the current ones there):
 
 - Before HTML pages, ngrok shows a warning page; **Visit** on it sets a cookie that
-  lifts it for 7 days. The library's own requests to the hub are not affected.
+  lifts it for 7 days. The library's requests and the reader's calls to the hub are
+  not affected (the reader sends ngrok's `ngrok-skip-browser-warning` header).
   Because of this page, Chrome cannot install the reader as an app behind a free
   ngrok domain (it fetches the app manifest without the cookie); reading in the
   browser works.
