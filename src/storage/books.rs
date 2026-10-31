@@ -704,6 +704,131 @@ pub fn live_books_by_title(
     Ok(ids)
 }
 
+/// What the library's catalog on the hub shows of a book ([`catalog_rows`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogRow {
+    /// The book id.
+    pub id: i64,
+    /// The title.
+    pub title: String,
+    /// The title for sorting.
+    pub sort_title: String,
+    /// The authors' display names, in order.
+    pub authors: Vec<String>,
+    /// The series with the book's number in each, in order.
+    pub series: Vec<SeriesEntry>,
+    /// Genre codes.
+    pub genres: Vec<String>,
+    /// The language code.
+    pub language: Option<String>,
+    /// The format name.
+    pub format: String,
+    /// The size of the book's file (of the entry, for a book in an archive).
+    pub size: u64,
+    /// The annotation.
+    pub annotation: String,
+    /// When it was added (Unix seconds).
+    pub added_at: i64,
+    /// Whether it has a cover.
+    pub has_cover: bool,
+    /// The content key ([`content_key`](crate::render::load::content_key)), `None` if
+    /// the scan recorded neither a hash nor an entry identity.
+    pub content_key: Option<Vec<u8>>,
+}
+
+/// The catalog rows of the books with these ids that are readable (`ok`), by id; five
+/// queries for any number of books.
+pub fn catalog_rows(conn: &Connection, ids: &[i64]) -> Result<Vec<CatalogRow>, StorageError> {
+    use std::collections::HashMap;
+    let list = format!(
+        "[{}]",
+        ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",")
+    );
+    let mut stmt = conn.prepare(
+        "SELECT b.id, b.title, b.sort_title, b.language, b.format, b.annotation, b.added_at,
+                b.cover_mime IS NOT NULL, b.entry_name, b.entry_size, b.entry_crc32,
+                b.content_hash, c.size
+           FROM books b JOIN containers c ON c.id = b.container_id
+          WHERE b.status = 'ok' AND b.id IN (SELECT value FROM json_each(?1))
+          ORDER BY b.id",
+    )?;
+    let rows = stmt.query_map([&list], |row| {
+        let entry_name: Vec<u8> = row.get(8)?;
+        let entry_size: Option<i64> = row.get(9)?;
+        let entry_crc32: Option<i64> = row.get(10)?;
+        let hash: Option<Vec<u8>> = row.get(11)?;
+        let (content_key, size) = if entry_name.is_empty() {
+            (hash, row.get::<_, i64>(12)? as u64)
+        } else {
+            let size = entry_size.unwrap_or(0) as u64;
+            let key = entry_size.zip(entry_crc32).map(|(size, crc)| {
+                let mut key = (size as u64).to_le_bytes().to_vec();
+                key.extend_from_slice(&(crc as u32).to_le_bytes());
+                key
+            });
+            (key, size)
+        };
+        Ok(CatalogRow {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            sort_title: row.get(2)?,
+            authors: Vec::new(),
+            series: Vec::new(),
+            genres: Vec::new(),
+            language: row.get(3)?,
+            format: row.get(4)?,
+            size,
+            annotation: row.get(5)?,
+            added_at: row.get(6)?,
+            has_cover: row.get(7)?,
+            content_key,
+        })
+    })?;
+    let mut books: Vec<CatalogRow> = rows.collect::<Result<_, _>>()?;
+    let at: HashMap<i64, usize> = books.iter().enumerate().map(|(i, b)| (b.id, i)).collect();
+    let mut each =
+        |sql: &str,
+         add: &mut dyn FnMut(&mut CatalogRow, &rusqlite::Row<'_>) -> rusqlite::Result<()>|
+         -> Result<(), StorageError> {
+            let mut stmt = conn.prepare(sql)?;
+            let mut rows = stmt.query([&list])?;
+            while let Some(row) = rows.next()? {
+                if let Some(&i) = at.get(&row.get::<_, i64>(0)?) {
+                    add(&mut books[i], row)?;
+                }
+            }
+            Ok(())
+        };
+    each(
+        "SELECT ba.book_id, a.display_name FROM book_authors ba JOIN authors a ON a.id = ba.author_id
+          WHERE ba.book_id IN (SELECT value FROM json_each(?1)) ORDER BY ba.book_id, ba.position",
+        &mut |b, row| {
+            b.authors.push(row.get(1)?);
+            Ok(())
+        },
+    )?;
+    each(
+        "SELECT bs.book_id, s.name, bs.number FROM book_series bs JOIN series s ON s.id = bs.series_id
+          WHERE bs.book_id IN (SELECT value FROM json_each(?1)) ORDER BY bs.book_id, bs.position",
+        &mut |b, row| {
+            b.series.push(SeriesEntry {
+                name: row.get(1)?,
+                number: row.get(2)?,
+            });
+            Ok(())
+        },
+    )?;
+    each(
+        "SELECT bg.book_id, g.code FROM book_genres bg JOIN genres g ON g.id = bg.genre_id
+          WHERE bg.book_id IN (SELECT value FROM json_each(?1)) ORDER BY bg.book_id, g.code",
+        &mut |b, row| {
+            b.genres.push(row.get(1)?);
+            Ok(())
+        },
+    )?;
+    Ok(books)
+}
+
 /// Everything about a book, or `None` if there is no such book.
 pub fn book_by_id(conn: &Connection, id: i64) -> Result<Option<BookDetails>, StorageError> {
     let book = conn

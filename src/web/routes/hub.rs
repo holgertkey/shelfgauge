@@ -482,6 +482,15 @@ pub(crate) async fn save(
                         }
                     }
                 }
+                if admin {
+                    let (state, library) = (state.clone(), library.clone());
+                    let uploaded =
+                        blocking(move || crate::web::hub_sync::upload_catalog(&state, &library))
+                            .await?;
+                    if let Err(e) = uploaded {
+                        tracing::info!(error = %e, "the catalog upload failed");
+                    }
+                }
                 match crate::web::hub_sync::sync_account(&state, library, account).await? {
                     Ok(_) => Outcome::Done("synced"),
                     Err(crate::hub_client::sync::SyncError::Client(e)) => {
@@ -806,6 +815,7 @@ mod tests {
             },
             passwords: None,
             operator: None,
+            catalog_formats: None,
         };
         // One minor version below this build.
         let (major, minor) = major_minor(crate::VERSION).unwrap();

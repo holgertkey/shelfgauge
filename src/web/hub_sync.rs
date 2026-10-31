@@ -6,7 +6,10 @@
 //! last pull of any account of 0.18–0.20 ([`sync::pull_legacy`]), the hub's account
 //! list (redeemed invites, devices, accounts gone) and the queued removals
 //! (`refresh_library`), then a full sync of every account ([`sync::sync_once`]):
-//! library keys, push, finish removals, pull and merge, expiry. Everything goes with
+//! library keys, push, finish removals, pull and merge, expiry. The library's catalog
+//! (its Showcase) is rebuilt and its changes uploaded at a tick after the Showcase, a
+//! publication or the index changed (a scan), and at every full round
+//! ([`catalog_sync::sync_catalog`]). Everything goes with
 //! the library's token. An unreachable hub backs off (doubling, at most an hour).
 //! Pulled annotations rewrite the Markdown export of their books. It logs counts and
 //! profile ids only.
@@ -17,9 +20,9 @@ use std::time::{Duration, Instant};
 use super::{AppState, blocking};
 use crate::annotations::attach::export_key;
 use crate::annotations::now;
-use crate::hub_client::HubClient;
 use crate::hub_client::store::{self, HubAccount, HubLibrary, Removal};
 use crate::hub_client::sync::{self, Report, SyncError, Target};
+use crate::hub_client::{HubClient, catalog_sync};
 use crate::profiles::ProfileId;
 use crate::storage::books::live_books_by_key;
 
@@ -145,6 +148,74 @@ pub(crate) async fn sync_account(
     .await
 }
 
+/// Builds the library's catalog from the Showcase and uploads what changed
+/// ([`catalog_sync::sync_catalog`]). Runs blocking HTTP.
+pub(crate) fn upload_catalog(
+    state: &AppState,
+    library: &HubLibrary,
+) -> Result<catalog_sync::Outcome, SyncError> {
+    let index = state
+        .pool()
+        .get()
+        .map_err(|e| SyncError::Storage(e.into()))?;
+    let client = HubClient::new(library.hub_url.clone());
+    catalog_sync::sync_catalog(state.userdata(), &index, library, &client)
+}
+
+/// When the catalog is built and uploaded next.
+struct CatalogSchedule {
+    /// Not before (after failures).
+    next_try: Instant,
+    failures: u32,
+    /// The index's scan generation the last upload was built from.
+    scan_generation: i64,
+    /// Whether the hub's lack of catalogs was logged.
+    told_unsupported: bool,
+}
+
+/// Rebuilds and uploads the catalog when something changed: the Showcase or a
+/// publication (`AppState::mark_catalog_dirty`), a scan, or the full round (`due`).
+async fn catalog_round(
+    state: &AppState,
+    library: &HubLibrary,
+    due: bool,
+    schedule: &mut CatalogSchedule,
+) -> Result<(), super::AppError> {
+    let generation = state
+        .db(|conn| Ok(crate::storage::scans::scan_generation(conn)?))
+        .await?;
+    let dirty = state.take_catalog_dirty() | (generation != schedule.scan_generation) | due;
+    if !dirty {
+        return Ok(());
+    }
+    let now_instant = Instant::now();
+    if now_instant < schedule.next_try {
+        state.mark_catalog_dirty();
+        return Ok(());
+    }
+    let result = {
+        let (state, library) = (state.clone(), library.clone());
+        blocking(move || upload_catalog(&state, &library)).await?
+    };
+    match result {
+        Ok(outcome) => {
+            schedule.failures = 0;
+            schedule.scan_generation = generation;
+            if outcome == catalog_sync::Outcome::Unsupported && !schedule.told_unsupported {
+                schedule.told_unsupported = true;
+                tracing::info!("the hub keeps no catalogs (it is older than shelfgauge 0.22)");
+            }
+        }
+        Err(e) => {
+            schedule.failures += 1;
+            schedule.next_try = now_instant + backoff(&e, TICK, schedule.failures);
+            state.mark_catalog_dirty();
+            tracing::info!(failures = schedule.failures, error = %e, "the catalog upload failed; retrying later");
+        }
+    }
+    Ok(())
+}
+
 /// When a profile syncs next.
 struct Schedule {
     next_full: Instant,
@@ -159,11 +230,24 @@ pub fn start(state: AppState) -> tokio::task::JoinHandle<()> {
             next_full: Instant::now(),
             failures: 0,
         };
+        let mut catalog_schedule = CatalogSchedule {
+            next_try: Instant::now(),
+            failures: 0,
+            scan_generation: -1,
+            told_unsupported: false,
+        };
         let mut tick = tokio::time::interval(TICK);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;
-            if let Err(e) = round(&state, &mut library_schedule, &mut schedules).await {
+            if let Err(e) = round(
+                &state,
+                &mut library_schedule,
+                &mut catalog_schedule,
+                &mut schedules,
+            )
+            .await
+            {
                 tracing::error!(error = ?e, "the hub sync failed");
             }
         }
@@ -185,6 +269,7 @@ fn backoff(error: &SyncError, interval: Duration, failures: u32) -> Duration {
 async fn round(
     state: &AppState,
     library_schedule: &mut Schedule,
+    catalog_schedule: &mut CatalogSchedule,
     schedules: &mut HashMap<ProfileId, Schedule>,
 ) -> Result<(), super::AppError> {
     let interval =
@@ -223,6 +308,7 @@ async fn round(
         schedules.clear();
         return Ok(());
     };
+    catalog_round(state, &library, library_due, catalog_schedule).await?;
     let userdata = state.userdata_handle();
     let accounts = blocking(move || {
         let conn = userdata.lock();

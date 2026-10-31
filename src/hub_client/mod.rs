@@ -14,6 +14,7 @@
 
 pub mod book_file;
 pub mod catalog;
+pub mod catalog_sync;
 pub mod keys;
 pub mod merge;
 pub mod records;
@@ -33,6 +34,7 @@ use serde_json::json;
 use crate::hub::{AccountId, Secret};
 use crate::publication::format::{BlobPath, PublicationId, VersionRange};
 use keys::AccountKey;
+use shelfgauge_core::catalog::CatalogPath;
 
 /// A hub's base URL: `https://host[:port][/path]`, or `http://` for a loopback host;
 /// lowercase scheme and host, no trailing slash, no query, fragment or user info.
@@ -316,6 +318,9 @@ pub struct HubInfo {
     /// Who runs the hub (absent before 0.20).
     #[serde(default)]
     pub operator: Option<HubOperator>,
+    /// The catalog format versions the hub accepts (absent before 0.22: no catalogs).
+    #[serde(default)]
+    pub catalog_formats: Option<VersionRange>,
 }
 
 /// The operator in [`HubInfo`].
@@ -795,6 +800,94 @@ impl HubClient {
             Err(ClientError::Hub { status: 404, .. }) => Ok(()),
             other => other,
         }
+    }
+
+    /// `PUT /api/catalog/{path}`: a sealed blob of the library's catalog.
+    pub fn put_catalog_blob(
+        &self,
+        token: &Secret,
+        path: CatalogPath,
+        blob: &[u8],
+    ) -> Result<(), ClientError> {
+        let response = self
+            .agent
+            .put(self.url.api(&format!("catalog/{path}")))
+            .config()
+            .timeout_global(Some(BLOB_TIMEOUT))
+            .build()
+            .header("Authorization", bearer(token))
+            .content_type("application/octet-stream")
+            .send(blob)
+            .map_err(transport)?;
+        empty(response)
+    }
+
+    /// `DELETE /api/catalog/{path}`; a blob the hub no longer has counts as deleted.
+    pub fn delete_catalog_blob(
+        &self,
+        token: &Secret,
+        path: CatalogPath,
+    ) -> Result<(), ClientError> {
+        let response = self
+            .agent
+            .delete(self.url.api(&format!("catalog/{path}")))
+            .header("Authorization", bearer(token))
+            .call()
+            .map_err(transport)?;
+        match empty(response) {
+            Err(ClientError::Hub { status: 404, .. }) => Ok(()),
+            other => other,
+        }
+    }
+
+    /// `GET /api/catalog`: the paths of the library's catalog blobs on the hub (unknown
+    /// paths are left out).
+    pub fn catalog_paths(&self, token: &Secret) -> Result<Vec<CatalogPath>, ClientError> {
+        #[derive(Deserialize)]
+        struct Item {
+            path: String,
+        }
+        #[derive(Deserialize)]
+        struct Body {
+            blobs: Vec<Item>,
+        }
+        let response = self
+            .agent
+            .get(self.url.api("catalog"))
+            .header("Authorization", bearer(token))
+            .call()
+            .map_err(transport)?;
+        let body: Body = answer(response)?;
+        Ok(body
+            .blobs
+            .into_iter()
+            .filter_map(|b| b.path.parse().ok())
+            .collect())
+    }
+
+    /// `GET /api/library/pending`: per account with request records, the highest
+    /// sequence number among them.
+    pub fn pending_requests(&self, token: &Secret) -> Result<Vec<(AccountId, i64)>, ClientError> {
+        #[derive(Deserialize)]
+        struct Item {
+            id: String,
+            seq: i64,
+        }
+        #[derive(Deserialize)]
+        struct Body {
+            accounts: Vec<Item>,
+        }
+        let response = self
+            .agent
+            .get(self.url.api("library/pending"))
+            .header("Authorization", bearer(token))
+            .call()
+            .map_err(transport)?;
+        let body: Body = answer(response)?;
+        body.accounts
+            .into_iter()
+            .map(|a| Ok((a.id.parse().map_err(|_| ClientError::BadAnswer)?, a.seq)))
+            .collect()
     }
 
     /// `GET /api/pub`: the ids of the library's publications on the hub.

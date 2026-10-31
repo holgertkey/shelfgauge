@@ -145,6 +145,9 @@ struct Inner {
     addresses: AddressLimiter,
     /// Books being published to the hub: `(profile id, content key)`.
     publishing: PublishingSet,
+    /// The library's catalog on the hub may be out of date (the Showcase or a
+    /// publication changed); the sync worker rebuilds it at its next tick.
+    catalog_dirty: std::sync::atomic::AtomicBool,
     /// A restart asked for on the settings page (the server stops, the program starts
     /// again with the same arguments).
     restart: Arc<Restart>,
@@ -311,6 +314,7 @@ impl AppState {
             passwords: PinLimiter::new(),
             addresses: AddressLimiter::new(),
             publishing: Arc::default(),
+            catalog_dirty: std::sync::atomic::AtomicBool::new(true),
             restart: Arc::default(),
         }))
     }
@@ -417,6 +421,20 @@ impl AppState {
     /// The user-data database.
     pub fn userdata(&self) -> &UserData {
         &self.0.userdata
+    }
+
+    /// Asks the sync worker to rebuild the hub's catalog at its next tick.
+    pub(crate) fn mark_catalog_dirty(&self) {
+        self.0
+            .catalog_dirty
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether the catalog was marked out of date since the last call.
+    pub(crate) fn take_catalog_dirty(&self) -> bool {
+        self.0
+            .catalog_dirty
+            .swap(false, std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Marks a book of `profile` as being published; `None` if it already is (a

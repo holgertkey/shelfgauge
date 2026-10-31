@@ -28,7 +28,7 @@ use crate::storage::{StorageError, migrations, open_wal};
 
 /// Schema migrations of the user-data database; index `i` upgrades version `i` to
 /// `i + 1`. Append only: user data cannot be rebuilt.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8];
 
 /// Version 1: annotations and reading positions.
 ///
@@ -430,6 +430,47 @@ CREATE TABLE showcase_folders (
     marked_at INTEGER NOT NULL,
     PRIMARY KEY (kind, path, inner)
 ) STRICT;
+"#;
+
+/// Version 8: the library's catalog on its hub (`hub_client::catalog_sync`).
+///
+/// - `hub_catalog` (one row): the catalog key, the library key generation it is sealed
+///   under, the last uploaded index's generation (Unix milliseconds or higher, so it grows
+///   even after this state is lost) and chunk count, and `index_hash`: what that index
+///   lists (key generation, entry count, chunk hashes), so an index whose upload failed
+///   is sent again.
+/// - `hub_catalog_chunks`: the SHA-256 of each chunk's plaintext on the hub, so only
+///   changed chunks are uploaded; `hub_catalog_covers` the thumbnails on the hub.
+/// - `hub_requests`: members' requests pulled from their accounts, kept until answered
+///   (`kind` `book_request` or `cover_request`, `plain` the record's plaintext).
+const V8: &str = r#"
+CREATE TABLE hub_catalog (
+    id           INTEGER PRIMARY KEY CHECK (id = 1),
+    catalog_key  BLOB    NOT NULL,
+    key_id       INTEGER NOT NULL,
+    generation   INTEGER NOT NULL DEFAULT 0,
+    chunk_count  INTEGER NOT NULL DEFAULT 0,
+    index_hash   BLOB
+);
+
+CREATE TABLE hub_catalog_chunks (
+    number INTEGER PRIMARY KEY,
+    sha256 BLOB    NOT NULL
+);
+
+CREATE TABLE hub_catalog_covers (
+    cover_id    BLOB    PRIMARY KEY,
+    uploaded_at INTEGER NOT NULL
+);
+
+CREATE TABLE hub_requests (
+    profile_id INTEGER NOT NULL REFERENCES hub_accounts (profile_id) ON DELETE CASCADE,
+    kind       TEXT    NOT NULL CHECK (kind IN ('book_request', 'cover_request')),
+    record_id  TEXT    NOT NULL,
+    plain      BLOB    NOT NULL,
+    pulled_at  INTEGER NOT NULL,
+    PRIMARY KEY (profile_id, kind, record_id)
+);
 "#;
 
 /// The schema version this build creates and understands.

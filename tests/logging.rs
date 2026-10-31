@@ -1100,8 +1100,29 @@ async fn hub_account_secrets_are_never_logged_by_the_library() {
             .await;
         assert_eq!(set.status, StatusCode::SEE_OTHER, "{}", set.body);
         home.post("/profile/hub", &[("action", "rotate")]).await;
+        // The whole library on the Showcase: the catalog is built and uploaded, with a
+        // book whose title would be noticed.
+        std::fs::write(
+            home.root().join("okapi.fb2"),
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<FictionBook><description><title-info><book-title>Title-Quokka-Shelf</book-title></title-info></description><body><section><p>Text.</p></section></body></FictionBook>"#,
+        )
+        .unwrap();
+        home.rescan();
+        let opened = home.post("/showcase", &[("path", ""), ("open", "1")]).await;
+        assert_eq!(opened.status, StatusCode::SEE_OTHER, "{}", opened.body);
         home.sync().await;
         assert_eq!(home.shelf_action(book, "remove").await, "removed");
+        let catalog_key = home.value::<Vec<u8>>("SELECT catalog_key FROM hub_catalog");
+        let index = rusqlite::Connection::open(home.library.db_path()).unwrap();
+        let (title, content): (String, Vec<u8>) = index
+            .query_row(
+                "SELECT title, content_hash FROM books WHERE title = 'Title-Quokka-Shelf'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let book_id = shelfgauge_core::catalog::BookId::from_content_key(&content).to_string();
 
         let library = home.hub_library();
         let keys = {
@@ -1117,6 +1138,8 @@ async fn hub_account_secrets_are_never_logged_by_the_library() {
             "hub owner password set",
             "library key changed",
             "synced with the hub",
+            "showcase folder changed",
+            "catalog uploaded to the hub",
         ] {
             assert!(log.contains(event), "{event}: {log}");
         }
@@ -1143,6 +1166,10 @@ async fn hub_account_secrets_are_never_logged_by_the_library() {
             "grandma-okapi".to_owned(),
             "home".to_owned() + "@",
             "@home".to_owned(),
+            b64(&catalog_key),
+            hex(&catalog_key),
+            title.clone(),
+            book_id.clone(),
         ];
         for (_, key) in &keys {
             secrets.push(b64(key.as_bytes()));

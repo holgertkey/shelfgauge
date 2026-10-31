@@ -1621,3 +1621,217 @@ async fn the_handle_changes_on_the_server_page_and_the_hub_url_is_locked() {
         .await;
     assert_eq!(status, StatusCode::CREATED);
 }
+
+// ---------- The library's catalog (Phase 31) ----------
+
+fn fb2_book(title: &str, author: &str) -> Vec<u8> {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<FictionBook><description><title-info><genre>sf</genre><author><first-name>{author}</first-name><last-name>Writer</last-name></author>
+<book-title>{title}</book-title><annotation><p>About {title}.</p></annotation></title-info></description><body><section><p>Text of {title}.</p></section></body></FictionBook>"#
+    )
+    .into_bytes()
+}
+
+/// A library on the hub with books in folders:
+///
+/// ```text
+/// sf/alpha.fb2          Alpha
+/// sf/inner/beta.fb2     Beta
+/// closed/gamma.fb2      Gamma
+/// closed/alpha.fb2      Alpha (the same bytes as sf/alpha.fb2)
+/// ```
+async fn showcase_library(hub: &TestHub) -> Lib {
+    let lib = Lib::with_books(
+        &hub.url,
+        "Home library",
+        &[
+            ("sf/alpha.fb2", fb2_book("Alpha", "Anna")),
+            ("sf/inner/beta.fb2", fb2_book("Beta", "Boris")),
+            ("closed/gamma.fb2", fb2_book("Gamma", "Gleb")),
+            ("closed/alpha.fb2", fb2_book("Alpha", "Anna")),
+        ],
+    );
+    lib.create_library(&hub.invite()).await;
+    lib
+}
+
+async fn open_folder(lib: &Lib, path: &str, open: bool) {
+    let mut form = vec![("path", path)];
+    if open {
+        form.push(("open", "1"));
+    }
+    let reply = lib.post("/showcase", &form).await;
+    assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.body);
+}
+
+/// The catalog as a member's device reads it with `token`: the catalog key from the
+/// index header with the library key, every chunk checked against the index. The
+/// index's raw blob, the index and the entries by title.
+async fn read_catalog(
+    hub: &TestHub,
+    lib: &Lib,
+    token: &str,
+) -> (
+    Vec<u8>,
+    shelfgauge_core::catalog::Index,
+    Vec<shelfgauge_core::catalog::Entry>,
+) {
+    use shelfgauge::hub_client::catalog::{open, open_catalog_key};
+    use shelfgauge_core::catalog::{
+        CatalogHeader, CatalogPath, Chunk, Index, MAX_CHUNK_LEN, MAX_INDEX_LEN, parse_envelope,
+    };
+    let (status, blob) = hub.catalog_blob(token, "index").await;
+    assert_eq!(status, StatusCode::OK);
+    let header = CatalogHeader::decode(parse_envelope(&blob).unwrap().header).unwrap();
+    let generations = shelfgauge::hub_client::store::library_keys(&lib.userdata.lock()).unwrap();
+    let (_, library_key) = generations
+        .iter()
+        .find(|(id, _)| *id == header.key_id)
+        .unwrap();
+    let key = open_catalog_key(&header, library_key).unwrap();
+    let library = lib.hub_library().library_id;
+    let index =
+        Index::decode(&open(&library, &key, CatalogPath::Index, &blob, MAX_INDEX_LEN).unwrap())
+            .unwrap();
+    let mut entries = Vec::new();
+    for info in &index.chunks {
+        let path = CatalogPath::Chunk(info.number);
+        let (status, sealed) = hub.catalog_blob(token, &path.to_string()).await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        let plain = open(&library, &key, path, &sealed, MAX_CHUNK_LEN).unwrap();
+        index.check_chunk(info.number, &plain).unwrap();
+        entries.extend(Chunk::decode(&plain).unwrap().entries);
+    }
+    entries.sort_by(|a, b| a.title.cmp(&b.title));
+    (blob, index, entries)
+}
+
+fn titles(entries: &[shelfgauge_core::catalog::Entry]) -> Vec<&str> {
+    entries.iter().map(|e| e.title.as_str()).collect()
+}
+
+#[tokio::test]
+async fn the_showcase_goes_to_the_hub_as_a_sealed_catalog() {
+    let hub = TestHub::start().await;
+    let lib = showcase_library(&hub).await;
+    let phone = lib.phone(&hub).await;
+    // Nothing on the Showcase: an index with no entries and one empty chunk.
+    lib.sync().await;
+    let (_, index, entries) = read_catalog(&hub, &lib, &phone.token).await;
+    assert!(entries.is_empty());
+    assert_eq!((index.entries, index.chunks.len()), (0, 1));
+    assert!(index.generation >= (shelfgauge::annotations::now() as u64 - 60) * 1000);
+    let first = index.generation;
+
+    open_folder(&lib, "sf", true).await;
+    lib.sync().await;
+    let (blob, index, entries) = read_catalog(&hub, &lib, &phone.token).await;
+    // The duplicate in the closed folder is the same book: listed once.
+    assert_eq!(titles(&entries), ["Alpha", "Beta"]);
+    assert!(index.generation > first);
+    let alpha = &entries[0];
+    assert_eq!(alpha.author, ["Writer Anna"]);
+    assert_eq!(alpha.subject, ["sf"]);
+    assert_eq!(
+        shelfgauge_core::catalog::format_name(alpha.format),
+        Some("fb2")
+    );
+    assert_eq!(alpha.description.as_deref(), Some("About Alpha."));
+    assert!(alpha.publication.is_none());
+
+    // Nothing changed: nothing is uploaded again (the index's ciphertext stays).
+    lib.sync().await;
+    let (again, _, _) = read_catalog(&hub, &lib, &phone.token).await;
+    assert_eq!(again, blob);
+
+    // Closing the folder empties the catalog.
+    open_folder(&lib, "sf", false).await;
+    lib.sync().await;
+    let (_, _, entries) = read_catalog(&hub, &lib, &phone.token).await;
+    assert!(entries.is_empty());
+}
+
+#[tokio::test]
+async fn a_closed_folders_books_leave_the_catalog_while_their_publications_stay() {
+    let hub = TestHub::start().await;
+    let lib = showcase_library(&hub).await;
+    let phone = lib.phone(&hub).await;
+    open_folder(&lib, "sf", true).await;
+    let alpha = lib.book("sf/alpha.fb2");
+    assert_eq!(lib.publish(alpha).await, "published");
+    lib.sync().await;
+    let (_, _, entries) = read_catalog(&hub, &lib, &phone.token).await;
+    let publication = lib.shelf()[0].publication.unwrap();
+    assert_eq!(entries[0].publication, Some(*publication.as_bytes()));
+
+    open_folder(&lib, "sf", false).await;
+    lib.sync().await;
+    let (_, _, entries) = read_catalog(&hub, &lib, &phone.token).await;
+    assert!(entries.is_empty());
+    let (status, _) = hub
+        .blob(&phone.token, &publication.to_string(), "manifest")
+        .await;
+    assert_eq!(status, StatusCode::OK, "the publication stays on the shelf");
+}
+
+#[tokio::test]
+async fn a_rescan_reaches_the_catalog() {
+    let hub = TestHub::start().await;
+    let lib = showcase_library(&hub).await;
+    let phone = lib.phone(&hub).await;
+    open_folder(&lib, "sf", true).await;
+    lib.sync().await;
+    std::fs::rename(
+        lib.root().join("sf/inner/beta.fb2"),
+        lib.root().join("closed/beta.fb2"),
+    )
+    .unwrap();
+    std::fs::write(lib.root().join("sf/delta.fb2"), fb2_book("Delta", "Dina")).unwrap();
+    lib.rescan();
+    lib.sync().await;
+    let (_, _, entries) = read_catalog(&hub, &lib, &phone.token).await;
+    assert_eq!(titles(&entries), ["Alpha", "Delta"]);
+}
+
+#[tokio::test]
+async fn a_new_library_key_seals_a_new_catalog_and_lost_state_keeps_the_generation_growing() {
+    use shelfgauge_core::catalog::{CatalogHeader, parse_envelope};
+    let hub = TestHub::start().await;
+    let lib = showcase_library(&hub).await;
+    let phone = lib.phone(&hub).await;
+    open_folder(&lib, "", true).await;
+    lib.sync().await;
+    let (blob, index, entries) = read_catalog(&hub, &lib, &phone.token).await;
+    assert_eq!(titles(&entries), ["Alpha", "Beta", "Gamma"]);
+    let key_id = |blob: &[u8]| {
+        CatalogHeader::decode(parse_envelope(blob).unwrap().header)
+            .unwrap()
+            .key_id
+    };
+    let first_key = key_id(&blob);
+    let (_, first_chunk) = hub.catalog_blob(&phone.token, "c/0").await;
+
+    let rotated = lib.post("/profile/hub", &[("action", "rotate")]).await;
+    assert_eq!(rotated.status, StatusCode::SEE_OTHER, "{}", rotated.body);
+    lib.sync().await;
+    let (blob, rotated_index, entries) = read_catalog(&hub, &lib, &phone.token).await;
+    assert_eq!(key_id(&blob), first_key + 1);
+    assert_eq!(entries.len(), 3);
+    assert!(rotated_index.generation > index.generation);
+    let (_, chunk) = hub.catalog_blob(&phone.token, "c/0").await;
+    assert_ne!(
+        chunk, first_chunk,
+        "every chunk sealed under the new catalog key"
+    );
+
+    // The library's catalog state is lost (a restored backup): the next index still
+    // does not go back.
+    lib.sql(
+        "DELETE FROM hub_catalog; DELETE FROM hub_catalog_chunks; DELETE FROM hub_catalog_covers;",
+    );
+    lib.sync().await;
+    let (_, after, entries) = read_catalog(&hub, &lib, &phone.token).await;
+    assert_eq!(entries.len(), 3);
+    assert!(after.generation >= rotated_index.generation);
+}

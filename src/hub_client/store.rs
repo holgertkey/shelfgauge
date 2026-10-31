@@ -135,8 +135,9 @@ pub fn set_handle(conn: &Connection, handle: &str) -> Result<(), StorageError> {
 pub fn forget_library(conn: &Connection) -> Result<(), StorageError> {
     let tx = conn.unchecked_transaction()?;
     tx.execute_batch(
-        "DELETE FROM hub_accounts; DELETE FROM hub_removals; DELETE FROM hub_library_keys;
-         DELETE FROM hub_library;",
+        "DELETE FROM hub_requests; DELETE FROM hub_accounts; DELETE FROM hub_removals;
+         DELETE FROM hub_library_keys; DELETE FROM hub_catalog; DELETE FROM hub_catalog_chunks;
+         DELETE FROM hub_catalog_covers; DELETE FROM hub_library;",
     )?;
     tx.commit()?;
     Ok(())

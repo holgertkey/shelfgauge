@@ -112,6 +112,7 @@ pub(crate) async fn save(
     })
     .await?;
     tracing::info!(open, "showcase folder changed");
+    state.mark_catalog_dirty();
     let wants_json = headers
         .get(header::ACCEPT)
         .and_then(|v| v.to_str().ok())

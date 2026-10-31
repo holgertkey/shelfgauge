@@ -28,6 +28,23 @@ use tower::ServiceExt;
 pub const HOST: &str = "127.0.0.1:8742";
 pub const ORIGIN: &str = "http://127.0.0.1:8742";
 
+/// Scans `library` (one thread, the built-in formats).
+fn scan(library: &Library) {
+    let mut conn = open_writer(&library.db_path()).unwrap();
+    Scanner {
+        library,
+        exclude: &[],
+        registry: &Registry::with_builtin_formats(),
+        reread: false,
+        limits: ReadLimits::default(),
+        threads: 1,
+        progress: &ScanProgress::default(),
+        cancel: &AtomicBool::new(false),
+    }
+    .run(&mut conn)
+    .unwrap();
+}
+
 /// A hub served on a loopback port (invite-only, as by default).
 pub struct TestHub {
     pub _dir: tempfile::TempDir,
@@ -147,6 +164,19 @@ impl TestHub {
         (status, bytes.to_vec())
     }
 
+    /// A catalog blob as a device (or the library) fetches it: status and body.
+    pub async fn catalog_blob(&self, token: &str, path: &str) -> (StatusCode, Vec<u8>) {
+        let request = Request::get(format!("/api/catalog/{path}"))
+            .header(header::HOST, self.url.trim_start_matches("http://"))
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap();
+        let response = self.app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        (status, bytes.to_vec())
+    }
+
     /// All records of the account: `(kind, id, data)`, newest state per record.
     pub async fn records(&self, token: &str) -> Vec<(String, String, Option<Vec<u8>>)> {
         use base64::Engine as _;
@@ -226,21 +256,11 @@ impl Lib {
         let dir = tempfile::tempdir().unwrap();
         let library = Library::open(dir.path()).unwrap();
         for (file, data) in files {
-            std::fs::write(dir.path().join(file), data).unwrap();
+            let path = dir.path().join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, data).unwrap();
         }
-        let mut conn = open_writer(&library.db_path()).unwrap();
-        Scanner {
-            library: &library,
-            exclude: &[],
-            registry: &Registry::with_builtin_formats(),
-            reread: false,
-            limits: ReadLimits::default(),
-            threads: 1,
-            progress: &ScanProgress::default(),
-            cancel: &AtomicBool::new(false),
-        }
-        .run(&mut conn)
-        .unwrap();
+        scan(&library);
         let userdata = Arc::new(UserData::open(&library.userdata_path()).unwrap());
         let exporter = Exporter::new(library.annotations_dir(), "http://127.0.0.1:8742/");
         let mut config = Config::default();
@@ -260,6 +280,16 @@ impl Lib {
             scan,
             session: std::sync::Mutex::new(None),
         }
+    }
+
+    /// Scans the library folder again (after files were added, moved or removed).
+    pub fn rescan(&self) {
+        scan(&self.library);
+    }
+
+    /// The library's folder.
+    pub fn root(&self) -> &std::path::Path {
+        self._dir.path()
     }
 
     pub async fn send(&self, request: Request<Body>) -> Reply {

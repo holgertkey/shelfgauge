@@ -226,6 +226,8 @@ pub(crate) async fn save(
         "remove" => remove(&state, library, account, id).await?,
         _ => return Err(AppError::BadRequest("unknown action".to_owned())),
     };
+    // A catalog entry names the book's publication.
+    state.mark_catalog_dirty();
     Ok(Redirect::to(&format!("{}?hub={code}#shelf", state.urls().book(id))).into_response())
 }
 
