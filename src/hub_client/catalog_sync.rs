@@ -185,6 +185,21 @@ fn chunk_hashes(conn: &Connection) -> Result<HashMap<u32, Vec<u8>>, StorageError
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
+/// The current catalog key, once a catalog was built.
+pub fn catalog_key(conn: &Connection) -> Result<Option<CatalogKey>, StorageError> {
+    Ok(load(conn)?.map(|state| state.key))
+}
+
+/// Notes that thumbnail `id` is on the hub.
+pub fn cover_uploaded(conn: &Connection, id: &CoverId, now: i64) -> Result<(), StorageError> {
+    conn.execute(
+        "INSERT INTO hub_catalog_covers (cover_id, uploaded_at) VALUES (?1, ?2)
+         ON CONFLICT (cover_id) DO NOTHING",
+        params![id.as_bytes().as_slice(), now],
+    )?;
+    Ok(())
+}
+
 /// The thumbnails on the hub, as far as this library knows.
 pub fn uploaded_covers(conn: &Connection) -> Result<HashSet<CoverId>, StorageError> {
     let mut stmt = conn.prepare("SELECT cover_id FROM hub_catalog_covers")?;

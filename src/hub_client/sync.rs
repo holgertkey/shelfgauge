@@ -369,8 +369,11 @@ pub fn pull(
         let page = client.pull(target.token, Some(target.id), since)?;
         let conn = userdata.lock();
         let tx = conn.unchecked_transaction()?;
+        let now = crate::annotations::now();
         for record in &page.records {
             report.pulled += 1;
+            // Requests are kept with the cursor, so none is lost if serving fails.
+            super::requests::keep_pulled(&tx, profile, &account.key, record, now)?;
             match super::merge::apply(&tx, profile, &account.key, record, book_id, instance)? {
                 super::merge::Applied::Kept => {}
                 super::merge::Applied::Annotation(content) => {

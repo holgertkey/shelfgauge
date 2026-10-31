@@ -1835,3 +1835,263 @@ async fn a_new_library_key_seals_a_new_catalog_and_lost_state_keeps_the_generati
     assert_eq!(entries.len(), 3);
     assert!(after.generation >= rotated_index.generation);
 }
+
+/// A member of `lib` with a signed-in device: its token and account key.
+async fn member_device(hub: &TestHub, lib: &Lib, name: &str) -> (String, AccountKey) {
+    let (_, secret, one_time) = lib.invite_someone(hub, name).await;
+    let member = hub.redeem(&secret, &one_time, &name.to_lowercase()).await;
+    let key = AccountKey::new(
+        URL_SAFE_NO_PAD
+            .decode(&member.payload.account_key)
+            .unwrap()
+            .try_into()
+            .unwrap(),
+    );
+    (member.token, key)
+}
+
+/// The catalog id of the library's book `file`.
+fn catalog_id(lib: &Lib, file: &str) -> String {
+    let index = rusqlite::Connection::open(lib.library.db_path()).unwrap();
+    let id = lib.book(file);
+    let key: Vec<u8> = index
+        .query_row("SELECT content_hash FROM books WHERE id = ?1", [id], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    shelfgauge_core::catalog::BookId::from_content_key(&key).to_string()
+}
+
+async fn ask(hub: &TestHub, token: &str, key: &AccountKey, book: &str, updated_at: i64) {
+    common::hub::push_record(
+        hub,
+        token,
+        key,
+        "book_request",
+        book,
+        Some(serde_json::json!({
+            "book": book, "reason": null, "state": "pending", "updated_at": updated_at,
+        })),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_request_for_a_showcase_book_lands_on_the_members_shelf() {
+    let hub = TestHub::start().await;
+    let lib = showcase_library(&hub).await;
+    let (token, key) = member_device(&hub, &lib, "Olga").await;
+    open_folder(&lib, "sf", true).await;
+    lib.sync().await;
+    let (_, _, entries) = read_catalog(&hub, &lib, &token).await;
+    let beta = catalog_id(&lib, "sf/inner/beta.fb2");
+    assert!(
+        entries.iter().any(|e| e.id.to_string() == beta),
+        "the member sees it"
+    );
+
+    ask(&hub, &token, &key, &beta, shelfgauge::annotations::now()).await;
+    assert_eq!(
+        lib.value::<i64>("SELECT count(*) FROM hub_requests"),
+        0,
+        "not pulled yet"
+    );
+    lib.sync().await;
+    let records = common::hub::pull_records(&hub, &token, &key).await;
+    assert!(
+        records
+            .iter()
+            .any(|(kind, id, data)| kind == "book_request" && id == &beta && data.is_none()),
+        "the request is answered by deleting it: {records:?}"
+    );
+    let shelf_item = records
+        .iter()
+        .find_map(|(kind, _, data)| (kind == "shelf_item").then_some(data.clone()))
+        .flatten()
+        .expect("the book on the member's shelf");
+    assert_eq!(shelf_item["title"], "Beta");
+    let publication = shelf_item["publication"].as_str().unwrap().to_owned();
+    let (status, _) = hub.blob(&token, &publication, "manifest").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(lib.value::<i64>("SELECT count(*) FROM hub_requests"), 0);
+    // The catalog names the publication now.
+    lib.sync().await;
+    let (_, _, entries) = read_catalog(&hub, &lib, &token).await;
+    let entry = entries.iter().find(|e| e.id.to_string() == beta).unwrap();
+    assert!(entry.publication.is_some());
+}
+
+#[tokio::test]
+async fn a_forged_request_for_a_closed_book_is_refused() {
+    let hub = TestHub::start().await;
+    let lib = showcase_library(&hub).await;
+    let (token, key) = member_device(&hub, &lib, "Olga").await;
+    open_folder(&lib, "sf", true).await;
+    lib.sync().await;
+    // Gamma is in a closed folder; the phone's clock is ahead of the library's.
+    let gamma = catalog_id(&lib, "closed/gamma.fb2");
+    let ahead = shelfgauge::annotations::now() + 3600;
+    ask(&hub, &token, &key, &gamma, ahead).await;
+    let unknown = "00".repeat(16);
+    ask(&hub, &token, &key, &unknown, 1).await;
+    lib.sync().await;
+    let records = common::hub::pull_records(&hub, &token, &key).await;
+    for (book, at) in [(&gamma, ahead), (&unknown, 1)] {
+        let answer = records
+            .iter()
+            .find(|(kind, id, _)| kind == "book_request" && id == book)
+            .and_then(|(_, _, data)| data.clone())
+            .unwrap();
+        assert_eq!(answer["state"], "refused");
+        assert_eq!(answer["reason"], "closed");
+        assert!(
+            answer["updated_at"].as_i64().unwrap() > at,
+            "later than the request"
+        );
+    }
+    assert!(!records.iter().any(|(kind, _, _)| kind == "shelf_item"));
+    assert!(lib.shelf().is_empty());
+    // A book whose folder closed after it was asked for is refused as well.
+    let beta = catalog_id(&lib, "sf/inner/beta.fb2");
+    ask(&hub, &token, &key, &beta, shelfgauge::annotations::now()).await;
+    open_folder(&lib, "sf", false).await;
+    lib.sync().await;
+    let answer = common::hub::pull_records(&hub, &token, &key)
+        .await
+        .into_iter()
+        .find(|(kind, id, _)| kind == "book_request" && id == &beta)
+        .and_then(|(_, _, data)| data)
+        .unwrap();
+    assert_eq!(answer["reason"], "closed");
+    // The library's refusals pulled back are not requests.
+    lib.sync().await;
+    assert_eq!(lib.value::<i64>("SELECT count(*) FROM hub_requests"), 0);
+}
+
+#[tokio::test]
+async fn thumbnails_are_made_on_request_for_showcase_books_only() {
+    use shelfgauge::hub_client::catalog::open;
+    use shelfgauge_core::catalog::CatalogPath;
+    const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    let covered = |title: &str| {
+        String::from_utf8(fb2_book(title, "Cora"))
+            .unwrap()
+            .replace(
+                "<FictionBook>",
+                r#"<FictionBook xmlns:l="http://www.w3.org/1999/xlink">"#,
+            )
+            .replace(
+                "<book-title>",
+                r##"<coverpage><image l:href="#c"/></coverpage><book-title>"##,
+            )
+            .replace(
+                "</FictionBook>",
+                &format!(r#"<binary id="c" content-type="image/png">{PNG}</binary></FictionBook>"#),
+            )
+            .into_bytes()
+    };
+    let hub = TestHub::start().await;
+    let lib = Lib::with_books(
+        &hub.url,
+        "Home library",
+        &[
+            ("open/covered.fb2", covered("Covered")),
+            ("closed/hidden.fb2", covered("Hidden")),
+        ],
+    );
+    lib.create_library(&hub.invite()).await;
+    let (token, key) = member_device(&hub, &lib, "Olga").await;
+    open_folder(&lib, "open", true).await;
+    lib.sync().await;
+    let (_, _, entries) = read_catalog(&hub, &lib, &token).await;
+    let cover = entries[0].cover.expect("a cover");
+    // The closed book's thumbnail id under the same catalog key, as a forger would
+    // compute it.
+    let catalog_key = shelfgauge::hub_client::catalog::CatalogKey::new(
+        lib.value::<Vec<u8>>("SELECT catalog_key FROM hub_catalog")
+            .try_into()
+            .unwrap(),
+    );
+    let hidden = shelfgauge_core::catalog::cover_id(
+        catalog_key.as_bytes(),
+        &catalog_id(&lib, "closed/hidden.fb2").parse().unwrap(),
+    );
+    common::hub::push_record(
+        &hub,
+        &token,
+        &key,
+        "cover_request",
+        "covers-1",
+        Some(serde_json::json!({
+            "covers": [cover.to_string(), hidden.to_string(), "zz"], "updated_at": 1,
+        })),
+    )
+    .await;
+    lib.sync().await;
+    let path = CatalogPath::Thumbnail(cover);
+    let (status, sealed) = hub.catalog_blob(&token, &path.to_string()).await;
+    assert_eq!(status, StatusCode::OK);
+    let jpeg = open(
+        &lib.hub_library().library_id,
+        &catalog_key,
+        path,
+        &sealed,
+        1 << 20,
+    )
+    .unwrap();
+    assert_eq!(&jpeg[..2], &[0xff, 0xd8], "a JPEG");
+    let (status, _) = hub
+        .catalog_blob(&token, &CatalogPath::Thumbnail(hidden).to_string())
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "never for a closed book");
+    let records = common::hub::pull_records(&hub, &token, &key).await;
+    assert!(
+        records
+            .iter()
+            .any(|(kind, _, data)| kind == "cover_request" && data.is_none())
+    );
+    // Closing the folder takes the thumbnail off the hub with the catalog.
+    open_folder(&lib, "open", false).await;
+    lib.sync().await;
+    assert_eq!(
+        hub.catalog_blob(&token, &path.to_string()).await.0,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn the_pending_check_names_accounts_with_new_requests() {
+    let hub = TestHub::start().await;
+    let lib = showcase_library(&hub).await;
+    let (token, key) = member_device(&hub, &lib, "Olga").await;
+    lib.sync().await;
+    let library = lib.hub_library();
+    let pending = {
+        let library = library.clone();
+        move || {
+            shelfgauge::hub_client::HubClient::new(library.hub_url.clone())
+                .pending_requests(&library.token)
+                .unwrap()
+        }
+    };
+    let none = tokio::task::spawn_blocking(pending.clone()).await.unwrap();
+    assert!(none.is_empty());
+    ask(&hub, &token, &key, &"11".repeat(16), 1).await;
+    let some = tokio::task::spawn_blocking(pending).await.unwrap();
+    let member = lib
+        .userdata
+        .lock()
+        .query_row(
+            "SELECT profile_id FROM hub_accounts WHERE role = 'reader'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap();
+    let account = lib.account_of(ProfileId(member)).unwrap();
+    assert_eq!(some.len(), 1);
+    assert_eq!(Some(&some[0].0), account.account.as_ref());
+    assert!(
+        some[0].1 > account.last_seq,
+        "ahead of the library's cursor"
+    );
+}

@@ -314,7 +314,9 @@ async fn build(state: &AppState, id: i64) -> Result<Option<(BookInfo, Publicatio
         .await
 }
 
-async fn publish(
+/// Publishes library book `id` to `account`'s shelf (as **Read on phone** does); the
+/// `hub` code of the outcome (`published`, `protected`, `busy`, `quota`, ...).
+pub(crate) async fn publish(
     state: &AppState,
     library: HubLibrary,
     account: HubAccount,

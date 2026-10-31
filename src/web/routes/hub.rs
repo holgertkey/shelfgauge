@@ -491,7 +491,12 @@ pub(crate) async fn save(
                         tracing::info!(error = %e, "the catalog upload failed");
                     }
                 }
-                match crate::web::hub_sync::sync_account(&state, library, account).await? {
+                let synced =
+                    crate::web::hub_sync::sync_account(&state, library.clone(), account).await?;
+                if admin {
+                    crate::web::hub_sync::serve_requests(&state, &library).await?;
+                }
+                match synced {
                     Ok(_) => Outcome::Done("synced"),
                     Err(crate::hub_client::sync::SyncError::Client(e)) => {
                         Outcome::Refused(e.user_text())

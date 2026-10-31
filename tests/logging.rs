@@ -1123,6 +1123,26 @@ async fn hub_account_secrets_are_never_logged_by_the_library() {
             )
             .unwrap();
         let book_id = shelfgauge_core::catalog::BookId::from_content_key(&content).to_string();
+        // The member asks for the book; the library serves the request.
+        let member_key = shelfgauge::hub_client::keys::AccountKey::new(
+            URL_SAFE_NO_PAD
+                .decode(&redeemed.payload.account_key)
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        );
+        common::hub::push_record(
+            &hub,
+            &redeemed.token,
+            &member_key,
+            "book_request",
+            &book_id,
+            Some(serde_json::json!({
+                "book": book_id, "reason": null, "state": "pending", "updated_at": 1,
+            })),
+        )
+        .await;
+        home.sync().await;
 
         let library = home.hub_library();
         let keys = {
@@ -1140,6 +1160,7 @@ async fn hub_account_secrets_are_never_logged_by_the_library() {
             "synced with the hub",
             "showcase folder changed",
             "catalog uploaded to the hub",
+            "requests answered",
         ] {
             assert!(log.contains(event), "{event}: {log}");
         }

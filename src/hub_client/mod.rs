@@ -18,6 +18,7 @@ pub mod catalog_sync;
 pub mod keys;
 pub mod merge;
 pub mod records;
+pub mod requests;
 pub mod showcase;
 pub mod store;
 pub mod sync;
