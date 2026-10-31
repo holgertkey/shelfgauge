@@ -37,6 +37,7 @@ use super::store::{
 use super::{AccountId, HubError, HubState, Secret};
 use crate::publication::format::{BlobPath, Envelope, PublicationId, SUPPORTED_VERSIONS};
 use crate::web::security::peer_addr;
+use shelfgauge_core::catalog::{self, CatalogPath};
 
 /// The body limit of the small JSON routes.
 const JSON_BODY_LIMIT: usize = 64 * 1024;
@@ -73,6 +74,11 @@ const MAX_PAYLOAD_BYTES: usize = 8192;
 /// `member_invite_max_days`).
 const MEMBER_INVITE_DAYS: u32 = 7;
 
+/// The largest catalog blob: an index or a chunk of about a thousand entries sealed
+/// (a few hundred KB), a thumbnail (a few KB). Small, as catalog blobs are kept in the
+/// hub's database, behind its one connection.
+pub const MAX_CATALOG_BLOB_BYTES: usize = 4 * 1024 * 1024;
+
 /// The record kinds.
 const KINDS: &[&str] = &[
     "shelf_item",
@@ -80,6 +86,8 @@ const KINDS: &[&str] = &[
     "position",
     "library_key",
     "profile",
+    store::REQUEST_KINDS[0],
+    store::REQUEST_KINDS[1],
 ];
 
 /// The API routes.
@@ -142,6 +150,14 @@ pub(super) fn routes(state: &HubState) -> Router<HubState> {
         .route(
             &state.path("/api/pub/{id}/{*blob}"),
             get(get_blob).put(put_blob.layer(DefaultBodyLimit::max(blob_limit))),
+        )
+        .route(&state.path("/api/library/pending"), get(pending))
+        .route(&state.path("/api/catalog"), get(catalog_list))
+        .route(
+            &state.path("/api/catalog/{*path}"),
+            get(get_catalog_blob)
+                .put(put_catalog_blob.layer(DefaultBodyLimit::max(MAX_CATALOG_BLOB_BYTES)))
+                .delete(delete_catalog_blob),
         )
         .route(
             &state.path("/api/sync"),
@@ -349,6 +365,7 @@ async fn info(State(state): State<HubState>) -> Result<Json<serde_json::Value>, 
         "service": "shelfgauge-hub",
         "version": crate::VERSION,
         "formats": SUPPORTED_VERSIONS,
+        "catalog_formats": catalog::CATALOG_SUPPORTED_VERSIONS,
         "registration": config.libraries.registration.as_str(),
         "accepting": accepting,
         "operator": {
@@ -364,6 +381,7 @@ async fn info(State(state): State<HubState>) -> Result<Json<serde_json::Value>, 
         },
         "limits": {
             "max_blob_bytes": config.limits.max_blob_bytes,
+            "max_catalog_blob_bytes": MAX_CATALOG_BLOB_BYTES,
             "max_record_bytes": MAX_RECORD_BYTES,
             "max_sync_records": MAX_SYNC_RECORDS,
             "max_sync_body_bytes": SYNC_BODY_LIMIT,
@@ -1379,6 +1397,130 @@ async fn sync_account(state: &HubState, auth: Auth, headers: &HeaderMap) -> Resu
             Ok(account)
         }
     }
+}
+
+/// The path of a catalog blob from the request; an unknown one is "not found".
+fn catalog_path(path: &str) -> Result<String, HubError> {
+    let path: CatalogPath = path.parse().map_err(|_| HubError::NotFound)?;
+    Ok(path.to_string())
+}
+
+/// `GET /api/catalog`: the library's catalog blobs `[{path, size, updated_at}]`; only
+/// the library's token.
+async fn catalog_list(
+    State(state): State<HubState>,
+    Extension(auth): Extension<Auth>,
+) -> Result<Json<serde_json::Value>, HubError> {
+    let library = library_only(auth)?;
+    let blobs = state
+        .db(move |conn| store::catalog_blobs(conn, library))
+        .await?;
+    let list: Vec<_> = blobs
+        .into_iter()
+        .map(|b| json!({ "path": b.path, "size": b.size, "updated_at": b.updated_at }))
+        .collect();
+    Ok(Json(json!({ "blobs": list })))
+}
+
+/// `PUT /api/catalog/{path}`: stores a blob of the library's catalog (`index`,
+/// `c/<n>`, `t/<cover id>`); only the library's token. The body must be a sealed blob
+/// of a supported catalog format version, at most [`MAX_CATALOG_BLOB_BYTES`]; counted
+/// in the library's bytes.
+async fn put_catalog_blob(
+    State(state): State<HubState>,
+    Extension(auth): Extension<Auth>,
+    Path(path): Path<String>,
+    body: Result<Bytes, BytesRejection>,
+) -> Result<StatusCode, HubError> {
+    let library = library_only(auth)?;
+    let path = catalog_path(&path)?;
+    let body = match body {
+        Ok(body) => body,
+        Err(rejection) if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE => {
+            return Err(HubError::TooLarge);
+        }
+        Err(_) => return Err(HubError::BadRequest("cannot read the body")),
+    };
+    if body.len() > MAX_CATALOG_BLOB_BYTES {
+        return Err(HubError::TooLarge);
+    }
+    if catalog::parse_envelope(&body).is_err() {
+        return Err(HubError::BadRequest(
+            "not a sealed catalog blob of a supported format version",
+        ));
+    }
+    let quotas = state.config().quotas.clone();
+    let total = state.config().limits.max_total_bytes;
+    let now = state.now();
+    let replaced = state
+        .db(move |conn| store::put_catalog_blob(conn, library, &path, &body, &quotas, total, now))
+        .await?;
+    Ok(if replaced {
+        StatusCode::NO_CONTENT
+    } else {
+        StatusCode::CREATED
+    })
+}
+
+/// `GET /api/catalog/{path}`: a blob of the catalog of the token's library (its own
+/// token or a device of one of its accounts).
+async fn get_catalog_blob(
+    State(state): State<HubState>,
+    Extension(auth): Extension<Auth>,
+    Path(path): Path<String>,
+) -> Result<Response, HubError> {
+    let path = catalog_path(&path)?;
+    let library = auth.library();
+    let data = state
+        .db(move |conn| store::catalog_blob(conn, library, &path))
+        .await?;
+    let headers = [
+        (
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/octet-stream"),
+        ),
+        (
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("private, no-store"),
+        ),
+    ];
+    Ok((headers, data).into_response())
+}
+
+/// `DELETE /api/catalog/{path}`: deletes a blob of the library's catalog (a thumbnail
+/// of a book that left the Showcase, a chunk beyond the count); only the library's
+/// token.
+async fn delete_catalog_blob(
+    State(state): State<HubState>,
+    Extension(auth): Extension<Auth>,
+    Path(path): Path<String>,
+) -> Result<StatusCode, HubError> {
+    let library = library_only(auth)?;
+    let path = catalog_path(&path)?;
+    state
+        .db(move |conn| store::delete_catalog_blob(conn, library, &path))
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `GET /api/library/pending`: per account of the library holding request records
+/// (`book_request`, `cover_request`), the highest sequence number among them, as
+/// `{"accounts": [{"id", "seq"}]}`: the library's cheap check every 30 s, after which
+/// it syncs the accounts whose number grew (see [`store::pending_requests`]). Only the
+/// library's token.
+async fn pending(
+    State(state): State<HubState>,
+    Extension(auth): Extension<Auth>,
+) -> Result<Json<serde_json::Value>, HubError> {
+    let library = library_only(auth)?;
+    let pending = state
+        .db(move |conn| store::pending_requests(conn, library))
+        .await?;
+    let accounts: Vec<_> = pending
+        .into_iter()
+        .map(|(id, seq)| json!({ "id": id.to_string(), "seq": seq }))
+        .collect();
+    Ok(Json(json!({ "accounts": accounts })))
 }
 
 /// `GET /api/sync?since=N&limit=M`: the account's records changed after `since`, in

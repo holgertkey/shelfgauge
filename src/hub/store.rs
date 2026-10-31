@@ -18,7 +18,7 @@ use crate::storage::migrations;
 
 /// Schema migrations of the hub database; index `i` upgrades version `i` to `i + 1`.
 /// Append only once a hub has been released.
-pub(crate) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4];
+pub(crate) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5];
 
 /// The schema version of 0.20, the last with per-profile accounts.
 const ACCOUNTS_SCHEMA: u32 = 3;
@@ -307,6 +307,37 @@ END;
 
 CREATE TRIGGER records_removed AFTER DELETE ON records BEGIN
     UPDATE hub_bytes SET bytes = bytes - coalesce(length(OLD.data), 0) WHERE id = 1;
+END;
+"#;
+
+/// Version 5 (0.22): the libraries' catalogs (their Showcase, sealed under the library
+/// key: `shelfgauge_core::catalog`).
+///
+/// - `catalog_blobs` holds the blobs themselves (`index`, `c/<n>`, `t/<cover id>`):
+///   they are small (a chunk is a few hundred KB, a thumbnail a few KB) and go with
+///   their library by the cascade. `size` is `length(data)`, kept for the counter and
+///   the quota. They never expire: the library replaces and deletes them.
+const V5: &str = r#"
+CREATE TABLE catalog_blobs (
+    id         INTEGER PRIMARY KEY,
+    library_id INTEGER NOT NULL REFERENCES libraries (id) ON DELETE CASCADE,
+    path       TEXT    NOT NULL,
+    size       INTEGER NOT NULL,
+    data       BLOB    NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE (library_id, path)
+);
+
+CREATE TRIGGER catalog_blobs_added AFTER INSERT ON catalog_blobs BEGIN
+    UPDATE hub_bytes SET bytes = bytes + NEW.size WHERE id = 1;
+END;
+
+CREATE TRIGGER catalog_blobs_resized AFTER UPDATE OF size ON catalog_blobs BEGIN
+    UPDATE hub_bytes SET bytes = bytes - OLD.size + NEW.size WHERE id = 1;
+END;
+
+CREATE TRIGGER catalog_blobs_removed AFTER DELETE ON catalog_blobs BEGIN
+    UPDATE hub_bytes SET bytes = bytes - OLD.size WHERE id = 1;
 END;
 "#;
 
@@ -1462,6 +1493,7 @@ pub fn usage(conn: &Connection, library: i64) -> Result<Usage, HubError> {
            coalesce((SELECT sum(b.size) FROM blobs b
                      JOIN publications p ON p.id = b.publication_id
                      WHERE p.library_id = ?1), 0)
+         + coalesce((SELECT sum(size) FROM catalog_blobs WHERE library_id = ?1), 0)
          + coalesce((SELECT sum(length(r.data)) FROM records r
                      JOIN accounts a ON a.id = r.account_id
                      WHERE a.library_id = ?1), 0),
@@ -1892,9 +1924,124 @@ fn delete_library_rows(
         rows.collect::<Result<_, _>>()?
     };
     // The foreign keys cascade to accounts, devices, pairings, invites, publications,
-    // blobs and records.
+    // blobs, records and catalog blobs.
     let deleted = tx.execute("DELETE FROM libraries WHERE id = ?1", [library])?;
     Ok((deleted > 0).then_some(ids))
+}
+
+/// The record kinds a member's device writes to ask its library for something: a
+/// book of the Showcase (`book_request`) or thumbnails (`cover_request`). Their changes
+/// are what [`pending_requests`] reports.
+pub const REQUEST_KINDS: [&str; 2] = ["book_request", "cover_request"];
+
+/// A catalog blob of a library as [`catalog_blobs`] lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogBlobInfo {
+    /// Its path (`index`, `c/<n>`, `t/<cover id>`).
+    pub path: String,
+    /// Its size in bytes.
+    pub size: u64,
+    /// When it was last written (Unix seconds).
+    pub updated_at: i64,
+}
+
+/// Stores the catalog blob `path` of `library` (replacing it), within the library's
+/// byte quota (its own over the hub's `defaults`) and, when it grows, the hub's
+/// `max_total_bytes`. Returns whether it replaced one.
+#[allow(clippy::too_many_arguments)]
+pub fn put_catalog_blob(
+    conn: &mut Connection,
+    library: i64,
+    path: &str,
+    data: &[u8],
+    defaults: &QuotasConfig,
+    max_total_bytes: u64,
+    now: i64,
+) -> Result<bool, HubError> {
+    let tx = conn.transaction()?;
+    let quotas = effective_quotas(&tx, library, defaults)?;
+    let old_size: Option<i64> = tx
+        .query_row(
+            "SELECT size FROM catalog_blobs WHERE library_id = ?1 AND path = ?2",
+            params![library, path],
+            |r| r.get(0),
+        )
+        .optional()?;
+    tx.execute(
+        "INSERT INTO catalog_blobs (library_id, path, size, data, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT (library_id, path) DO UPDATE SET
+           size = excluded.size, data = excluded.data, updated_at = excluded.updated_at",
+        params![library, path, data.len() as i64, data, now],
+    )?;
+    if quotas.max_bytes > 0 && usage(&tx, library)?.bytes > quotas.max_bytes {
+        return Err(HubError::Quota("bytes"));
+    }
+    if old_size.is_none_or(|old| data.len() as i64 > old) {
+        // A blob that does not grow is let through on a full hub.
+        check_total(&tx, max_total_bytes)?;
+    }
+    tx.commit()?;
+    Ok(old_size.is_some())
+}
+
+/// The catalog blob `path` of `library`, or `NotFound`.
+pub fn catalog_blob(conn: &Connection, library: i64, path: &str) -> Result<Vec<u8>, HubError> {
+    conn.query_row(
+        "SELECT data FROM catalog_blobs WHERE library_id = ?1 AND path = ?2",
+        params![library, path],
+        |r| r.get(0),
+    )
+    .optional()?
+    .ok_or(HubError::NotFound)
+}
+
+/// Deletes the catalog blob `path` of `library`; `NotFound` if there is none.
+pub fn delete_catalog_blob(conn: &Connection, library: i64, path: &str) -> Result<(), HubError> {
+    let deleted = conn.execute(
+        "DELETE FROM catalog_blobs WHERE library_id = ?1 AND path = ?2",
+        params![library, path],
+    )?;
+    if deleted == 0 {
+        return Err(HubError::NotFound);
+    }
+    Ok(())
+}
+
+/// The catalog blobs of `library`, by path.
+pub fn catalog_blobs(conn: &Connection, library: i64) -> Result<Vec<CatalogBlobInfo>, HubError> {
+    let mut stmt = conn.prepare(
+        "SELECT path, size, updated_at FROM catalog_blobs WHERE library_id = ?1 ORDER BY path",
+    )?;
+    let rows = stmt.query_map([library], |r| {
+        Ok(CatalogBlobInfo {
+            path: r.get(0)?,
+            size: r.get::<_, i64>(1)? as u64,
+            updated_at: r.get(2)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// Per account of `library` that holds request records ([`REQUEST_KINDS`], tombstones
+/// included), the highest sequence number among them: the library keeps the last one
+/// it handled per account and syncs an account whose number grew. Its own answer (a
+/// request rewritten as refused, or deleted) moves the number once more, after which
+/// it settles.
+pub fn pending_requests(
+    conn: &Connection,
+    library: i64,
+) -> Result<Vec<(AccountId, i64)>, HubError> {
+    let mut stmt = conn.prepare(
+        "SELECT a.public_id, max(r.seq) FROM records r
+           JOIN accounts a ON a.id = r.account_id
+          WHERE a.library_id = ?1 AND r.kind IN (?2, ?3)
+          GROUP BY a.id ORDER BY a.id",
+    )?;
+    let rows = stmt.query_map(params![library, REQUEST_KINDS[0], REQUEST_KINDS[1]], |r| {
+        Ok((AccountId::new(r.get(0)?), r.get(1)?))
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
 }
 
 /// Applies `changes` of `account` (of `library`) in order, each with the next sequence

@@ -2665,3 +2665,271 @@ async fn a_signed_in_device_names_itself_only() {
     assert_eq!(devices["devices"][1]["name"], b64(b"sealed phone name"));
     assert_eq!(devices["devices"][0]["name"], serde_json::Value::Null);
 }
+
+/// A well-formed sealed catalog blob (catalog format version 1, no header) of `len`
+/// bytes after the framing.
+fn catalog_blob(len: usize, fill: u8) -> Vec<u8> {
+    let mut data = vec![0, 1, 0, 0];
+    data.extend_from_slice(&[7; 12]);
+    data.extend(std::iter::repeat_n(fill, len.max(16)));
+    data
+}
+
+#[tokio::test]
+async fn the_catalog_is_written_by_the_library_and_read_by_its_members() {
+    let hub = TestHub::open();
+    let info = hub.get("/api/info", None).await.json();
+    assert_eq!(info["catalog_formats"], json!({ "min": 1, "max": 1 }));
+    assert_eq!(info["limits"]["max_catalog_blob_bytes"], 4 * 1024 * 1024);
+    let lib = hub.library("smiths").await;
+    let olga = hub.member(&lib, "olga", 1).await;
+    let other = hub.library("joneses").await;
+    let stranger = hub.member(&other, "ann", 2).await;
+    let cover = format!("t/{}", "ab".repeat(16));
+    for path in ["index", "c/0", "c/1", cover.as_str()] {
+        let put = hub
+            .put(
+                &format!("/api/catalog/{path}"),
+                &lib.token,
+                catalog_blob(100, 1),
+            )
+            .await;
+        assert_eq!(put.status, StatusCode::CREATED, "{path}");
+    }
+    let again = hub
+        .put("/api/catalog/c/1", &lib.token, catalog_blob(50, 2))
+        .await;
+    assert_eq!(again.status, StatusCode::NO_CONTENT);
+
+    // A member's device reads, never writes or deletes; another library sees nothing.
+    let read = hub.get("/api/catalog/c/1", Some(&olga.token)).await;
+    assert_eq!(read.status, StatusCode::OK);
+    assert_eq!(read.body, catalog_blob(50, 2));
+    assert_eq!(read.headers[header::CACHE_CONTROL], "private, no-store");
+    assert_eq!(
+        hub.get("/api/catalog/index", Some(&lib.token)).await.status,
+        StatusCode::OK
+    );
+    for token in [&stranger.token, &other.token] {
+        assert_eq!(
+            hub.get("/api/catalog/index", Some(token)).await.status,
+            StatusCode::NOT_FOUND
+        );
+    }
+    let refused = hub
+        .put("/api/catalog/c/0", &olga.token, catalog_blob(10, 3))
+        .await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        hub.delete("/api/catalog/c/0", &olga.token).await.status,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        hub.get("/api/catalog", Some(&olga.token)).await.status,
+        StatusCode::FORBIDDEN,
+        "the listing is the library's"
+    );
+
+    // The library's listing, and deleting a thumbnail.
+    let list = hub.get("/api/catalog", Some(&lib.token)).await.json();
+    let paths: Vec<&str> = list["blobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, ["c/0", "c/1", "index", cover.as_str()]);
+    assert_eq!(list["blobs"][1]["size"], catalog_blob(50, 2).len());
+    assert_eq!(
+        hub.delete(&format!("/api/catalog/{cover}"), &lib.token)
+            .await
+            .status,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        hub.delete(&format!("/api/catalog/{cover}"), &lib.token)
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        hub.get(&format!("/api/catalog/{cover}"), Some(&olga.token))
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn catalog_uploads_are_checked() {
+    let hub = TestHub::open();
+    let lib = hub.library("smiths").await;
+    // Unknown paths are not found, before anything is read.
+    for path in ["manifest", "c/01", "c/x", "t/AB", "index/x", "p/0"] {
+        let put = hub
+            .put(
+                &format!("/api/catalog/{path}"),
+                &lib.token,
+                catalog_blob(10, 0),
+            )
+            .await;
+        assert_eq!(put.status, StatusCode::NOT_FOUND, "{path}");
+    }
+    // A publication blob (version 2), an unknown version and garbage are refused.
+    for body in [
+        blob(10, 0),
+        [&[0u8, 9][..], &catalog_blob(10, 0)[2..]].concat(),
+        vec![1, 2, 3],
+    ] {
+        let put = hub.put("/api/catalog/index", &lib.token, body).await;
+        assert_eq!(put.status, StatusCode::BAD_REQUEST);
+    }
+    // Larger than a catalog blob may be.
+    let big = hub
+        .put(
+            "/api/catalog/c/0",
+            &lib.token,
+            catalog_blob(4 * 1024 * 1024, 0),
+        )
+        .await;
+    assert_eq!(big.status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(
+        hub.get("/api/catalog", Some(&lib.token)).await.json()["blobs"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn catalog_bytes_count_against_the_library_and_the_hub() {
+    let hub = TestHub::new(|c| c.quotas.max_bytes = 1000);
+    let lib = hub.library("smiths").await;
+    let before = hub.state.hub().total_bytes().unwrap();
+    let put = |path: &'static str, len: usize| {
+        let token = lib.token.clone();
+        let hub = &hub;
+        async move {
+            hub.put(
+                &format!("/api/catalog/{path}"),
+                &token,
+                catalog_blob(len, 0),
+            )
+            .await
+        }
+    };
+    assert_eq!(put("c/0", 600).await.status, StatusCode::CREATED);
+    assert_eq!(
+        hub.state.hub().total_bytes().unwrap(),
+        before + catalog_blob(600, 0).len() as u64
+    );
+    let over = put("c/1", 600).await;
+    assert_eq!(over.error(), "quota_exceeded");
+    // Replacing counts only the new size; publications share the quota.
+    assert_eq!(put("c/0", 100).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        hub.publish(&lib, &pub_id(1), 900).await.error(),
+        "quota_exceeded"
+    );
+    assert_eq!(
+        hub.publish(&lib, &pub_id(1), 700).await.status,
+        StatusCode::CREATED
+    );
+    hub.delete("/api/catalog/c/0", &lib.token).await;
+    hub.delete(&format!("/api/pub/{}", pub_id(1)), &lib.token)
+        .await;
+    assert_eq!(hub.state.hub().total_bytes().unwrap(), before);
+}
+
+#[tokio::test]
+async fn catalog_blobs_never_expire_and_go_with_their_library() {
+    let hub = TestHub::new(|c| {
+        c.limits.publication_expiry_days = 10;
+        c.libraries.expiry_days = 30;
+    });
+    let lib = hub.library("smiths").await;
+    let before = hub.state.hub().total_bytes().unwrap();
+    hub.put("/api/catalog/index", &lib.token, catalog_blob(100, 0))
+        .await;
+    hub.publish(&lib, &pub_id(1), 10).await;
+    hub.advance(20 * 86_400);
+    hub.get("/api/account", Some(&lib.token)).await;
+    assert_eq!(hub.state.hub().expire(hub.now()).unwrap().0, 1);
+    assert_eq!(
+        hub.get("/api/catalog/index", Some(&lib.token)).await.status,
+        StatusCode::OK,
+        "a catalog is not a publication"
+    );
+    assert_eq!(
+        hub.delete("/api/library", &lib.token).await.status,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(hub.state.hub().total_bytes().unwrap(), before);
+    // And with an idle library.
+    let idle = hub.library("idle").await;
+    hub.put("/api/catalog/index", &idle.token, catalog_blob(100, 0))
+        .await;
+    hub.advance(31 * 86_400);
+    hub.state.hub().expire(hub.now()).unwrap();
+    assert_eq!(hub.state.hub().total_bytes().unwrap(), before);
+}
+
+#[tokio::test]
+async fn pending_requests_report_only_request_records() {
+    let hub = TestHub::open();
+    let lib = hub.library("smiths").await;
+    let olga = hub.member(&lib, "olga", 1).await;
+    let ivan = hub.member(&lib, "ivan", 2).await;
+    let pending = || async {
+        hub.get("/api/library/pending", Some(&lib.token))
+            .await
+            .json()
+    };
+    assert_eq!(pending().await, json!({ "accounts": [] }));
+    assert_eq!(
+        hub.get("/api/library/pending", Some(&olga.token))
+            .await
+            .status,
+        StatusCode::FORBIDDEN
+    );
+    let push = |token: String, kind: &'static str, id: &'static str| {
+        let hub = &hub;
+        async move {
+            let answer = hub
+                .post(
+                    "/api/sync",
+                    Some(&token),
+                    json!({ "records": [{ "kind": kind, "id": id, "data": b64(&[1; 40]) }] }),
+                )
+                .await;
+            assert_eq!(answer.status, StatusCode::OK, "{kind}");
+            answer.json()["seq"].as_i64().unwrap()
+        }
+    };
+    // Reading positions are not requests.
+    push(olga.token.clone(), "position", "p").await;
+    assert_eq!(pending().await, json!({ "accounts": [] }));
+    let asked = push(olga.token.clone(), "book_request", "r1").await;
+    let covers = push(ivan.token.clone(), "cover_request", "covers").await;
+    assert_eq!(
+        pending().await,
+        json!({ "accounts": [
+            { "id": olga.account, "seq": asked },
+            { "id": ivan.account, "seq": covers },
+        ] })
+    );
+    // Other changes of the account do not move it; the library's answer does.
+    push(olga.token.clone(), "annotation", "a").await;
+    assert_eq!(pending().await["accounts"][0]["seq"], asked);
+    let answered = hub
+        .sync_as(
+            &lib,
+            &olga.account,
+            Some(json!({ "records": [{ "kind": "book_request", "id": "r1", "data": null }] })),
+        )
+        .await;
+    assert_eq!(answered.status, StatusCode::OK);
+    let answer_seq = answered.json()["seq"].as_i64().unwrap();
+    assert_eq!(pending().await["accounts"][0]["seq"], answer_seq);
+    assert!(answer_seq > asked);
+}

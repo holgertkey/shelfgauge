@@ -805,6 +805,55 @@ async fn hub_secrets_and_publication_ids_are_never_logged() {
             Body::empty(),
         )
         .await;
+        // The catalog (Phase 31): a chunk and a thumbnail uploaded by the library, read
+        // by a member's device, a request record, the pending check, a deletion.
+        let cover = format!("t/{}", "c0".repeat(16));
+        let mut catalog_blob = vec![0, 1, 0, 0];
+        catalog_blob.extend_from_slice(&[0; 12]);
+        catalog_blob.extend_from_slice(b"Catalog-Ciphertext-Quoll");
+        for path in ["c/0", cover.as_str()] {
+            let (status, _) = send(
+                Method::PUT,
+                format!("/api/catalog/{path}"),
+                Some(library.clone()),
+                Body::from(catalog_blob.clone()),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CREATED);
+        }
+        let (status, _) = send(
+            Method::GET,
+            format!("/api/catalog/{cover}"),
+            Some(token.clone()),
+            Body::empty(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        send(
+            Method::POST,
+            "/api/sync".into(),
+            Some(token.clone()),
+            json(serde_json::json!({
+                "records": [{ "kind": "book_request", "id": "Request-Id-Bilby", "data": record }]
+            })),
+        )
+        .await;
+        let (status, _) = send(
+            Method::GET,
+            "/api/library/pending".into(),
+            Some(library.clone()),
+            Body::empty(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        send(
+            Method::DELETE,
+            format!("/api/catalog/{cover}"),
+            Some(library.clone()),
+            Body::empty(),
+        )
+        .await;
+
         // Failures: a wrong token, a reused pairing secret, a missing publication.
         send(
             Method::GET,
@@ -862,6 +911,10 @@ async fn hub_secrets_and_publication_ids_are_never_logged() {
             log.contains("/api/pub/{id}/{*blob}"),
             "route templates: {log}"
         );
+        assert!(
+            log.contains("/api/catalog/{*path}"),
+            "route templates: {log}"
+        );
         assert!(log.contains("library"), "{log}");
         assert!(log.contains("account"), "{log}");
         let blob_text = String::from_utf8_lossy(&blob).into_owned();
@@ -894,6 +947,9 @@ async fn hub_secrets_and_publication_ids_are_never_logged() {
             "Blob-Body-Ciphertext",
             record.as_str(),
             "Record-Id-Okapi",
+            "Request-Id-Bilby",
+            "c0c0c0c0",
+            "Catalog-Ciphertext-Quoll",
             blob_text.as_str(),
             "198.51.100",
         ] {
