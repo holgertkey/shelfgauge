@@ -55,8 +55,8 @@ Showcase needs both upgraded (the hub serves the reader that shows it).
 
 ### Changed
 
-- **The hub trusts `X-Forwarded-For` from loopback by default**: `[server]
-  trusted_proxies` defaults to `["127.0.0.1", "::1"]`, so behind Caddy or ngrok on the
+- **The hub trusts `X-Forwarded-For` from loopback by default**:
+  `[server] trusted_proxies` defaults to `["127.0.0.1", "::1"]`, so behind Caddy or ngrok on the
   same machine each client has its own budget for signing in, invites and new
   libraries without a line in `hub.toml`. Hubs created before keep the
   `trusted_proxies = []` written into their `hub.toml`, which now means "trust no
@@ -142,8 +142,8 @@ the hub** (see "Changed" below).
   `new_libraries_per_address_per_day`, `expiry_days`); an `[accounts]` section is
   refused with a hint. `[quotas]` `max_bytes` and `max_publications` count per
   library (its books and all its members' marks); `max_devices` is per account and
-  defaults to 5. `shelfgauge hub accounts` and `delete-account` are now `hub
-  libraries` and `delete-library`; `hub quota` takes a library's number and has no
+  defaults to 5. `shelfgauge hub accounts` and `delete-account` are now
+  `hub libraries` and `delete-library`; `hub quota` takes a library's number and has no
   `--max-devices` any more (devices count per account, `[quotas] max_devices`).
 - The hub's database is schema version 4; the library's user data is version 6.
 - Publication format 2 and book files of format 2 (the book key travels in the
@@ -178,8 +178,8 @@ the hub** (see "Changed" below).
   all accounts store together (beyond it the hub takes no new books or marks, and
   `/api/info` says `accepting: false`); `account_expiry_days` deletes accounts not
   used for that long.
-- `shelfgauge hub quota <number>` gives one account its own quotas, and `shelfgauge
-  hub delete-account <number>` deletes an account with everything it stores.
+- `shelfgauge hub quota <number>` gives one account its own quotas, and
+  `shelfgauge hub delete-account <number>` deletes an account with everything it stores.
 - `[operator]` in `hub.toml`: who runs the hub, a contact for abuse reports and a
   terms of use file, shown at `/terms` and on the reader's **This device** page.
 - `shelfgauge hub check <url>` compares the reader app a hub serves, file by file,
@@ -296,8 +296,8 @@ the hub** (see "Changed" below).
   `shelfgauge` and the new library crate **`shelfgauge-core`** (the book model, the
   split into reading parts, HTML rendering, the rendered text, anchors and search
   within a book), which also builds for WebAssembly so the planned hub reader can
-  render books exactly as the server does. Nothing changes for users: `cargo install
-  shelfgauge` installs the same program, and `shelfgauge` keeps its module paths.
+  render books exactly as the server does. Nothing changes for users:
+  `cargo install shelfgauge` installs the same program, and `shelfgauge` keeps its module paths.
 
 ## [0.16.0] - 2026-10-20
 

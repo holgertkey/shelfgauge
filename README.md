@@ -486,11 +486,11 @@ and `blobs/`. Without `--data`, the current directory must already be a hub. A l
 puts itself on the hub with a one-time **invite code** from `shelfgauge hub invite`
 (valid 7 days), unless `[libraries] registration = "open"`. Other commands:
 `shelfgauge hub libraries` lists the libraries by internal number with their accounts,
-devices and usage (no handles, names or secrets), `shelfgauge hub takedown
-<publication-id>` deletes a publication (the id from its `/r/<id>` link) and refuses
+devices and usage (no handles, names or secrets),
+`shelfgauge hub takedown <publication-id>` deletes a publication (the id from its `/r/<id>` link) and refuses
 that id from now on, `shelfgauge hub delete-library <number>` deletes a library with
-its accounts and everything they store, and `shelfgauge hub quota <number> --max-bytes
-2GiB` gives one library its own quotas (also `--max-publications`; `0` is no limit,
+its accounts and everything they store, and
+`shelfgauge hub quota <number> --max-bytes 2GiB` gives one library its own quotas (also `--max-publications`; `0` is no limit,
 `default` the hub's value; without options it shows them).
 
 The hub listens on `127.0.0.1:8743` and has no TLS of its own: **put it behind a
@@ -531,8 +531,8 @@ so at start. Settings in `hub.toml`:
 (books are published again by the library, and every member gets an invite). Upgrade
 **the library first**, start it once with the old hub still running (it pulls the
 marks made on phones one last time), **then the hub**: on a database with old accounts
-it refuses to start, says what is there and offers `shelfgauge hub migrate --data
-<dir>`, which deletes the old accounts, devices, publications and marks (takedowns
+it refuses to start, says what is there and offers
+`shelfgauge hub migrate --data <dir>`, which deletes the old accounts, devices, publications and marks (takedowns
 stay). An `[accounts]` section in `hub.toml` must be renamed to `[libraries]`
 (`max_accounts` → `max_libraries`, `new_accounts_per_address_per_day` →
 `new_libraries_per_address_per_day`, `account_expiry_days` → `expiry_days`). Phones

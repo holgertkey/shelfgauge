@@ -183,8 +183,8 @@ Key design points to keep in mind when implementing:
   indented line), *blocks* (Gutenberg: blank-line separated, hard-wrapped lines joined)
   or *lines* (one paragraph per line); runs of short non-prose lines become verse (one
   paragraph with line breaks), `* * *`-like lines rules, paragraphs over 100 000
-  characters are split at sentence ends. Heading-like lines (`Часть|Книга|Том|Part|Book|
-  Volume` + number: rank 1; `Глава|Chapter` + number, prologues and the like, lone
+  characters are split at sentence ends. Heading-like lines (
+  `Часть|Книга|Том|Part|Book| Volume` + number: rank 1; `Глава|Chapter` + number, prologues and the like, lone
   numerals when there are 3+: rank 2; set apart by blank lines; a following short line
   is the chapter's name) cut sections through `format::sections`; candidates with no
   text before the next heading of the same or a higher rank are a table of contents and
@@ -504,8 +504,8 @@ password (`[server] auth = "password"`, 0.16.0):
   Origin check), never from `X-Forwarded-Proto`, so plain HTTP in a private network
   (WireGuard) keeps working. "Remember this device" gives 400 days, else a browser
   session cookie.
-- Routes are split into a *read* group, an *admin* group (`POST /scan`, `GET`/`POST
-  /settings`, the maintenance actions `POST /settings/reread`, `/settings/content-cache`
+- Routes are split into a *read* group, an *admin* group (`POST /scan`, `GET`/
+  `POST /settings`, the maintenance actions `POST /settings/reread`, `/settings/content-cache`
   and `/settings/export`, profile management under `/settings/profiles`), a *user
   writes* group (annotations, reading position, `POST /reading/clear`, the own
   profile, `POST /logout`), the profile *picker* (`/profiles`, which needs no profile)
@@ -580,8 +580,8 @@ daemon logs to journald or the container log), no metrics endpoint.
   headers `Authorization`, `Cookie`, `Set-Cookie`; profile names, PINs, passwords,
   their hashes and session tokens (the `shelfgauge-profile` cookie) — profiles appear
   only as `profile = N` (on the `request` span and in the events `profile selected`,
-  `profile added`, `pin rejected`, `pin locked`, `pin changed`, `logged in`, `password
-  rejected`, `password locked`, `password changed`, `password removed by an admin`,
+  `profile added`, `pin rejected`, `pin locked`, `pin changed`, `logged in`,
+  `password rejected`, `password locked`, `password changed`, `password removed by an admin`,
   `profile deleted`); client addresses are not logged either (`remote = true` on the
   span says a request came from another device); `Profile` and the session `Token`
   have redacted `Debug` output; in V2 device
@@ -682,8 +682,8 @@ person, not authentication.
 - **Settings follow the person**: theme and reader settings (whitelist
   `profiles::SETTINGS`, equal to `theme.js`'s `OPTIONS` through
   `tests/fixtures/profiles/settings.json`) are rendered as `data-theme`/`data-r*` on
-  `<html>`; `theme.js` applies a change at once and saves it with `POST
-  /profile/settings` (JSON, debounced, `keepalive`; a failure shows a notice). Values
+  `<html>`; `theme.js` applies a change at once and saves it with
+  `POST /profile/settings` (JSON, debounced, `keepalive`; a failure shows a notice). Values
   older versions kept in `localStorage` are adopted once: while the owner's settings
   are NULL the page carries `data-adopt`. Sidebar state and focus mode stay in the
   browser (*This browser* on the Settings page).
@@ -695,8 +695,8 @@ person, not authentication.
   profiles write to `.shelfgauge/annotations/profiles/<name> (<id>)/` (renamed with the
   profile, kept when it is deleted; the owner's stale-file sweep never descends into
   `profiles/`).
-- **CLI**: `shelfgauge profiles list | add <name> [--admin] | remove <name> [--yes] |
-  reset-pin <name> | set-password <name> | remove-password <name>` (`set-password`
+- **CLI**:
+  `shelfgauge profiles list | add <name> [--admin] | remove <name> [--yes] | reset-pin <name> | set-password <name> | remove-password <name>` (`set-password`
   asks twice without echo through `rpassword`, or reads one line from a non-terminal
   stdin, removing only the line break); `shelfgauge annotations export [--profile <name>]`. Unknown names
   are errors that list the profiles.
@@ -731,8 +731,8 @@ independent features.
   without any paired client the hub data is lost (the books are not). (0.21.0: accounts
   per library with an address and a password; no recovery code — a forgotten password
   is reset by the library's admin.)
-- **Pairing**: the instance shows a QR code `https://<hub>/pair#<pairing secret>.<account
-  key>`; the fragment never reaches the server, the reader app sends only the one-time
+- **Pairing**: the instance shows a QR code
+  `https://<hub>/pair#<pairing secret>.<account key>`; the fragment never reaches the server, the reader app sends only the one-time
   secret and gets a device token. Device list with revocation in the instance's UI.
 - **Personal links**: "Open on phone" on the book card publishes the book and shows a QR
   code for `https://<hub>/r/<publication-id>`. The link carries no key and opens only on
@@ -751,8 +751,8 @@ independent features.
   exactly like local ones; a changed book is a new publication.
 - **Rendering on the device runs the same Rust code in WASM** (`render` and
   `annotations::text`): blob data is untrusted, so trusted code turns it into escaped
-  HTML exactly as the server does, under a strict CSP (`script-src 'self'
-  'wasm-unsafe-eval'`, no inline code). That code is the core crate `shelfgauge-core`
+  HTML exactly as the server does, under a strict CSP (
+  `script-src 'self' 'wasm-unsafe-eval'`, no inline code). That code is the core crate `shelfgauge-core`
   (see "Crates"), built for the device with `wasm-bindgen --target web` (no Node). The reader app is plain
   JS + WASM, reusing `reader.css`/`theme.js`.
 - **Sync**: the hub keeps per-account records `(id, kind, seq, ciphertext)` of kinds
@@ -900,12 +900,12 @@ and sealing in the app (`src/publication/`).
 - **Sealing**: raw deflate (`flate2`; `DecompressionStream("deflate-raw")` on the
   device) → padding (`[len u32 BE][data][zeros]` up to the bucket: 256 bytes, then
   each size plus an eighth) → AES-256-GCM with the book key (`aes-gcm`; WebCrypto on
-  the device; the core crate does no cryptography). A blob is `[format version u16
-  BE][nonce 12][ciphertext + tag]`; associated data `[version u16 BE][publication id
-  16][path UTF-8]`. The version is checked before decrypting (unknown versions are
+  the device; the core crate does no cryptography). A blob is
+  `[format version u16 BE][nonce 12][ciphertext + tag]`; associated data
+  `[version u16 BE][publication id 16][path UTF-8]`. The version is checked before decrypting (unknown versions are
   refused with a clear error) and authenticated through the associated data.
-- **Version 2** (0.21.0): the envelope is `[version u16 BE][header length u16 BE]
-  [header][nonce 12][ciphertext + tag]`; only the manifest has a header (`KeyHeader`,
+- **Version 2** (0.21.0): the envelope is
+  `[version u16 BE][header length u16 BE] [header][nonce 12][ciphertext + tag]`; only the manifest has a header (`KeyHeader`,
   compact JSON: library id, key scope `library`, key owner, `key_id`, the book key
   sealed as a `book_key` record under the library key), authenticated as part of the
   associated data (`… ‖ path ‖ 0x00 ‖ header`). Version 1 is not read any more.
@@ -947,8 +947,8 @@ Built in Phase 24 (0.18.0); the reader app (Phase 26) and the instance side (Pha
 - **API** (JSON, binary fields base64url; `Authorization: Bearer` on all but `info`,
   `account` create, `pair`, `recover`): `GET /api/info` (format range, limits,
   quotas, registration), `POST/GET /api/account`, `POST /api/pairings` (new pairing
-  secret), `POST /api/pair`, `POST /api/recover`, `GET /api/devices`, `DELETE
-  /api/devices/{id}`, `GET /api/pub` (the account's publications with sizes and last
+  secret), `POST /api/pair`, `POST /api/recover`, `GET /api/devices`,
+  `DELETE /api/devices/{id}`, `GET /api/pub` (the account's publications with sizes and last
   opening), `PUT/GET /api/pub/{id}/{blob}` (raw sealed blobs; a PUT must parse as an
   envelope of a supported format version; the first blob creates the publication),
   `DELETE /api/pub/{id}`, `GET /api/sync?since=N&limit=M` and `POST /api/sync`.
@@ -1017,8 +1017,8 @@ Built in Phase 24 (0.18.0); the reader app (Phase 26) and the instance side (Pha
   `Host` is logged with the name (escaped) once per name, for the first 32 names,
   then at debug level without it.
 - **Layers**: the request trace (`request{id, method, route, account}`), the hardening
-  headers with the §11 CSP (`script-src 'self' 'wasm-unsafe-eval'`, `img-src 'self'
-  blob:`, no inline code) and `Referrer-Policy: no-referrer`, and the `Host` allowlist
+  headers with the §11 CSP (`script-src 'self' 'wasm-unsafe-eval'`,
+  `img-src 'self' blob:`, no inline code) and `Referrer-Policy: no-referrer`, and the `Host` allowlist
   are shared with the library server (`web::security`, `web::trace`); no reach
   classification, no `Origin` check and no CORS (a bearer header is no ambient
   credential; the instance's client sends no `Origin`). API answers are `no-store`.
@@ -1175,8 +1175,8 @@ card's shelf section and the sync worker
 - **Data** (`userdata.sqlite` v5; v6 since 0.21.0, see "Libraries and accounts"): `hub_accounts` (one per profile: hub URL, public
   account id, account key, key id, device id and token, the recovery code until "I
   saved it", sync state), `hub_shelf` (books on the profile's shelf: content key,
-  publication id, book key, own/other instance, state `uploading | published |
-  expired | removing`), `hub_outbox` (changes to push, `STRICT`, keys of mixed type)
+  publication id, book key, own/other instance, state
+  `uploading | published | expired | removing`), `hub_outbox` (changes to push, `STRICT`, keys of mixed type)
   filled by triggers on `annotations` and `reading_positions` for shelf books
   (`book_removed` deletions are not pushed). Deleting a profile deletes its hub rows.
 - **Keys and records** (`hub_client::keys`): the account key (32 random bytes) never
@@ -1252,7 +1252,7 @@ card's shelf section and the sync worker
   book is on the shelf. Ties compare the plaintext bytes as pushed or stored, never a
   re-serialization: the reader app must keep the bytes it received and produce the
   instance's form (`record_plaintexts.json`). A pulled shelf item of another
-  instance is an entry with `own = 0` ("from <instance>" on the card).
+  instance is an entry with `own = 0` ("from `<instance>`" on the card).
 - **Worker** (`web::hub_sync`, started by `serve`): one task; every 30 s it pushes
   profiles with queued changes; every `sync_interval_minutes` (and at start) a full
   sync (`sync::sync_once`: push, finish `removing` entries, pull and merge, expiry),
@@ -1340,15 +1340,15 @@ and away, and the circles of libraries later.
   directory inside it), closed by default, open recursively; a sub-folder keeps its
   own mark under an open parent; a renamed folder is closed and its mark reported
   (`missing_marks`; the root folder page offers **Forget**). Set by a checkbox the
-  page's script adds to every folder row of the sidebar's folder mode (`GET`/`POST
-  /showcase`, admins, only while the library is on a hub; the sidebar is rendered
+  page's script adds to every folder row of the sidebar's folder mode (`GET`/
+  `POST /showcase`, admins, only while the library is on a hub; the sidebar is rendered
   without the profile, so the rows are decorated client-side, also lazily loaded
   levels) and by a form on the folder page. Kept when the library leaves the hub.
 - **Format** (`shelfgauge_core::catalog`, `CATALOG_FORMAT_VERSION = 1`, vectors in
   `tests/fixtures/catalog/`): blobs `index`, `c/<n>` and `t/<cover id>` sealed as
   publication blobs (postcard, raw deflate, padding, AES-256-GCM, the same envelope)
-  with their own versions and associated data `"sg-catalog" ‖ 0 ‖ version ‖ library
-  id ‖ path ‖ 0 ‖ header`, so no catalog blob passes for a publication blob or for
+  with their own versions and associated data
+  `"sg-catalog" ‖ 0 ‖ version ‖ library id ‖ path ‖ 0 ‖ header`, so no catalog blob passes for a publication blob or for
   another place. The index's plaintext header (`CatalogHeader`, the scope fields of
   `KeyHeader`) carries a random catalog key sealed as a record of kind `catalog_key`
   under the library key; a new library key generation means a new catalog key and a
@@ -1364,8 +1364,8 @@ and away, and the circles of libraries later.
   index older than the one it keeps and checks each chunk against the index.
 - **Folding and search** (`shelfgauge_core::fold`, `catalog::Catalog`):
   `fold_for_search` and `normalize_key` moved from `storage` unchanged (`books_fts`
-  stays valid); `fold_full` does on the device what SQLite's `unicode61
-  remove_diacritics 2` adds (NFC first, lowercase, Latin diacritics, `ё` → `е`, `й`
+  stays valid); `fold_full` does on the device what SQLite's
+  `unicode61 remove_diacritics 2` adds (NFC first, lowercase, Latin diacritics, `ё` → `е`, `й`
   kept). Every query word must begin a word of the title, an author, a series or a
   genre name (the FB2 genre table moved into the core: `format::genres`); title hits
   first. Lists of authors, series (by position), genres, books of each, recent and all.
@@ -1375,8 +1375,8 @@ and away, and the circles of libraries later.
   their library by the cascade, counted in `hub_bytes` by triggers and in the
   library's `max_bytes`; never expiring): `PUT`/`DELETE /api/catalog/{*path}` by the
   library token (at most 4 MiB, a catalog envelope of a supported version), `GET` by
-  it and its accounts' devices, `GET /api/catalog` (the library's listing), `GET
-  /api/library/pending` (per account the highest `seq` of its request records),
+  it and its accounts' devices, `GET /api/catalog` (the library's listing),
+  `GET /api/library/pending` (per account the highest `seq` of its request records),
   record kinds `book_request` and `cover_request`, `catalog_formats` in `/api/info`.
 - **Library** (`hub_client::catalog_sync`, `requests`; `userdata.sqlite` v8): the
   catalog is built from the books on the Showcase (readable ones, one entry per
@@ -1419,8 +1419,8 @@ The repository is a Cargo workspace of three crates with one version
 (`[workspace.package]` in the root `Cargo.toml`); the first two are published together:
 
 - **`shelfgauge`** (the root package): the library and the binary — parsers,
-  containers, scanner, storage, caches, profiles, the web server, the CLI. `cargo
-  install shelfgauge` installs it as before.
+  containers, scanner, storage, caches, profiles, the web server, the CLI.
+  `cargo install shelfgauge` installs it as before.
 - **`shelfgauge-core`** (`crates/shelfgauge-core/`): what runs both on the server and on
   a reading device — `format::model` (the book model and block numbering),
   `format::genres` (FB2 genre names, 0.22.0), `config::{ReaderConfig, SplitMode}`,
