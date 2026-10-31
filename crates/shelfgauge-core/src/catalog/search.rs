@@ -3,7 +3,9 @@
 use std::cmp::Ordering;
 
 use super::{BookId, Entry};
-use crate::fold::{normalize_key, words};
+use std::collections::HashMap;
+
+use crate::fold::{normalize_key, push_words, words};
 use crate::format::genres::genre_label;
 
 /// The most words of a query that are used (as the library's search).
@@ -15,10 +17,10 @@ struct Book {
     entry: Entry,
     /// [`normalize_key`] of the sort title.
     sort_key: String,
-    /// The title's words.
-    title_words: Vec<String>,
-    /// The words of the authors, series and genre names.
-    other_words: Vec<String>,
+    /// The title's words, each after a space ([`push_words`]).
+    title_words: String,
+    /// The words of the authors, series and genre names, each after a space.
+    other_words: String,
     /// [`normalize_key`] of each author.
     author_keys: Vec<String>,
     /// [`normalize_key`] of each series, in the entry's order.
@@ -26,27 +28,33 @@ struct Book {
 }
 
 impl Book {
-    fn new(entry: Entry) -> Self {
-        let mut other_words = Vec::new();
+    /// `genres`: the folded words of each genre name seen so far (a catalog has few).
+    fn new(entry: Entry, genres: &mut HashMap<String, String>) -> Self {
+        let mut title_words = String::new();
+        push_words(&entry.title, &mut title_words);
+        let mut other_words = String::new();
         for name in entry
             .author
             .iter()
             .chain(entry.series.iter().map(|s| &s.name))
         {
-            other_words.extend(words(name));
+            push_words(name, &mut other_words);
         }
         for code in &entry.subject {
-            other_words.extend(words(&genre_label(code)));
+            let folded = genres.entry(code.clone()).or_insert_with(|| {
+                let mut words = String::new();
+                push_words(&genre_label(code), &mut words);
+                words
+            });
+            other_words.push_str(folded);
         }
-        other_words.sort();
-        other_words.dedup();
         Self {
             sort_key: normalize_key(if entry.sort_as.is_empty() {
                 &entry.title
             } else {
                 &entry.sort_as
             }),
-            title_words: words(&entry.title),
+            title_words,
             other_words,
             author_keys: entry.author.iter().map(|a| normalize_key(a)).collect(),
             series_keys: entry
@@ -59,14 +67,14 @@ impl Book {
     }
 
     /// The number of query words found in the title, or `None` if a word is found
-    /// nowhere.
-    fn matches(&self, terms: &[String]) -> Option<usize> {
+    /// nowhere. `needles` are the query's words each after a space: a word begins
+    /// with one where the needle occurs.
+    fn matches(&self, needles: &[String]) -> Option<usize> {
         let mut in_title = 0;
-        for term in terms {
-            let prefix = |w: &String| w.starts_with(term.as_str());
-            if self.title_words.iter().any(prefix) {
+        for needle in needles {
+            if self.title_words.contains(needle.as_str()) {
                 in_title += 1;
-            } else if !self.other_words.iter().any(prefix) {
+            } else if !self.other_words.contains(needle.as_str()) {
                 return None;
             }
         }
@@ -134,6 +142,8 @@ pub struct GenreCount {
 pub struct Catalog {
     /// By chunk number.
     chunks: Vec<Vec<Book>>,
+    /// The folded words of genre names (see [`Book::new`]).
+    genres: HashMap<String, String>,
 }
 
 impl Catalog {
@@ -154,7 +164,11 @@ impl Catalog {
         if self.chunks.len() <= at {
             self.chunks.resize_with(at + 1, Vec::new);
         }
-        self.chunks[at] = entries.into_iter().map(Book::new).collect();
+        let genres = &mut self.genres;
+        self.chunks[at] = entries
+            .into_iter()
+            .map(|entry| Book::new(entry, genres))
+            .collect();
     }
 
     /// Drops the chunks numbered `count` and above (after the chunk count shrank).
@@ -191,7 +205,11 @@ impl Catalog {
     /// a series or a genre name (folded as the library folds). Books with more words
     /// in the title come first, then by sort title. An empty query finds nothing.
     pub fn search(&self, query: &str) -> Vec<&Entry> {
-        let terms: Vec<String> = words(query).into_iter().take(MAX_TERMS).collect();
+        let terms: Vec<String> = words(query)
+            .into_iter()
+            .take(MAX_TERMS)
+            .map(|w| format!(" {w}"))
+            .collect();
         if terms.is_empty() {
             return Vec::new();
         }

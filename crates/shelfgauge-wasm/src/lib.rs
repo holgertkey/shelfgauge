@@ -164,6 +164,15 @@ impl LibraryCatalog {
         self.0.set_chunk(number, plain).map_err(catalog_error)
     }
 
+    /// Adds chunk `number` kept on this device with its hash (hex), checked against
+    /// the index by that hash only (it was checked by its bytes when it was fetched).
+    #[wasm_bindgen(js_name = setKeptChunk)]
+    pub fn set_kept_chunk(&mut self, number: u32, plain: &[u8], hash: &str) -> Result<(), JsError> {
+        self.0
+            .set_kept_chunk(number, plain, hash)
+            .map_err(catalog_error)
+    }
+
     /// Drops the index and every chunk.
     pub fn clear(&mut self) {
         self.0.clear();

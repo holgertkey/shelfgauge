@@ -76,7 +76,8 @@ async function localCatalog(account) {
       if (!chunk) {
         throw new Error(`chunk ${n} is missing`);
       }
-      cat.setChunk(n, chunk.plain);
+      // Checked by its bytes when it was fetched: by its hash now.
+      cat.setKeptChunk(n, chunk.plain, chunk.hash);
     }
     return { cat, generation: index.generation, entries: summary.entries, key: null };
   } catch (e) {
@@ -132,16 +133,21 @@ async function hubCatalog(account, lowest) {
   for (let n = 0; n < summary.chunks.length; n++) {
     const hash = summary.chunks[n];
     const local = await store.catalogGet(account, `c/${n}`);
-    let chunk = local && local.hash === hash ? local.plain : null;
-    if (!chunk) {
-      const answer = await store.api(`catalog/c/${n}`, {}, account.token);
-      if (!answer.ok) {
-        cat.free();
-        return { changing: true };
+    if (local && local.hash === hash) {
+      try {
+        cat.setKeptChunk(n, local.plain, hash);
+        continue;
+      } catch (e) {
+        // Fetched again below.
       }
-      chunk = await c.openCatalogBlob(key, libraryId, `c/${n}`, new Uint8Array(await answer.arrayBuffer()), c.MAX_CHUNK_LEN);
-      put.push([`c/${n}`, { hash, plain: chunk }]);
     }
+    const answer = await store.api(`catalog/c/${n}`, {}, account.token);
+    if (!answer.ok) {
+      cat.free();
+      return { changing: true };
+    }
+    const chunk = await c.openCatalogBlob(key, libraryId, `c/${n}`, new Uint8Array(await answer.arrayBuffer()), c.MAX_CHUNK_LEN);
+    put.push([`c/${n}`, { hash, plain: chunk }]);
     try {
       cat.setChunk(n, chunk);
     } catch (e) {

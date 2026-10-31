@@ -289,3 +289,220 @@ fn sealed_blobs_round_trip_with_fresh_nonces() {
         );
     }
 }
+
+/// Sizes and times of the catalog of a large library (decision 6 of Phase 31):
+/// building it from the Showcase (the whole library open), sealing it, the device
+/// loading and searching it (the reader's WASM code, run natively here), and the
+/// root folder page's search for missing marks. The library's index is copied first
+/// (opening it may migrate it). Run with
+/// `SHELFGAUGE_CATALOG_SAMPLES=<library folder> cargo test --release --test catalog --
+/// --ignored --nocapture`.
+#[test]
+#[ignore = "timing; set SHELFGAUGE_CATALOG_SAMPLES to a scanned library folder"]
+fn the_catalog_of_a_large_library() {
+    use std::collections::HashMap;
+    use std::time::Instant;
+
+    use shelfgauge::annotations::store::UserData;
+    use shelfgauge::hub_client::catalog_sync::build;
+    use shelfgauge::hub_client::showcase;
+    use shelfgauge::storage::folders::FolderPath;
+    use shelfgauge_core::catalog::{chunk_count, chunk_of};
+    use shelfgauge_wasm::catalog::DeviceCatalog;
+
+    let Some(folder) = std::env::var_os("SHELFGAUGE_CATALOG_SAMPLES") else {
+        eprintln!("SHELFGAUGE_CATALOG_SAMPLES is not set");
+        return;
+    };
+    let source = PathBuf::from(folder).join(".shelfgauge/library.db");
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::copy(&source, dir.path().join("library.db")).unwrap();
+    let index = shelfgauge::storage::open_writer(&dir.path().join("library.db")).unwrap();
+    let userdata = UserData::open(&dir.path().join("userdata.sqlite")).unwrap();
+    let ms = |t: Instant| t.elapsed().as_secs_f64() * 1000.0;
+
+    showcase::set_mark(&userdata.lock(), &FolderPath::Dir(String::new()), true, 0).unwrap();
+    let marks = showcase::marks(&userdata.lock()).unwrap();
+    let key = CatalogKey::new([7; 32]);
+    let t = Instant::now();
+    let built = build(&index, &marks, &HashMap::new(), &key).unwrap();
+    let build_ms = ms(t);
+    let books = built.entries.len();
+    println!("books on the Showcase: {books} (built in {build_ms:.0} ms)");
+
+    let library = AccountId::new([1; 16]);
+    let measure = |entries: &[Entry], label: &str| {
+        let count = chunk_count(entries.len() as u64, None);
+        let mut chunks = vec![Chunk::default(); count as usize];
+        for e in entries {
+            chunks[chunk_of(key.as_bytes(), &e.id, count) as usize]
+                .entries
+                .push(e.clone());
+        }
+        let t = Instant::now();
+        let plains: Vec<Vec<u8>> = chunks.iter().map(Chunk::encode).collect();
+        let encode_ms = ms(t);
+        let t = Instant::now();
+        let sealed: usize = plains
+            .iter()
+            .enumerate()
+            .map(|(n, p)| {
+                seal(&library, &key, CatalogPath::Chunk(n as u32), b"", p)
+                    .unwrap()
+                    .len()
+            })
+            .sum();
+        let seal_ms = ms(t);
+        let index = Index::new(1, entries.len() as u32, &plains).encode();
+        let plain: usize = plains.iter().map(Vec::len).sum();
+        println!(
+            "{label}: {count} chunks, plaintext {:.1} MB, sealed {:.1} MB ({:.0} bytes a book), index {} bytes; encoded in {encode_ms:.0} ms, sealed in {seal_ms:.0} ms",
+            plain as f64 / 1e6,
+            sealed as f64 / 1e6,
+            sealed as f64 / entries.len().max(1) as f64,
+            index.len()
+        );
+        (plains, index)
+    };
+    let (plains, index_plain) = measure(&built.entries, "as scanned");
+    // The largest annotation the catalog keeps, on every book (the synthetic library
+    // has none): different words for each book, from a vocabulary of 4096 words, so
+    // deflate cannot fold them away as it would one text repeated.
+    let words: Vec<String> = (0..4096u32)
+        .map(|n| {
+            let h = n.wrapping_mul(2_654_435_761);
+            (0..4 + (h % 6))
+                .map(|i| char::from(b'a' + ((h >> (i * 3)) % 26) as u8))
+                .collect()
+        })
+        .collect();
+    let annotated: Vec<Entry> = built
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(n, e)| {
+            let mut x = n as u64 * 0x9e37_79b9_7f4a_7c15 + 1;
+            let mut text = String::new();
+            while text.chars().count() < 320 {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                text.push_str(&words[(x % 4096) as usize]);
+                text.push(' ');
+            }
+            Entry {
+                description: cut_description(&text),
+                ..e.clone()
+            }
+        })
+        .collect();
+    measure(&annotated, "with a 300-character annotation each");
+
+    // For the browser measurement (`.debug/TESTS/catalog_bench.mjs`): the plaintexts
+    // with annotations, as files.
+    if let Some(out) = std::env::var_os("SHELFGAUGE_CATALOG_OUT") {
+        let (annotated_plains, annotated_index) = measure(&annotated, "written for the browser");
+        let out = PathBuf::from(out);
+        std::fs::create_dir_all(out.join("c")).unwrap();
+        std::fs::write(out.join("index"), &annotated_index).unwrap();
+        for (n, plain) in annotated_plains.iter().enumerate() {
+            std::fs::write(out.join("c").join(n.to_string()), plain).unwrap();
+        }
+        println!("written to {}", out.display());
+    }
+
+    // Where loading goes: hashing (the check against the index), decoding, building
+    // the searchable books.
+    for (label, plains) in [
+        ("as scanned", &plains),
+        ("annotated", &annotated_plains_for_split(&annotated, &key)),
+    ] {
+        let t = Instant::now();
+        for p in plains.iter() {
+            std::hint::black_box(shelfgauge_core::catalog::chunk_hash(p));
+        }
+        let hash_ms = ms(t);
+        let t = Instant::now();
+        let decoded: Vec<Chunk> = plains.iter().map(|p| Chunk::decode(p).unwrap()).collect();
+        let decode_ms = ms(t);
+        let t = Instant::now();
+        let mut cat = shelfgauge_core::catalog::Catalog::new();
+        for (n, c) in decoded.into_iter().enumerate() {
+            cat.set_chunk(n as u32, c.entries);
+        }
+        println!(
+            "device ({label}): hashing {hash_ms:.0} ms, decoding {decode_ms:.0} ms, building {:.0} ms",
+            ms(t)
+        );
+    }
+
+    // The device: loading (decoding and folding) and searching.
+    let mut device = DeviceCatalog::default();
+    let t = Instant::now();
+    device.set_index(&index_plain, 0).unwrap();
+    for (n, plain) in plains.iter().enumerate() {
+        device.set_chunk(n as u32, plain).unwrap();
+    }
+    println!("device: loaded {} books in {:.0} ms", device.len(), ms(t));
+    for (list, arg) in [
+        // One letter (prefix of almost everything), a word of many titles, two words,
+        // an author, a series, nothing.
+        ("search", "с"),
+        ("search", "камень"),
+        ("search", "камень чайка"),
+        ("search", "кузнецов160"),
+        ("search", "серия 40"),
+        ("search", "zz"),
+        ("recent", ""),
+        ("all", ""),
+    ] {
+        let t = Instant::now();
+        let page: serde_json::Value =
+            serde_json::from_str(&device.list(list, arg, 0, 50).unwrap()).unwrap();
+        println!(
+            "device: {list} {arg:?}: {} found in {:.1} ms",
+            page["total"],
+            ms(t)
+        );
+    }
+    for which in ["authors", "series", "genres"] {
+        let t = Instant::now();
+        let names: serde_json::Value = serde_json::from_str(&device.names(which).unwrap()).unwrap();
+        println!(
+            "device: {which}: {} in {:.1} ms",
+            names.as_array().unwrap().len(),
+            ms(t)
+        );
+    }
+
+    // The root folder page: missing marks (two that exist, one that is gone).
+    let first = showcase::showcase_books(&index, &marks).unwrap()[0]
+        .folder
+        .clone();
+    let checked = vec![
+        FolderPath::Dir(String::new()),
+        first,
+        FolderPath::Dir("gone/away".into()),
+    ];
+    let t = Instant::now();
+    let missing = showcase::missing_marks(&index, &checked).unwrap();
+    println!(
+        "root folder page: missing marks {} of {} found in {:.0} ms",
+        missing.len(),
+        checked.len(),
+        ms(t)
+    );
+}
+
+/// The chunk plaintexts of `entries` under `key`.
+fn annotated_plains_for_split(entries: &[Entry], key: &CatalogKey) -> Vec<Vec<u8>> {
+    use shelfgauge_core::catalog::{chunk_count, chunk_of};
+    let count = chunk_count(entries.len() as u64, None);
+    let mut chunks = vec![Chunk::default(); count as usize];
+    for e in entries {
+        chunks[chunk_of(key.as_bytes(), &e.id, count) as usize]
+            .entries
+            .push(e.clone());
+    }
+    chunks.iter().map(Chunk::encode).collect()
+}

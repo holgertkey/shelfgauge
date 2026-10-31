@@ -44,8 +44,55 @@ pub fn fold_for_search(text: &str) -> String {
 /// assert_eq!(normalize_key("Пётр"), "петр");
 /// ```
 pub fn normalize_key(text: &str) -> String {
-    let lower = fold_for_search(&text.to_lowercase());
-    lower.split_whitespace().collect::<Vec<_>>().join(" ")
+    if text.contains('Σ') {
+        // Final sigma depends on its neighbours: `str::to_lowercase` knows how.
+        let lower = fold_for_search(&text.to_lowercase());
+        return lower.split_whitespace().collect::<Vec<_>>().join(" ");
+    }
+    // One pass and one string (a catalog makes three keys per book): the same as
+    // lowercasing, folding `ё` and joining the whitespace-separated words.
+    let mut out = String::with_capacity(text.len());
+    let mut space = false;
+    let mut push = |c: char, out: &mut String| {
+        if c.is_whitespace() {
+            space = !out.is_empty();
+        } else {
+            if space {
+                out.push(' ');
+                space = false;
+            }
+            out.push(if c == 'ё' { 'е' } else { c });
+        }
+    };
+    for c in text.chars() {
+        match lower(c) {
+            Some(c) => push(c, &mut out),
+            None => c.to_lowercase().for_each(|c| push(c, &mut out)),
+        }
+    }
+    out
+}
+
+/// The lowercase of `c` when it is one character found without the Unicode tables
+/// (ASCII and the basic Cyrillic letters, the scripts of nearly every catalog); `None`
+/// for any other (then `char::to_lowercase`).
+fn lower(c: char) -> Option<char> {
+    match c {
+        'A'..='Z' => Some(c.to_ascii_lowercase()),
+        c if c.is_ascii() => Some(c),
+        'А'..='Я' => char::from_u32(c as u32 + 0x20),
+        'Ѐ'..='Џ' => char::from_u32(c as u32 + 0x50),
+        'а'..='я' | 'ѐ'..='џ' => Some(c),
+        _ => None,
+    }
+}
+
+/// Whether `text` is composed (NFC) for sure without looking it up: every character
+/// below U+0300 and of the basic Cyrillic letters is (composition only starts with
+/// the combining marks).
+fn surely_composed(text: &str) -> bool {
+    text.chars()
+        .all(|c| (c as u32) < 0x300 || matches!(c, 'Ѐ'..='ҁ' | 'Ҋ'..='ԯ'))
 }
 
 /// Folds text as the library's search does as a whole ([`fold_for_search`] and then
@@ -108,11 +155,72 @@ fn is_latin(c: char) -> bool {
 /// assert!(words(" -- ").is_empty());
 /// ```
 pub fn words(text: &str) -> Vec<String> {
-    fold_full(text)
-        .split(|c: char| !c.is_alphanumeric())
+    let mut out = String::new();
+    push_words(text, &mut out);
+    out.split(' ')
         .filter(|w| !w.is_empty())
         .map(str::to_owned)
         .collect()
+}
+
+/// Appends the [`words`] of `text` to `out`, each after one space (`" война и мир"`),
+/// without a string per word: a word `w` of the text begins at `" w"` in `out`. Text
+/// already composed (NFC, as nearly every book's metadata) is not composed again.
+///
+/// # Examples
+///
+/// ```
+/// use shelfgauge_core::fold::push_words;
+///
+/// let mut out = String::new();
+/// push_words("Les Misérables, т. Ё", &mut out);
+/// assert_eq!(out, " les miserables т е");
+/// ```
+pub fn push_words(text: &str, out: &mut String) {
+    use unicode_normalization::{IsNormalized, is_nfc_quick};
+    let composed;
+    let text = if surely_composed(text) || is_nfc_quick(text.chars()) == IsNormalized::Yes {
+        text
+    } else {
+        composed = text.nfc().collect::<String>();
+        &composed
+    };
+    let mut in_word = false;
+    let mut emit = |c: char, out: &mut String| {
+        if c.is_alphanumeric() {
+            if !in_word {
+                out.push(' ');
+                in_word = true;
+            }
+            out.push(c);
+        } else {
+            in_word = false;
+        }
+    };
+    for c in text.chars() {
+        if let Some(l) = lower(c) {
+            emit(if l == 'ё' { 'е' } else { l }, out);
+            continue;
+        }
+        for c in c.to_lowercase() {
+            match c {
+                'ё' => emit('е', out),
+                c if c.is_ascii() => emit(c, out),
+                c => {
+                    let mut parts = std::iter::once(c).nfd();
+                    match parts.next() {
+                        Some(base) if is_latin(base) => {
+                            emit(base, out);
+                            for p in parts.filter(|&p| !is_combining_mark(p)) {
+                                emit(p, out);
+                            }
+                        }
+                        _ => emit(c, out),
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -143,6 +251,62 @@ mod tests {
         assert_eq!(words("re\u{301}sume\u{301}"), ["resume"]);
         assert_eq!(words("И\u{306}од"), ["йод"]);
         assert_eq!(words("Re\u{301}sume\u{301}"), words("Résumé"));
+    }
+
+    #[test]
+    fn words_are_the_words_of_the_full_folding() {
+        // `push_words` folds on its own: it must split as `fold_full` then splitting
+        // at everything that is not a letter or a digit.
+        let reference = |text: &str| -> Vec<String> {
+            fold_full(text)
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|w| !w.is_empty())
+                .map(str::to_owned)
+                .collect()
+        };
+        for text in [
+            "",
+            "  ",
+            "Война и мир, т. 1",
+            "Les Misérables — ÉMILE Zola",
+            "re\u{301}sume\u{301} И\u{306}од",
+            "Ǖber-Straße ΣΊΣΥΦΟΣ İstanbul",
+            "a\u{0}b\tc\u{2028}d",
+            "Ёжик в тумане (1975)",
+            "Ⅻ ½ ٣ 東京",
+            "x\u{301}\u{302}\u{303}",
+            "ЁЛКА Ѐ Џ Ѓ Ґ Ӂ ё",
+            "Е\u{308}лка и\u{306}",
+        ] {
+            assert_eq!(words(text), reference(text), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn ascii_keys_are_the_same_as_unicode_keys() {
+        let unicode = |text: &str| -> String {
+            let lower = fold_for_search(&text.to_lowercase());
+            lower.split_whitespace().collect::<Vec<_>>().join(" ")
+        };
+        for text in [
+            "",
+            "  A  b ",
+            "Isaac\tASIMOV\n",
+            "x",
+            "a  b\u{b}c",
+            "  Лев   ТОЛСТОЙ ",
+            "ЁЛКА Ѐ Џ Ѓ Ґ Ӂ",
+            "ΣΊΣΥΦΟΣ Σ ΑΣ",
+            "İstanbul ǅ Straße",
+            "\u{a0}x\u{2028}y",
+        ] {
+            assert_eq!(normalize_key(text), unicode(text), "{text:?}");
+        }
+        // Every letter of the fast path, against the tables.
+        for c in ('A'..='Z').chain('А'..='я').chain('Ѐ'..='џ') {
+            let text = c.to_string();
+            assert_eq!(normalize_key(&text), unicode(&text), "{c}");
+        }
     }
 
     #[test]

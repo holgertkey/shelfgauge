@@ -141,6 +141,35 @@ impl DeviceCatalog {
         Ok(())
     }
 
+    /// Adds chunk `number` that this device checked against an index when it got it
+    /// and kept with its hash (`hash`, hex): taken without hashing it again (the check
+    /// is against the hub, not this device's own storage), if the current index names
+    /// that hash for it.
+    pub fn set_kept_chunk(
+        &mut self,
+        number: u32,
+        plain: &[u8],
+        hash: &str,
+    ) -> Result<(), CatalogError> {
+        let index = self
+            .index
+            .as_ref()
+            .ok_or_else(|| CatalogError("no catalog index yet".into()))?;
+        let info = index
+            .chunks
+            .get(number as usize)
+            .ok_or_else(|| CatalogError(format!("no chunk {number}")))?;
+        if hex(info.sha256) != hash {
+            return Err(CatalogError(format!(
+                "chunk {number} kept here is not the index's"
+            )));
+        }
+        let chunk = Chunk::decode(plain)?;
+        self.catalog.set_chunk(number, chunk.entries);
+        self.held[number as usize] = Some(info.sha256);
+        Ok(())
+    }
+
     /// Drops everything (another library, a new key).
     pub fn clear(&mut self) {
         self.index = None;
@@ -305,6 +334,31 @@ mod tests {
             device.set_chunk(n as u32, plain).unwrap();
         }
         assert_eq!(device.len(), 3);
+    }
+
+    #[test]
+    fn kept_chunks_are_taken_by_their_hash() {
+        let (mut device, chunks, index) = device();
+        device.set_index(&index, 0).unwrap();
+        let hash = |plain: &[u8]| hex(shelfgauge_core::catalog::chunk_hash(plain));
+        device
+            .set_kept_chunk(0, &chunks[0], &hash(&chunks[0]))
+            .unwrap();
+        assert!(
+            device
+                .set_kept_chunk(1, &chunks[1], &hash(&chunks[0]))
+                .is_err(),
+            "a hash the index does not name for that chunk"
+        );
+        assert!(
+            device
+                .set_kept_chunk(5, &chunks[1], &hash(&chunks[1]))
+                .is_err()
+        );
+        device
+            .set_kept_chunk(1, &chunks[1], &hash(&chunks[1]))
+            .unwrap();
+        assert_eq!(device.len(), 2);
     }
 
     #[test]
