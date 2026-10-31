@@ -12,8 +12,12 @@
 //
 // "Get this book" writes a `book_request` record into the person's account; the
 // library publishes the book onto their shelf at its next check (every 30 s while its
-// computer is on), or refuses it (`refused` with a reason). Text from the catalog goes
-// into the page as text only (`textContent`), never as markup.
+// computer is on), or refuses it (`refused` with a reason). A book card shows the
+// book's thumbnail: kept here, else fetched from the hub, else asked for with a
+// `cover_request` record (the library makes it at its next check). "Download book
+// file" makes a book file here from a published book's blobs (bookfile.js). Text from
+// the catalog goes into the page as text only (`textContent`), never as markup.
+import * as bookfile from "./bookfile.js";
 import * as c from "./crypto.js";
 import * as store from "./store.js";
 
@@ -21,6 +25,11 @@ const base = store.base;
 const PAGE_SIZE = 50;
 // How often the page asks for the answers to its requests while some are waiting.
 const POLL_MS = 15000;
+// How often, and how many times, a thumbnail asked for is looked for again.
+const COVER_RETRY_MS = 15000;
+const COVER_TRIES = 6;
+// The largest thumbnail opened.
+const MAX_THUMBNAIL = 1024 * 1024;
 
 let ui;
 let wasm = null;
@@ -332,6 +341,35 @@ function formatBytes(n) {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
+/** "Download book file": the book file made here from the publication's blobs. */
+function downloadButton(publication) {
+  const button = ui.el("button", { type: "button" }, "Download book file");
+  const note = ui.el("span", { class: "muted hub-download-status", role: "status" });
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    note.textContent = "Making the book file…";
+    try {
+      const { blob, name } = await bookfile.exportPublication(p, publication);
+      const href = URL.createObjectURL(blob);
+      const a = ui.el("a", { href, download: name, hidden: "" });
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(href), 60000);
+      note.textContent = "";
+    } catch (e) {
+      note.textContent = e instanceof bookfile.BookFileError ? e.message
+        : ui.unreachable(e) ? "Offline: the book file needs a connection (or the whole book read here once)." : "The book file could not be made.";
+      if (!(e instanceof bookfile.BookFileError) && !ui.unreachable(e)) {
+        console.error(e);
+      }
+    } finally {
+      button.disabled = false;
+    }
+  });
+  return [button, " ", note];
+}
+
 /** The buttons and notes of a book card. */
 function actions(entry) {
   const { state, publication, reason } = bookState(entry);
@@ -339,7 +377,7 @@ function actions(entry) {
   const nodes = [];
   const row = ui.el("p", { class: "actions" });
   if (state === "shelf") {
-    row.append(ui.el("a", { class: "button primary", href: `${base}/r/${publication}` }, "Open"));
+    row.append(ui.el("a", { class: "button primary", href: `${base}/r/${publication}` }, "Open"), " ", ...downloadButton(publication));
     nodes.push(row, ui.el("p", { class: "muted" }, "On your shelf."));
     return nodes;
   }
@@ -358,6 +396,9 @@ function actions(entry) {
   });
   if (!(state === "refused" && reason === "closed")) {
     row.append(get);
+  }
+  if (state === "published") {
+    row.append(" ", ...downloadButton(entry.publication));
   }
   nodes.push(row);
   if (state === "refused") {
@@ -415,14 +456,65 @@ function bookCard(id) {
     fact("Added", new Date(entry.added * 1000).toLocaleDateString());
   }
   info.append(facts, ...actions(entry));
-  const card = ui.el("article", { class: "book-card" },
-    ui.el("div", { class: "cover placeholder", "aria-hidden": "true" }, entry.title || ""),
-    info);
+  const placeholder = ui.el("div", { class: "cover placeholder", "aria-hidden": "true" }, entry.title || "");
+  const card = ui.el("article", { class: "book-card" }, placeholder, info);
+  if (entry.cover) {
+    showCover(entry, placeholder);
+  }
   const nodes = [card];
   if (entry.description) {
     nodes.push(ui.el("section", { class: "annotation" }, ui.el("h2", {}, "Annotation"), ui.el("p", {}, entry.description)));
   }
   return nodes;
+}
+
+// ---- Covers --------------------------------------------------------------------
+
+// Thumbnails asked for in this page's life (not asked again).
+const coversAsked = new Set();
+
+/** The thumbnail of `entry` in place of `placeholder`: kept here, else fetched, else asked for. */
+async function showCover(entry, placeholder, tries = 0) {
+  try {
+    let image = await store.catalogGet(p, `t/${entry.cover}`);
+    if (!image && shown.key) {
+      const response = await store.api(`catalog/t/${entry.cover}`, {}, p.token);
+      if (response.ok) {
+        const sealed = new Uint8Array(await response.arrayBuffer());
+        const plain = await c.openCatalogBlob(shown.key, c.unhex(p.library), `t/${entry.cover}`, sealed, MAX_THUMBNAIL);
+        image = new Blob([plain], { type: "image/jpeg" });
+        await store.catalogWrite(p, [[`t/${entry.cover}`, image]]);
+      } else if (response.status === 404) {
+        await askCover(entry.cover);
+        if (tries < COVER_TRIES && placeholder.isConnected) {
+          setTimeout(() => showCover(entry, placeholder, tries + 1), COVER_RETRY_MS);
+        }
+      }
+    }
+    if (image && placeholder.isConnected) {
+      const img = ui.el("img", { class: "cover", alt: `Cover of ${entry.title || "the book"}` });
+      img.src = URL.createObjectURL(image);
+      img.addEventListener("load", () => URL.revokeObjectURL(img.src), { once: true });
+      placeholder.replaceWith(img);
+    }
+  } catch (e) {
+    if (!ui.unreachable(e)) {
+      console.error(e);
+    }
+  }
+}
+
+/** Asks the library for a thumbnail (a `cover_request` record of this device). */
+async function askCover(cover) {
+  if (coversAsked.has(cover)) {
+    return;
+  }
+  coversAsked.add(cover);
+  await store.write(p, "cover_request", `covers-${p.device}`, {
+    covers: [...coversAsked].slice(-200),
+    updated_at: Math.floor(Date.now() / 1000),
+  });
+  await store.push(p).catch(() => {});
 }
 
 /** The key the lists of authors and series take (the core's `normalize_key`). */

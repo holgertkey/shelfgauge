@@ -226,3 +226,152 @@ export async function importFile(file) {
   }
   return { publication: id, contentKey };
 }
+
+// ---- Writing book files on the device (Phase 31: the Showcase's Download book file) --
+
+const encoder = new TextEncoder();
+
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(data) {
+  let c = 0xffffffff;
+  for (let i = 0; i < data.length; i++) {
+    c = CRC_TABLE[(c ^ data[i]) & 0xff] ^ (c >>> 8);
+  }
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+/**
+ * A book file of `entries` (`[{ name, data: Uint8Array }]`: `mimetype`, `sg.json`,
+ * then the blobs, the manifest first) as a Blob, in the layout of the instance's
+ * writer (src/hub_client/book_file.rs `write`): stored, no extra fields, the time of
+ * 1980-01-01, made on Unix with mode 0644. The same entries give the same bytes.
+ */
+export function writeBookFile(entries) {
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  for (const { name, data } of entries) {
+    const nameBytes = encoder.encode(name);
+    const crc = crc32(data);
+    const local = new DataView(new ArrayBuffer(30));
+    local.setUint32(0, 0x04034b50, true);
+    local.setUint16(4, 10, true);
+    local.setUint16(6, 0, true);
+    local.setUint16(8, 0, true);
+    local.setUint16(10, 0, true);
+    local.setUint16(12, 33, true);
+    local.setUint32(14, crc, true);
+    local.setUint32(18, data.length, true);
+    local.setUint32(22, data.length, true);
+    local.setUint16(26, nameBytes.length, true);
+    local.setUint16(28, 0, true);
+    parts.push(new Uint8Array(local.buffer), nameBytes, data);
+    const header = new DataView(new ArrayBuffer(46));
+    header.setUint32(0, 0x02014b50, true);
+    header.setUint16(4, 0x030a, true);
+    header.setUint16(6, 10, true);
+    header.setUint16(8, 0, true);
+    header.setUint16(10, 0, true);
+    header.setUint16(12, 0, true);
+    header.setUint16(14, 33, true);
+    header.setUint32(16, crc, true);
+    header.setUint32(20, data.length, true);
+    header.setUint32(24, data.length, true);
+    header.setUint16(28, nameBytes.length, true);
+    header.setUint16(30, 0, true);
+    header.setUint16(32, 0, true);
+    header.setUint16(34, 0, true);
+    header.setUint16(36, 0, true);
+    header.setUint32(38, 0x81a40000, true);
+    header.setUint32(42, offset, true);
+    central.push(new Uint8Array(header.buffer), nameBytes);
+    offset += 30 + nameBytes.length + data.length;
+  }
+  const size = central.reduce((n, part) => n + part.length, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true);
+  end.setUint16(8, entries.length, true);
+  end.setUint16(10, entries.length, true);
+  end.setUint32(12, size, true);
+  end.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, new Uint8Array(end.buffer)], { type: MIME });
+}
+
+/** The file name of a book file, as the library names it (`Authors - Title.sgbook`). */
+export function fileName(title, authors) {
+  const clean = (s) => [...(s || "")].map((ch) => (/[\u0000-\u001f\u007f-\u009f/\\:*?"<>|]/.test(ch) ? "_" : ch)).join("")
+    .split(/\s+/).filter(Boolean).join(" ");
+  const t = clean(title);
+  const a = clean(authors);
+  let stem = !t ? "book" : a ? `${a} - ${t}` : t;
+  while (encoder.encode(stem).length > 200) {
+    stem = [...stem].slice(0, -1).join("");
+  }
+  stem = stem.replace(/[. ]+$/, "") || "book";
+  return `${stem}.sgbook`;
+}
+
+/**
+ * The book file of publication `id` of account `p`, made here from the hub's blobs
+ * (through the worker's cache) with this person's records of the book as its
+ * snapshot, as the library makes it: `{ blob, name }`. Throws a BookFileError with a
+ * message for the reader.
+ */
+export async function exportPublication(p, id) {
+  const m = await wasm();
+  const sealed = await store.blob(p, id, "manifest");
+  if (!sealed) {
+    throw new BookFileError("This book is no longer on the hub.");
+  }
+  const header = c.keyHeader(sealed);
+  const libraryKey = store.libraryKey(p, header.key_id);
+  if (header.key_scope !== c.LIBRARY_SCOPE || !libraryKey) {
+    throw new BookFileError("This book needs a newer library key: connect to the internet and try again.");
+  }
+  const bookKey = await c.bookKeyFromHeader(header, libraryKey, id);
+  const reader = new m.Reader(await c.openBlob(bookKey, c.unhex(id), "manifest", sealed));
+  const summary = JSON.parse(reader.summary());
+  reader.free();
+  const blobs = [{ name: "manifest", data: sealed }];
+  const paths = [
+    ...summary.parts.map((_, n) => `p/${n}`),
+    ...summary.images.map((_, n) => `i/${n}`),
+  ];
+  for (const path of paths) {
+    const data = await store.blob(p, id, path);
+    if (!data) {
+      throw new BookFileError("This book is no longer on the hub.");
+    }
+    blobs.push({ name: path, data });
+  }
+  const contentKey = c.unbase64url(summary.content_key);
+  const snapshot = await store.bookRecords(p, contentKey);
+  const sg = {
+    format: CONTAINER_VERSION,
+    mime: MIME,
+    format_version: summary.format_version,
+    publication: id,
+    library: header.library,
+    key_scope: header.key_scope,
+    key_id: header.key_id,
+    account: p.account,
+    snapshot,
+  };
+  const blob = writeBookFile([
+    { name: "mimetype", data: encoder.encode(MIME) },
+    { name: "sg.json", data: encoder.encode(JSON.stringify(sg)) },
+    ...blobs,
+  ]);
+  return { blob, name: fileName(summary.title, summary.authors.join(", ")) };
+}

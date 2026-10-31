@@ -925,3 +925,44 @@ export function catalogWrite(p, put, drop = []) {
     }
   });
 }
+
+/**
+ * This person's records of the book with `contentKey` as they are pushed, for a book
+ * file's snapshot (as the library's `book_file::snapshot`): its shelf item, its
+ * annotations and its position, `{ kind, id, data }` with the data base64url; deleted
+ * and too large ones left out.
+ */
+export async function bookRecords(p, contentKey) {
+  const shelfId = await c.shelfId(p.mac, contentKey);
+  const positionId = await c.positionId(p.mac, contentKey);
+  const key = c.base64url(contentKey);
+  const raw = await tx(p, ["records"], "readonly", (t) => done(t.objectStore("records").getAll()));
+  const out = [];
+  const add = (r) => {
+    if (r.data && r.data.length <= MAX_RECORD_BYTES) {
+      out.push({ kind: r.kind, id: r.id, data: c.base64url(r.data) });
+    }
+  };
+  const item = raw.find((r) => r.kind === "shelf_item" && r.id === shelfId);
+  if (item) {
+    add(item);
+  }
+  const notes = [];
+  for (const r of raw.filter((r) => r.kind === "annotation" && r.data)) {
+    try {
+      const value = JSON.parse(new TextDecoder().decode(await c.openRecord(p.aes, r.kind, r.id, r.data)));
+      if (value.content_key === key) {
+        notes.push(r);
+      }
+    } catch (e) {
+      // Not this account's: left out.
+    }
+  }
+  notes.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  notes.forEach(add);
+  const position = raw.find((r) => r.kind === "position" && r.id === positionId);
+  if (position) {
+    add(position);
+  }
+  return out;
+}
