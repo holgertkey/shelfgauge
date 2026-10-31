@@ -268,10 +268,59 @@ fn archive_dir(
     Ok((folders.into_values().collect(), Direct::Archive(books)))
 }
 
+/// The folder a book is listed in, from its container and its entry inside an
+/// archive.
+pub fn book_folder(
+    container_path: &str,
+    kind: ContainerKind,
+    entry_path: Option<&str>,
+) -> FolderPath {
+    fn parent(path: &str) -> &str {
+        path.rsplit_once('/').map_or("", |(parent, _)| parent)
+    }
+    match (entry_path, kind) {
+        (Some(entry), ContainerKind::Zip) => FolderPath::Archive {
+            archive: container_path.to_owned(),
+            inner: parent(&entry.replace('\\', "/")).to_owned(),
+        },
+        _ => FolderPath::Dir(parent(container_path).to_owned()),
+    }
+}
+
 fn join(parent: &str, name: &str) -> String {
     if parent.is_empty() {
         name.to_owned()
     } else {
         format!("{parent}/{name}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dir(p: &str) -> FolderPath {
+        FolderPath::Dir(p.into())
+    }
+
+    fn zip(a: &str, i: &str) -> FolderPath {
+        FolderPath::Archive {
+            archive: a.into(),
+            inner: i.into(),
+        }
+    }
+
+    #[test]
+    fn books_are_listed_in_their_folders() {
+        assert_eq!(book_folder("a/b.fb2", ContainerKind::File, None), dir("a"));
+        assert_eq!(book_folder("b.fb2", ContainerKind::File, None), dir(""));
+        assert_eq!(
+            book_folder("a/all.zip", ContainerKind::Zip, Some("x\\y\\b.fb2")),
+            zip("a/all.zip", "x/y")
+        );
+        assert_eq!(
+            book_folder("a/all.zip", ContainerKind::Zip, Some("b.fb2")),
+            zip("a/all.zip", "")
+        );
     }
 }

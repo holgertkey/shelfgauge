@@ -17,6 +17,7 @@ pub mod catalog;
 pub mod keys;
 pub mod merge;
 pub mod records;
+pub mod showcase;
 pub mod store;
 pub mod sync;
 

@@ -30,6 +30,7 @@ pub(crate) mod search;
 pub(crate) mod server_settings;
 pub(crate) mod settings;
 pub(crate) mod shelf;
+pub(crate) mod showcase;
 pub(crate) mod sidebar;
 pub(crate) mod stats;
 
@@ -71,6 +72,8 @@ pub(crate) struct Params {
     missing: Option<String>,
     /// `probable` for probable duplicates (duplicates page).
     kind: Option<String>,
+    /// `saved` after the folder page's Showcase form.
+    showcase: Option<String>,
 }
 
 impl Params {

@@ -13,10 +13,9 @@ use rusqlite::Connection;
 
 use super::layout::{PageLink, Pager, Paging, SidebarMode, SidebarView};
 use super::{AppError, AppState};
-use crate::container::ContainerKind;
 use crate::storage::authors::{author_index, books_by_author, count_authors, list_authors};
 use crate::storage::books::{BookDetails, BookSummary};
-use crate::storage::folders::{FolderKind, FolderPath, folder_book_index, folder_children};
+use crate::storage::folders::{self, FolderKind, FolderPath, folder_book_index, folder_children};
 
 /// One entry of a sidebar level.
 pub(crate) enum Item {
@@ -95,13 +94,11 @@ impl Focus {
 
 /// The folder a book is listed in.
 pub(crate) fn book_folder(book: &BookDetails) -> FolderPath {
-    match (&book.entry, book.container_kind) {
-        (Some(entry), ContainerKind::Zip) => FolderPath::Archive {
-            archive: book.container_path.clone(),
-            inner: parent(&entry.path.replace('\\', "/")).to_owned(),
-        },
-        _ => FolderPath::Dir(parent(&book.container_path).to_owned()),
-    }
+    folders::book_folder(
+        &book.container_path,
+        book.container_kind,
+        book.entry.as_ref().map(|e| e.path.as_str()),
+    )
 }
 
 fn parent(path: &str) -> &str {

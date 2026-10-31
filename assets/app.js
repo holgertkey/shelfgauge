@@ -352,6 +352,135 @@ function setupTree(sidebar) {
   });
 }
 
+// ---------- Showcase marks (admins, the library on a hub) ----------
+
+// The folders an admin opened for the hub's catalog: a checkbox next to every folder
+// of the folder mode. The same rules as `hub_client::showcase` (Rust): a folder is
+// open when it or a parent is marked; one open through a parent shows checked and
+// disabled.
+const showcase = { url: "", marks: [] };
+
+function trimSlashes(text) {
+  return (text || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+}
+
+function folderOfNode(node) {
+  const url = new URL(node.dataset.src, window.location.href);
+  const zip = trimSlashes(url.searchParams.get("zip"));
+  return zip
+    ? { zip, in: trimSlashes(url.searchParams.get("in")) }
+    : { path: trimSlashes(url.searchParams.get("path")) };
+}
+
+function sameFolder(a, b) {
+  return a.zip !== undefined
+    ? b.zip !== undefined && a.zip === b.zip && a.in === b.in
+    : b.zip === undefined && a.path === b.path;
+}
+
+function isBelow(parent, path) {
+  return parent === "" || path === parent || path.startsWith(parent + "/");
+}
+
+function isUnder(mark, folder) {
+  if (mark.zip === undefined) {
+    return isBelow(mark.path, folder.zip === undefined ? folder.path : folder.zip);
+  }
+  return folder.zip !== undefined && mark.zip === folder.zip && isBelow(mark.in, folder.in);
+}
+
+function markState(folder) {
+  if (showcase.marks.some((m) => !sameFolder(m, folder) && isUnder(m, folder))) {
+    return "parent";
+  }
+  return showcase.marks.some((m) => sameFolder(m, folder)) ? "open" : "closed";
+}
+
+function decorateShowcase(sidebar) {
+  for (const node of sidebar.querySelectorAll(".tree .node.folder, .tree .node.archive")) {
+    let box = node.querySelector(":scope > .showcase-mark input");
+    if (!box) {
+      const label = document.createElement("label");
+      label.className = "showcase-mark";
+      box = document.createElement("input");
+      box.type = "checkbox";
+      const name = node.querySelector(":scope > a");
+      box.setAttribute("aria-label", `On the Showcase: ${name ? name.textContent : ""}`);
+      label.append(box);
+      node.insertBefore(label, node.querySelector(":scope > .children"));
+    }
+    const state = markState(folderOfNode(node));
+    box.checked = state !== "closed";
+    box.disabled = state === "parent";
+    box.title = state === "parent" ? "Open through its parent folder" : "On the Showcase";
+  }
+}
+
+async function saveShowcase(sidebar, box) {
+  const node = box.closest(".node");
+  const folder = folderOfNode(node);
+  const body = new URLSearchParams(folder);
+  if (box.checked) {
+    body.set("open", "1");
+  }
+  box.disabled = true;
+  try {
+    const response = await fetch(showcase.url, {
+      method: "POST",
+      headers: { Accept: "application/json" },
+      body,
+    });
+    reloadIfSignedOut(response);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    showcase.marks = (await response.json()).marks;
+    showNotice(box.checked
+      ? "On the Showcase. The hub’s catalog changes at the next sync."
+      : "Off the Showcase. The hub’s catalog changes at the next sync.");
+  } catch (e) {
+    console.error(e);
+    showNotice("The Showcase could not be saved.");
+  }
+  decorateShowcase(sidebar);
+}
+
+async function setupShowcase(sidebar) {
+  const url = sidebar.dataset.showcase;
+  if (!url) {
+    return;
+  }
+  try {
+    const response = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!response.ok) {
+      return;
+    }
+    const data = await response.json();
+    if (!data.enabled) {
+      return;
+    }
+    showcase.url = url;
+    showcase.marks = data.marks;
+  } catch (e) {
+    console.error(e);
+    return;
+  }
+  sidebar.classList.add("showcase-on");
+  decorateShowcase(sidebar);
+  // Levels fetched later (expanding, paging) get their checkboxes too; only nodes are
+  // added here when missing, so the observer settles.
+  new MutationObserver(() => decorateShowcase(sidebar)).observe(sidebar, {
+    childList: true,
+    subtree: true,
+  });
+  sidebar.addEventListener("change", (event) => {
+    const box = event.target.closest(".showcase-mark input");
+    if (box) {
+      saveShowcase(sidebar, box);
+    }
+  });
+}
+
 function setMode(mode) {
   const sidebar = document.getElementById("sidebar");
   const path = (sidebar && sidebar.dataset.cookiePath) || "/";
@@ -675,6 +804,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setupTree(sidebar);
     setupFilter(sidebar);
     setupScroll(sidebar);
+    setupShowcase(sidebar);
   }
   setupScan();
   setupBrowserSettings();

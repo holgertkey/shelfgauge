@@ -28,7 +28,7 @@ use crate::storage::{StorageError, migrations, open_wal};
 
 /// Schema migrations of the user-data database; index `i` upgrades version `i` to
 /// `i + 1`. Append only: user data cannot be rebuilt.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7];
 
 /// Version 1: annotations and reading positions.
 ///
@@ -412,6 +412,24 @@ BEGIN
 END;
 
 ALTER TABLE profiles ADD COLUMN hub_only INTEGER NOT NULL DEFAULT 0 CHECK (hub_only IN (0, 1));
+"#;
+
+/// Version 7: the folders an admin opened for the library's Showcase (the catalog
+/// on the hub), kept by path (`hub_client::showcase`).
+///
+/// - `kind` `dir`: `path` a directory relative to the library root (`""` the root),
+///   `inner` empty; `kind` `zip`: `path` the archive's container path, `inner` a
+///   directory inside it (`""` the whole archive). `/`-separated, no slash around.
+/// - Kept when the hub is turned off; a mark whose folder is gone stays until the
+///   admin forgets it.
+const V7: &str = r#"
+CREATE TABLE showcase_folders (
+    kind      TEXT    NOT NULL CHECK (kind IN ('dir', 'zip')),
+    path      TEXT    NOT NULL,
+    inner     TEXT    NOT NULL DEFAULT '',
+    marked_at INTEGER NOT NULL,
+    PRIMARY KEY (kind, path, inner)
+) STRICT;
 "#;
 
 /// The schema version this build creates and understands.

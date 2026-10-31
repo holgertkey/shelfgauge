@@ -447,6 +447,11 @@ impl Urls {
         self.path(&format!("/sidebar/author/{id}"))
     }
 
+    /// The Showcase marks (`GET` JSON, `POST` a mark).
+    pub fn showcase(&self) -> String {
+        self.path("/showcase")
+    }
+
     /// The sidebar fragment with a folder's contents.
     pub fn sidebar_folder(&self, folder: &FolderPath, page: u64) -> String {
         self.with_query("/sidebar/folder", &folder_params(folder), page)

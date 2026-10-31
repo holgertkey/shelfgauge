@@ -335,6 +335,7 @@ struct FolderPage {
     rows: Vec<Row>,
     empty: &'static str,
     pager: Option<Pager>,
+    showcase: Option<super::showcase::Control>,
 }
 
 /// `GET /folder?path=` or `?zip=&in=`: a folder's sub-folders and books.
@@ -347,10 +348,12 @@ pub(crate) async fn folder(
     let params = Params::from(query);
     let folder = params.folder();
     let page = params.page();
+    let saved = params.showcase.as_deref() == Some("saved");
     let mode = SidebarMode::from_headers(&headers);
     let s = state.clone();
     let target = folder.clone();
-    let (paging, listing, sidebar) = state
+    let viewer = current.clone();
+    let (paging, listing, sidebar, showcase) = state
         .db(move |conn| {
             let limit = s.page_size();
             let first = folder_children(conn, &target, limit, 0)?;
@@ -364,8 +367,9 @@ pub(crate) async fn folder(
             } else {
                 folder_children(conn, &target, limit, paging.offset())?
             };
+            let showcase = super::showcase::control(&s, &viewer, conn, &target, saved)?;
             let sidebar = sidebar::build(conn, &s, mode, &Focus::Folder(target))?;
-            Ok((paging, listing, sidebar))
+            Ok((paging, listing, sidebar, showcase))
         })
         .await?;
 
@@ -402,6 +406,7 @@ pub(crate) async fn folder(
             href: urls.folder(&folder, n),
             src: String::new(),
         }),
+        showcase,
     })
 }
 

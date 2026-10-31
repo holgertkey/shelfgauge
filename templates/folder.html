@@ -6,6 +6,40 @@
 {%- endfor %}
 </nav>
 <h1>{{ name }}</h1>
+{%- if let Some(showcase) = showcase %}
+<section class="shelf-box showcase-box" id="showcase" aria-labelledby="showcase-title">
+  <h2 id="showcase-title">Showcase</h2>
+  {%- if showcase.saved %}
+  <p class="notice settings-notice ok" role="status"><span>Saved. The hub’s catalog changes at the next sync.</span></p>
+  {%- endif %}
+  {%- if showcase.state == "parent" %}
+  <p><label class="showcase-check"><input type="checkbox" checked disabled> On the Showcase</label></p>
+  <p class="muted">Open through its parent{% if let Some((parent, href)) = showcase.parent %} <a href="{{ href }}">{{ parent }}</a>{% endif %}: every folder inside an open folder is on the Showcase.</p>
+  {%- else %}
+  <form method="post" action="{{ showcase.action }}" class="actions">
+    {%- for (field, value) in showcase.fields %}
+    <input type="hidden" name="{{ field }}" value="{{ value }}">
+    {%- endfor %}
+    <label class="showcase-check"><input type="checkbox" name="open" value="1"{% if showcase.state == "open" %} checked{% endif %}> On the Showcase</label>
+    <button type="submit">Save</button>
+  </form>
+  {%- endif %}
+  <p class="hint">The library’s members see the books of the folders on the Showcase in the hub reader, also when this computer is off, and get any of them with one tap. Folders inside an open folder are open too, also ones added later.</p>
+  {%- if !showcase.missing.is_empty() %}
+  <p class="notice settings-notice warn" role="status"><span>These folders were on the Showcase but are no longer in the library (renamed, moved or deleted), so their books left it. Open the folders again where they are now.</span></p>
+  <ul class="showcase-missing">
+    {%- for (label, fields) in showcase.missing %}
+    <li><form method="post" action="{{ showcase.action }}" class="actions">
+      {%- for (field, value) in fields %}
+      <input type="hidden" name="{{ field }}" value="{{ value }}">
+      {%- endfor %}
+      <code>{{ label }}</code> <button type="submit">Forget</button>
+    </form></li>
+    {%- endfor %}
+  </ul>
+  {%- endif %}
+</section>
+{%- endif %}
 {%- if !folders.is_empty() %}
 <ul class="folders">
 {%- for folder in folders %}

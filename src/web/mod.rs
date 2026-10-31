@@ -679,6 +679,10 @@ fn admin_routes(urls: &Urls) -> Vec<(String, MethodRouter<AppState>)> {
     vec![
         (urls.path("/scan"), post(routes::scan::rescan)),
         (
+            urls.path("/showcase"),
+            get(routes::showcase::marks).post(routes::showcase::save),
+        ),
+        (
             urls.settings(),
             get(routes::settings::page).post(routes::settings::save),
         ),

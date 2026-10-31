@@ -48,6 +48,7 @@ const FRAGMENT_ROUTES: &[&str] = &[
     "/sidebar/authors",
     "/sidebar/author/{id}",
     "/sidebar/folder",
+    "/showcase",
     "/scan/status",
     "/book/{id}/annotations",
     "/book/{id}/find",

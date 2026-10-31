@@ -79,7 +79,7 @@
   <progress max="{{ layout.scan.total }}" value="{{ layout.scan.done }}"{% if layout.scan.total == 0 %} hidden{% endif %}></progress>
 </div>
 <div class="layout">
-  <nav id="sidebar" class="sidebar" aria-label="Library" data-cookie-path="{{ layout.urls.home() }}">
+  <nav id="sidebar" class="sidebar" aria-label="Library" data-cookie-path="{{ layout.urls.home() }}"{% if layout.profile.admin && layout.sidebar.mode.is_folders() %} data-showcase="{{ layout.urls.showcase() }}"{% endif %}>
     {%- block sidebar %}
     <div class="modes">
       <a href="{{ layout.urls.authors("", 1) }}" data-mode="authors"{% if !layout.sidebar.mode.is_folders() %} class="active" aria-current="true"{% endif %}>Authors</a>

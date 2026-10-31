@@ -641,6 +641,42 @@ body.sidebar-hidden .sidebar-resizer {
   padding: 0 0.3rem;
 }
 
+/* Showcase marks (admins, the library on a hub): a fifth column with a checkbox. */
+.showcase-on .tree .node {
+  grid-template-columns: 1.25rem 1.25rem minmax(0, 1fr) auto auto;
+}
+
+.tree .showcase-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  width: 1.5rem;
+  height: 1.25rem;
+  cursor: pointer;
+}
+
+.tree .showcase-mark input {
+  margin: 0;
+  cursor: inherit;
+}
+
+.tree .showcase-mark input:disabled {
+  cursor: default;
+}
+
+.showcase-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.showcase-missing {
+  margin: 0.25rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
 .tree .heading {
   margin: 0.4rem 0 0.1rem 1.5rem;
   color: var(--muted);
@@ -2560,6 +2596,16 @@ button.danger,
   .tree .node {
     grid-template-columns: 2.75rem 1.25rem minmax(0, 1fr) auto;
     align-items: center;
+  }
+
+  .showcase-on .tree .node {
+    grid-template-columns: 2.75rem 1.25rem minmax(0, 1fr) auto auto;
+  }
+
+  /* A finger-sized target around the Showcase checkbox. */
+  .tree .showcase-mark {
+    width: 2.75rem;
+    height: 2.75rem;
   }
 
   /* Author and folder names keep their ellipsis: a block with a tall line. */
