@@ -8,6 +8,14 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+### Added
+
+- **Is the library online?** The Showcase says when it was last updated and whether
+  the library's computer is online now, and a book asked for says "the book comes
+  within a minute" while it is (else when the computer was last online).
+  **Settings → Server and hub → Show the library's members when this computer is
+  online** (`[hub] show_online`, on by default) turns it off.
+
 ## [0.22.0] - 2026-10-31
 
 Libraries and hubs of 0.21.0 and 0.22.0 work with each other in any order; the

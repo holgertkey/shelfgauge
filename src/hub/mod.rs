@@ -615,6 +615,9 @@ struct Inner {
     refused_hosts: Mutex<HashSet<Option<String>>>,
     /// Whether the hub is below `max_total_bytes`, and when that was checked.
     accepting: Mutex<Option<(std::time::Instant, bool)>>,
+    /// When each library's 30 s check last came with `online=1` (Unix seconds, rounded
+    /// down to the minute), by internal library id: in memory only, gone at a restart.
+    online: Mutex<std::collections::HashMap<i64, i64>>,
     clock: Clock,
     slow_request: Duration,
 }
@@ -662,6 +665,7 @@ impl HubState {
             trusted_proxies,
             refused_hosts: Mutex::new(HashSet::new()),
             accepting: Mutex::new(None),
+            online: Mutex::new(std::collections::HashMap::new()),
             clock,
             slow_request: trace::SLOW_REQUEST,
         }))
@@ -680,6 +684,23 @@ impl HubState {
     /// The current time in Unix seconds.
     pub fn now(&self) -> i64 {
         (self.0.clock)()
+    }
+
+    /// Notes that `library`'s computer is online now (`show`), or forgets it.
+    pub(crate) fn set_online(&self, library: i64, show: bool) {
+        let mut online = self.0.online.lock().unwrap_or_else(|e| e.into_inner());
+        if show {
+            let now = self.now();
+            online.insert(library, now - now.rem_euclid(60));
+        } else {
+            online.remove(&library);
+        }
+    }
+
+    /// When `library`'s computer was last seen online, if it lets its members know.
+    pub(crate) fn online_at(&self, library: i64) -> Option<i64> {
+        let online = self.0.online.lock().unwrap_or_else(|e| e.into_inner());
+        online.get(&library).copied()
     }
 
     /// `path` under the configured base path (`/api/info` → `/hub/api/info`).

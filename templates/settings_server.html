@@ -62,6 +62,10 @@
       <label for="hub-sync">Minutes between syncs</label>
       <input type="number" id="hub-sync" name="sync_interval" min="1" max="1440" value="{{ sync_interval }}" required>
     </div>
+    <div class="field">
+      <label class="check"><input type="checkbox" name="show_online" value="1"{% if show_online %} checked{% endif %}> Show the library's members when this computer is online</label>
+      <p class="hint">On the Showcase in the reader: “online: the book comes within a minute”, or when it was last online.</p>
+    </div>
   </section>
   <div class="form-actions">
     <button type="submit" class="primary">Save</button>

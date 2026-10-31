@@ -761,6 +761,8 @@ async fn account(
         body["name"] = json!(name);
         body["role"] = json!(role.as_str());
         body["device"] = json!(device.device);
+        // When the library's computer last checked in, if it lets its members know.
+        body["library_online_at"] = json!(state.online_at(library));
         body["has_password"] = json!(has_password);
     }
     Ok(Json(body))
@@ -1503,16 +1505,28 @@ async fn delete_catalog_blob(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// `GET /api/library/pending`: per account of the library holding request records
-/// (`book_request`, `cover_request`), the highest sequence number among them, as
-/// `{"accounts": [{"id", "seq"}]}`: the library's cheap check every 30 s, after which
-/// it syncs the accounts whose number grew (see [`store::pending_requests`]). Only the
-/// library's token.
+/// The query of `GET /api/library/pending`.
+#[derive(Debug, Default, Deserialize)]
+struct PendingQuery {
+    /// `1`: the library lets its members see that its computer is online now.
+    online: Option<String>,
+}
+
+/// `GET /api/library/pending?online=1`: per account of the library holding request
+/// records (`book_request`, `cover_request`), the highest sequence number among them,
+/// as `{"accounts": [{"id", "seq"}]}`: the library's cheap check every 30 s, after
+/// which it syncs the accounts whose number grew (see [`store::pending_requests`]).
+/// With `online=1` the hub notes the time (in memory, to the minute) for the
+/// library's devices (`library_online_at` in `GET /api/account`); without it, it
+/// forgets it. Only the library's token.
 async fn pending(
     State(state): State<HubState>,
     Extension(auth): Extension<Auth>,
+    query: Result<Query<PendingQuery>, QueryRejection>,
 ) -> Result<Json<serde_json::Value>, HubError> {
     let library = library_only(auth)?;
+    let Query(query) = query.map_err(|_| HubError::BadRequest("invalid query"))?;
+    state.set_online(library, query.online.as_deref() == Some("1"));
     let pending = state
         .db(move |conn| store::pending_requests(conn, library))
         .await?;

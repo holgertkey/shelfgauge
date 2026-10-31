@@ -1402,6 +1402,12 @@ and away, and the circles of libraries later.
   **Open** for a book on the shelf or already on the hub; **Download book file** makes
   the `.sgbook` on the device (`bookfile.writeBookFile`, the instance's bytes for the
   same entries); thumbnails asked for when a card is shown, kept on the device.
+- **Online** (0.22.0, Phase 31.1): the library's 30 s check carries `online=1` while
+  `[hub] show_online` is on; the hub keeps that time per library in memory only,
+  rounded down to the minute (forgotten without the flag and at a restart), and
+  answers it to the library's devices as `library_online_at` in `GET /api/account`.
+  The reader shows "online" for a check less than 150 s old, else when it last was,
+  and the Showcase's date from the index's generation.
 - **What the hub learns**: the number, sizes and change times of a library's catalog
   blobs, which thumbnail ids are fetched (opaque, per catalog key), and that and when
   an account wrote a request record; never titles, queries, which book or cover was

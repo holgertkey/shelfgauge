@@ -100,6 +100,9 @@ url = ""
 instance_name = ""
 # Minutes between syncs with the hub (also after each change).
 sync_interval_minutes = 5
+# Whether the library's members see on their devices when this computer is online
+# (the hub learns it from the library's check every 30 s).
+show_online = true
 "#;
 
 /// The largest accepted value of `annotations.max_text_length` and
@@ -267,6 +270,8 @@ pub struct HubConfig {
     pub instance_name: String,
     /// Minutes between syncs.
     pub sync_interval_minutes: u32,
+    /// Whether the members' devices are told when this computer is online.
+    pub show_online: bool,
 }
 
 impl Default for HubConfig {
@@ -275,6 +280,7 @@ impl Default for HubConfig {
             url: String::new(),
             instance_name: String::new(),
             sync_interval_minutes: 5,
+            show_online: true,
         }
     }
 }

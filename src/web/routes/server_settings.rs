@@ -52,6 +52,7 @@ struct ServerPage {
     hub_locked: bool,
     instance_name: String,
     sync_interval: u32,
+    show_online: bool,
     handle: Option<String>,
     action: String,
     restart_action: String,
@@ -173,6 +174,7 @@ async fn page_response(
         hub_locked: library.is_some(),
         instance_name: config.hub.instance_name.clone(),
         sync_interval: config.hub.sync_interval_minutes,
+        show_online: config.hub.show_online,
         handle: library.map(|l| l.handle),
         action: urls.settings_action("server"),
         restart_action: urls.settings_action("restart"),
@@ -230,6 +232,8 @@ pub(crate) struct ServerForm {
     instance_name: String,
     #[serde(default)]
     sync_interval: String,
+    #[serde(default)]
+    show_online: Option<String>,
     #[serde(default)]
     handle: String,
 }
@@ -363,6 +367,7 @@ async fn save_config(
     }
     new.hub.instance_name = form.instance_name.trim().to_owned();
     new.hub.sync_interval_minutes = sync;
+    new.hub.show_online = form.show_online.is_some();
     // Normalized as the program reads them (the hub's address in its form), so the
     // file holds what is used and a save of the same values changes nothing.
     if let Err(e) = new.validate() {

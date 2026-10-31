@@ -882,11 +882,33 @@ async fn save_server(h: &Harness, change: &[(&str, &str)]) -> Reply {
         ("hub_url".to_owned(), String::new()),
         ("instance_name".to_owned(), String::new()),
         ("sync_interval".to_owned(), "5".to_owned()),
+        ("show_online".to_owned(), "1".to_owned()),
     ];
     for (key, value) in change {
         set(&mut fields, key, value);
     }
+    // An empty value stands for an unchecked box: not sent at all.
+    fields.retain(|(key, value)| !(key == "show_online" && value.is_empty()));
     h.post("/settings/server", &fields, Some(&h.origin())).await
+}
+
+#[tokio::test]
+async fn showing_the_members_that_this_computer_is_online_can_be_turned_off() {
+    let h = harness(COMMENTED, ConfigOverrides::default());
+    let page = h.ok("/settings/server").await;
+    assert!(
+        page.body
+            .contains(r#"<input type="checkbox" name="show_online" value="1" checked>"#),
+        "on by default"
+    );
+    let reply = save_server(&h, &[("show_online", "")]).await;
+    assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.body);
+    let (config, _) = Config::from_toml(&h.config_file(), &h.library.config_path()).unwrap();
+    assert!(!config.hub.show_online);
+    assert!(h.config_file().contains("show_online = false"));
+    save_server(&h, &[]).await;
+    let (config, _) = Config::from_toml(&h.config_file(), &h.library.config_path()).unwrap();
+    assert!(config.hub.show_online);
 }
 
 #[tokio::test]

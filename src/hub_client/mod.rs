@@ -867,8 +867,13 @@ impl HubClient {
     }
 
     /// `GET /api/library/pending`: per account with request records, the highest
-    /// sequence number among them.
-    pub fn pending_requests(&self, token: &Secret) -> Result<Vec<(AccountId, i64)>, ClientError> {
+    /// sequence number among them; `online` lets the hub tell the library's devices
+    /// that this computer is online now (else the hub forgets it).
+    pub fn pending_requests(
+        &self,
+        token: &Secret,
+        online: bool,
+    ) -> Result<Vec<(AccountId, i64)>, ClientError> {
         #[derive(Deserialize)]
         struct Item {
             id: String,
@@ -880,7 +885,11 @@ impl HubClient {
         }
         let response = self
             .agent
-            .get(self.url.api("library/pending"))
+            .get(self.url.api(if online {
+                "library/pending?online=1"
+            } else {
+                "library/pending"
+            }))
             .header("Authorization", bearer(token))
             .call()
             .map_err(transport)?;

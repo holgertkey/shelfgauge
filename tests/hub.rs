@@ -2945,3 +2945,48 @@ async fn pending_requests_report_only_request_records() {
     assert_eq!(pending().await["accounts"][0]["seq"], answer_seq);
     assert!(answer_seq > asked);
 }
+
+#[tokio::test]
+async fn members_see_when_their_librarys_computer_last_checked_in() {
+    let hub = TestHub::open();
+    let lib = hub.library("smiths").await;
+    let olga = hub.member(&lib, "olga", 1).await;
+    let other = hub.library("joneses").await;
+    let ann = hub.member(&other, "ann", 2).await;
+    let online_at = |token: String| {
+        let hub = &hub;
+        async move { hub.get("/api/account", Some(&token)).await.json()["library_online_at"].clone() }
+    };
+    assert_eq!(
+        online_at(olga.token.clone()).await,
+        Value::Null,
+        "not known yet"
+    );
+    hub.advance(75);
+    let check = hub
+        .get("/api/library/pending?online=1", Some(&lib.token))
+        .await;
+    assert_eq!(check.status, StatusCode::OK);
+    let now = hub.now();
+    assert_eq!(
+        online_at(olga.token.clone()).await,
+        json!(now - now % 60),
+        "to the minute"
+    );
+    assert_eq!(
+        online_at(ann.token.clone()).await,
+        Value::Null,
+        "another library's"
+    );
+    // A library that does not let its members know: forgotten.
+    hub.get("/api/library/pending", Some(&lib.token)).await;
+    assert_eq!(online_at(olga.token.clone()).await, Value::Null);
+    // Only the library's token checks in.
+    assert_eq!(
+        hub.get("/api/library/pending?online=1", Some(&olga.token))
+            .await
+            .status,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(online_at(olga.token.clone()).await, Value::Null);
+}

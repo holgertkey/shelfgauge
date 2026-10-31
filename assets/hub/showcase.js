@@ -42,6 +42,12 @@ let shelved = new Map();
 // Book ids (hex) → the request record's value.
 let requests = new Map();
 let pollTimer = null;
+// When the library's computer last checked in with the hub (Unix seconds), or null
+// (it does not let its members know, or the hub restarted since).
+let onlineAt = null;
+// A check older than this means the computer is not on now (it checks every 30 s;
+// the hub keeps the minute).
+const ONLINE_WITHIN_S = 150;
 
 const encoder = new TextEncoder();
 
@@ -191,6 +197,48 @@ async function refreshCatalog() {
     }
     status = shown ? "Offline: showing the Showcase as of the last update." : "offline";
   }
+}
+
+/** When the library's computer last checked in (from `GET /api/account`). */
+async function refreshOnline() {
+  try {
+    const response = await store.api("account", {}, p.token);
+    if (response.ok) {
+      const at = (await response.json()).library_online_at;
+      onlineAt = Number.isFinite(at) ? at : null;
+    }
+  } catch (e) {
+    // Offline: as known.
+  }
+}
+
+/** Whether the library's computer is online now (as far as the hub knows). */
+function isOnline() {
+  return onlineAt !== null && Date.now() / 1000 - onlineAt < ONLINE_WITHIN_S;
+}
+
+/** "3 hours ago" for a Unix time in seconds. */
+function ago(seconds) {
+  const s = Math.max(0, Date.now() / 1000 - seconds);
+  const unit = (n, one) => `${n} ${one}${n === 1 ? "" : "s"} ago`;
+  if (s < 3600) {
+    return unit(Math.max(1, Math.round(s / 60)), "minute");
+  }
+  if (s < 86400) {
+    return unit(Math.round(s / 3600), "hour");
+  }
+  return unit(Math.round(s / 86400), "day");
+}
+
+/** A line on the library's computer: online, last online, or nothing when unknown. */
+function onlineLine() {
+  const name = ui.libraryName(p);
+  if (onlineAt === null) {
+    return null;
+  }
+  return isOnline()
+    ? ui.el("p", { class: "muted hub-online", role: "status" }, ui.el("span", { class: "hub-online-dot", "aria-hidden": "true" }), ` ${name} is online.`)
+    : ui.el("p", { class: "muted hub-online", role: "status" }, `${name} was last online ${ago(onlineAt)}.`);
 }
 
 /** The person's shelf and requests, by catalog book id. */
@@ -391,8 +439,12 @@ function actions(entry) {
     row.append(ui.el("a", { class: "button primary", href: `${base}/r/${entry.publication}` }, "Open"), " ");
   }
   if (state === "pending") {
-    nodes.push(ui.el("p", { class: "notice hub-waiting", role: "status" },
-      `Asked for it. Waiting for ${name} to come online: it sends the book to your shelf when its computer is on.`));
+    const text = isOnline()
+      ? `Asked for it. ${name} is online: the book comes to your shelf within a minute.`
+      : onlineAt !== null
+        ? `Asked for it. Waiting for ${name} to come online (last online ${ago(onlineAt)}): it sends the book to your shelf when its computer is on.`
+        : `Asked for it. Waiting for ${name} to come online: it sends the book to your shelf when its computer is on.`;
+    nodes.push(ui.el("p", { class: "notice hub-waiting", role: "status" }, text));
     return nodes;
   }
   const get = ui.el("button", { type: "button", class: state === "published" ? "" : "primary" }, state === "refused" ? "Ask again" : "Get this book");
@@ -539,7 +591,14 @@ function emptyShowcase() {
 
 function heading() {
   const name = ui.libraryName(p);
-  const nodes = [ui.el("h1", {}, "Showcase"), ui.el("p", { class: "muted" }, `The books of ${name}: get any of them onto your shelf.`)];
+  const updated = shown && shown.generation
+    ? ` Updated ${new Date(shown.generation).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" })}.`
+    : "";
+  const nodes = [ui.el("h1", {}, "Showcase"), ui.el("p", { class: "muted" }, `The books of ${name}: get any of them onto your shelf.${updated}`)];
+  const online = onlineLine();
+  if (online) {
+    nodes.push(online);
+  }
   if (status && status !== "none" && status !== "offline") {
     nodes.push(ui.el("p", { class: "muted hub-sync", role: "status" }, status));
   }
@@ -661,6 +720,7 @@ function poll() {
     try {
       p = await ui.syncAccount(p);
       await readAccount();
+      await refreshOnline();
       render();
     } catch (e) {
       if (!ui.unreachable(e)) {
@@ -697,6 +757,7 @@ export async function showcasePage(helpers) {
   }
   await refreshCatalog();
   await readAccount();
+  await refreshOnline();
   render();
   poll();
   window.addEventListener("popstate", render);

@@ -435,8 +435,11 @@ async fn pull_requests(
 ) -> Result<(), super::AppError> {
     let pending = {
         let library = library.clone();
-        blocking(move || HubClient::new(library.hub_url.clone()).pending_requests(&library.token))
-            .await?
+        let online = state.config().hub.show_online;
+        blocking(move || {
+            HubClient::new(library.hub_url.clone()).pending_requests(&library.token, online)
+        })
+        .await?
     };
     let pending = match pending {
         Ok(pending) => pending,

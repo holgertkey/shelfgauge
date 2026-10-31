@@ -2070,7 +2070,7 @@ async fn the_pending_check_names_accounts_with_new_requests() {
         let library = library.clone();
         move || {
             shelfgauge::hub_client::HubClient::new(library.hub_url.clone())
-                .pending_requests(&library.token)
+                .pending_requests(&library.token, true)
                 .unwrap()
         }
     };
@@ -2094,4 +2094,20 @@ async fn the_pending_check_names_accounts_with_new_requests() {
         some[0].1 > account.last_seq,
         "ahead of the library's cursor"
     );
+    // `online`: the member's device learns that the library's computer is online,
+    // and no more once the library stops saying so.
+    let online_at = || async {
+        hub.api(Method::GET, "account", Some(&token), None).await.1["library_online_at"].clone()
+    };
+    assert!(online_at().await.is_i64(), "checked in with online");
+    let quiet = {
+        let library = library.clone();
+        move || {
+            shelfgauge::hub_client::HubClient::new(library.hub_url.clone())
+                .pending_requests(&library.token, false)
+                .unwrap()
+        }
+    };
+    tokio::task::spawn_blocking(quiet).await.unwrap();
+    assert!(online_at().await.is_null());
 }

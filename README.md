@@ -357,6 +357,7 @@ as it is now. When changes take effect:
 | `hub.url` | `""` | The [hub](#running-a-hub) for reading on phones, e.g. `"https://hub.example.org"`; empty = none. HTTPS is required (`http://` only for `127.0.0.1`, `::1` or `localhost`); certificates are checked against the computer's trust store. It is used when the library is put on the hub; it cannot change while the library is there. |
 | `hub.instance_name` | `""` | The name of this library on your other devices; empty = the library folder's name. |
 | `hub.sync_interval_minutes` | `5` | Minutes between syncs with the hub; `1`–`1440`. |
+| `hub.show_online` | `true` | Whether the library's members see in the reader's Showcase when this computer is online. |
 
 ## Remote access
 
@@ -635,7 +636,10 @@ and searches titles, authors, series and genres (case and accents ignored, as in
 library). **Get this book** asks the library: while its computer is on, the book comes
 to the person's shelf within about half a minute (the library checks the hub every
 30 s); while it is off, the card says it waits and the book comes when the computer
-is on again. The library sends a book only if it is on the Showcase at that moment
+is on again. The Showcase says when it was last updated and whether the library's
+computer is online now (or when it last was); **Settings → Server and hub → Show the
+library's members when this computer is online** (`[hub] show_online`) turns that
+off. The library sends a book only if it is on the Showcase at that moment
 (a member's catalog may be older), and never a book protected by DRM; a refusal says
 why. A book's card shows its cover (a small thumbnail the library makes when someone
 looks at the card) and, once the book is on the hub, **Open** and **Download book

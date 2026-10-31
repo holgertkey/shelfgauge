@@ -227,3 +227,17 @@
     min-height: 2.75rem;
   }
 }
+
+/* The library's computer is online (the Showcase). */
+.hub-online {
+  margin: -0.5rem 0 1rem;
+}
+
+.hub-online-dot {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: #2da44e;
+  vertical-align: 0.05rem;
+}
