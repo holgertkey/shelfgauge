@@ -8,14 +8,6 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
-### Added
-
-- **Is the library online?** The Showcase says when it was last updated and whether
-  the library's computer is online now, and a book asked for says "the book comes
-  within a minute" while it is (else when the computer was last online).
-  **Settings → Server and hub → Show the library's members when this computer is
-  online** (`[hub] show_online`, on by default) turns it off.
-
 ## [0.22.0] - 2026-10-31
 
 Libraries and hubs of 0.21.0 and 0.22.0 work with each other in any order; the
@@ -42,6 +34,11 @@ Showcase needs both upgraded (the hub serves the reader that shows it).
   the library's root folder page names the marks whose folder is gone (**Forget**).
   The library uploads the catalog after a change (a click, a scan, a book sent) and
   at every sync round, and checks every request against the Showcase as it is now.
+- **Is the library online?** The Showcase says when it was last updated and whether
+  the library's computer is online now, and a book asked for says "the book comes
+  within a minute" while it is (else when the computer was last online).
+  **Settings → Server and hub → Show the library's members when this computer is
+  online** (`[hub] show_online`, on by default) turns it off.
 - **Cover thumbnails** in the Showcase: made by the library (120 px JPEG) when someone
   looks at a book's card, kept on the hub with the book and on the device.
 - **The hub keeps the libraries' catalogs** (`hub.sqlite` schema v5), counted in each
