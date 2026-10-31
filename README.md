@@ -1,11 +1,11 @@
-# shelfgauge v0.21.0
+# shelfgauge v0.22.0
 
 A single-binary tool that indexes a folder tree of ebooks — FB2, EPUB, plain text and
 (optionally) HTML files, plain or inside `.zip` archives — into a local SQLite
 database and serves a browsable, searchable web library on `localhost`, with an
 in-browser reader.
 
-**Current version:** 0.21.0
+**Current version:** 0.22.0
 
 ## Status
 
@@ -22,7 +22,9 @@ is in the library, the state of the index and duplicates. See [docs/ARCHITECTURE
 code opens the book on your phone and signs the phone in. **Invite someone** (Settings → Profiles) gives
 a link that works from anywhere; the person picks an address like `grandma@smiths` and a
 password, reads every book the library sends, offline too, and their bookmarks and
-notes sync with the library.
+notes sync with the library. With the library's **Showcase** they also browse and
+search the books of the folders you open for it on the phone, and get any of them
+with one tap.
 
 ## Installation
 
@@ -616,6 +618,34 @@ never exported. Each download is a new copy; files downloaded earlier keep openi
 (files made before 0.21.0 do not). Removing the book from the shelf removes the copy
 from the phone; opening the file again puts the book back.
 
+**Your library on the phone** (the **Showcase**): the members of a library browse and
+search a catalog of its books in the reader (**Showcase** on My books), at home and
+away, also offline, and get any of them with **Get this book**. Only the books of the
+folders you open for it are there; every folder is closed until you open it. In the
+library's sidebar, in **Folders**, admins of a library on a hub have a checkbox next to
+every folder and zip archive (also on the folder's page, with **Save**): a checked
+folder is open with everything in it, also folders added to it later; folders inside
+an open one show checked and greyed ("open through its parent"). A folder that is
+renamed or moved closes, and the library's root folder page names the marks whose
+folder is gone (**Forget**). The library uploads the catalog, encrypted under the
+library key, after a change (soon after a click, a scan or a book sent with **Read on
+phone**, and at every sync round); the marks are kept when the library leaves the hub.
+In the reader the Showcase lists recent books, authors, series, genres and all books,
+and searches titles, authors, series and genres (case and accents ignored, as in the
+library). **Get this book** asks the library: while its computer is on, the book comes
+to the person's shelf within about half a minute (the library checks the hub every
+30 s); while it is off, the card says it waits and the book comes when the computer
+is on again. The library sends a book only if it is on the Showcase at that moment
+(a member's catalog may be older), and never a book protected by DRM; a refusal says
+why. A book's card shows its cover (a small thumbnail the library makes when someone
+looks at the card) and, once the book is on the hub, **Open** and **Download book
+file** (the file is made on the phone). Each request is a new copy for that person, so
+it counts against the library's quota on the hub, as the catalog and the thumbnails
+do. The hub keeps the catalog in `hub.sqlite`; it sees the number and sizes of its
+parts and when they change, and when someone asks for a book or a cover — never which
+one, nor a title or a search. A hub older than 0.22.0 keeps no catalog: the library
+carries on without one.
+
 With `trusted_proxies = []`, all clients behind a proxy on the same machine share one
 budget for creating libraries, signing in and redeeming invites, and with open
 registration also the 3 new libraries a day. The hub logs no passwords, tokens,
@@ -663,4 +693,4 @@ MIT — see [LICENSE](LICENSE).
 
 ---
 
-_shelfgauge v0.21.0 — MIT License_
+_shelfgauge v0.22.0 — MIT License_

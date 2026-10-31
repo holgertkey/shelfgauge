@@ -8,8 +8,37 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-10-31
+
+Libraries and hubs of 0.21.0 and 0.22.0 work with each other in any order; the
+Showcase needs both upgraded (the hub serves the reader that shows it).
+
 ### Added
 
+- **Your library on the phone: the Showcase.** Members of a library on a hub browse
+  and search a catalog of its books in the reader (**Showcase** on My books): recent
+  books, authors, series, genres and all books, a search over titles, authors,
+  series and genres that ignores case and accents as the library does, a book card
+  with its cover, annotation and facts. At home and away, also offline: the catalog
+  is kept on the device (encrypted on the hub under the library key).
+- **Get this book**: asks the library, which puts the book on the person's shelf
+  within about half a minute while its computer is on (it checks the hub every 30 s)
+  and when it is on again otherwise; the card says it waits, and says why when the
+  library refuses (not on the Showcase any more, protected by DRM, the library's space
+  on the hub full). **Open** and **Download book file** (made on the phone) for a book
+  already on the hub.
+- **Showcase folders**: in the library's sidebar (Folders), admins of a library on a
+  hub have a checkbox next to every folder and zip archive (also on the folder's page
+  with **Save**). Every folder is closed until opened; an open folder is open with
+  everything in it, also folders added later. A renamed or moved folder closes, and
+  the library's root folder page names the marks whose folder is gone (**Forget**).
+  The library uploads the catalog after a change (a click, a scan, a book sent) and
+  at every sync round, and checks every request against the Showcase as it is now.
+- **Cover thumbnails** in the Showcase: made by the library (120 px JPEG) when someone
+  looks at a book's card, kept on the hub with the book and on the device.
+- **The hub keeps the libraries' catalogs** (`hub.sqlite` schema v5), counted in each
+  library's `max_bytes`, deleted with the library; `catalog_formats` in `/api/info`.
+  A hub older than 0.22.0 keeps none, and the library carries on without one.
 - **Hub deployment kit** in `deploy/hub/`: a `Caddyfile` (the domain from
   `SHELFGAUGE_HUB_DOMAIN`, no access log), the systemd unit and a `hub.toml.example`
   with the settings of a public hub; the guide [`docs/HUB.md`](docs/HUB.md) goes from a
@@ -18,17 +47,6 @@ Build numbers (`+NNN`) do not get their own sections.
   loopback with no `[server] allowed_hosts` says to add the proxy's or ngrok's host
   name there (and says when `trusted_proxies` is empty); a request refused by `Host`
   is logged once per name with that hint, no longer on every request.
-
-### Fixed
-
-- **Books open behind ngrok's free plan** without its cookie (e.g. when the reader
-  starts from its offline copy and never shows ngrok's warning page): the reader sent
-  API calls that ngrok answered with that page, and a book failed with "unsupported
-  version 15393". The reader now sends ngrok's `ngrok-skip-browser-warning` header,
-  takes an HTML answer of something in between (also a Wi-Fi sign-in page) for the hub
-  being out of reach and reads offline copies instead, and its Service Worker keeps
-  and serves only the hub's ciphertext (copies of such pages kept before are fetched
-  again).
 
 ### Changed
 
@@ -46,6 +64,24 @@ Build numbers (`+NNN`) do not get their own sections.
   `shelfgauge profiles remove-password` / `remove`, with a note saying why. Before, the
   removal went through and shelfgauge did not start the next time. A forgotten password
   is replaced with `shelfgauge profiles set-password NAME`.
+- **Search folding moved into `shelfgauge-core`** (`fold`) and the FB2 genre names
+  (`format::genres`), shared with the reader; the old paths re-export them, and the
+  library's search index stays valid.
+- **The reader app's WebAssembly module** grew by about 40 KB compressed (the catalog,
+  its search and the genre names).
+- **The reader's account databases** are upgraded once (version 2, a store for the
+  catalog).
+
+### Fixed
+
+- **Books open behind ngrok's free plan** without its cookie (e.g. when the reader
+  starts from its offline copy and never shows ngrok's warning page): the reader sent
+  API calls that ngrok answered with that page, and a book failed with "unsupported
+  version 15393". The reader now sends ngrok's `ngrok-skip-browser-warning` header,
+  takes an HTML answer of something in between (also a Wi-Fi sign-in page) for the hub
+  being out of reach and reads offline copies instead, and its Service Worker keeps
+  and serves only the hub's ciphertext (copies of such pages kept before are fetched
+  again).
 
 ## [0.21.0] - 2026-10-29
 

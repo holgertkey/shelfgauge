@@ -588,7 +588,9 @@ daemon logs to journald or the container log), no metrics endpoint.
   tokens, pairing secrets, invite codes, recovery codes and their hashes, keys of any
   kind, public account ids and publication ids (since 0.21.0 also hub passwords,
   login keys, salts, bundles, invite secrets and payloads, the library token, library
-  ids, handles and account names: addresses appear nowhere in logs) (`BookKey`, `PublicationId`, the hub's
+  ids, handles and account names: addresses appear nowhere in logs; since 0.22.0 also
+  catalog keys, catalog book ids, cover ids, request records and the titles of a
+  library's catalog) (`BookKey`, `PublicationId`, the hub's
   `Secret` and `AccountId` have redacted `Debug` output; checked for building and
   sealing a publication since 0.17.0 and for every hub route since Phase 24: the hub
   logs route templates, accounts as `account = N`, and no bodies; nor the client
@@ -1326,6 +1328,85 @@ A publication in one file (decisions in `.debug/docs/sg-v2devplan.md`, Phase 27)
   `303` to `/?shared=lost` without reading the body. `.sgb` is accepted on opening;
   files are always written as `.sgbook`.
 
+### The library's catalog: the Showcase (0.22.0)
+
+Members browse and search a catalog of their library's books on the phone and get
+any of them with one tap (decisions in `.debug/docs/sg-v2devplan.md`, Phase 31). The
+LAN storefront planned before went to "After V2": one catalog on the hub serves home
+and away, and the circles of libraries later.
+
+- **Showcase marks** (`hub_client::showcase`, `userdata.sqlite` v7
+  `showcase_folders`): folders an admin opened, by path (`dir` or a zip archive with a
+  directory inside it), closed by default, open recursively; a sub-folder keeps its
+  own mark under an open parent; a renamed folder is closed and its mark reported
+  (`missing_marks`; the root folder page offers **Forget**). Set by a checkbox the
+  page's script adds to every folder row of the sidebar's folder mode (`GET`/`POST
+  /showcase`, admins, only while the library is on a hub; the sidebar is rendered
+  without the profile, so the rows are decorated client-side, also lazily loaded
+  levels) and by a form on the folder page. Kept when the library leaves the hub.
+- **Format** (`shelfgauge_core::catalog`, `CATALOG_FORMAT_VERSION = 1`, vectors in
+  `tests/fixtures/catalog/`): blobs `index`, `c/<n>` and `t/<cover id>` sealed as
+  publication blobs (postcard, raw deflate, padding, AES-256-GCM, the same envelope)
+  with their own versions and associated data `"sg-catalog" ‖ 0 ‖ version ‖ library
+  id ‖ path ‖ 0 ‖ header`, so no catalog blob passes for a publication blob or for
+  another place. The index's plaintext header (`CatalogHeader`, the scope fields of
+  `KeyHeader`) carries a random catalog key sealed as a record of kind `catalog_key`
+  under the library key; a new library key generation means a new catalog key and a
+  full upload. Entries take OPDS 2.0's field names (`title`, `sort_as`, `author`,
+  `series` with `position`, `subject`, `language`, `published`, `description` cut to
+  300 characters at a word, plus format, size, `added`, the publication when already
+  on the hub, an opaque cover id). A book's id is SHA-256 of its content key (the one
+  publications are matched by), first 16 bytes; its chunk HMAC(catalog key, id)
+  modulo a power of two that gives 500–1000 entries per chunk and changes only when
+  the entries double or halve (`chunk_count` with the previous count). The index has
+  the generation (`max(last + 1, Unix ms)`, so it grows even after the library lost
+  its state), the entry count and each chunk's SHA-256 and length; a device refuses an
+  index older than the one it keeps and checks each chunk against the index.
+- **Folding and search** (`shelfgauge_core::fold`, `catalog::Catalog`):
+  `fold_for_search` and `normalize_key` moved from `storage` unchanged (`books_fts`
+  stays valid); `fold_full` does on the device what SQLite's `unicode61
+  remove_diacritics 2` adds (NFC first, lowercase, Latin diacritics, `ё` → `е`, `й`
+  kept). Every query word must begin a word of the title, an author, a series or a
+  genre name (the FB2 genre table moved into the core: `format::genres`); title hits
+  first. Lists of authors, series (by position), genres, books of each, recent and all.
+  Sorting goes through one `&dyn Fn` comparator and there are no B-trees in it: each
+  instantiation is large in the WebAssembly module.
+- **Hub** (schema v5 `catalog_blobs` in `hub.sqlite`, not files: small, deleted with
+  their library by the cascade, counted in `hub_bytes` by triggers and in the
+  library's `max_bytes`; never expiring): `PUT`/`DELETE /api/catalog/{*path}` by the
+  library token (at most 4 MiB, a catalog envelope of a supported version), `GET` by
+  it and its accounts' devices, `GET /api/catalog` (the library's listing), `GET
+  /api/library/pending` (per account the highest `seq` of its request records),
+  record kinds `book_request` and `cover_request`, `catalog_formats` in `/api/info`.
+- **Library** (`hub_client::catalog_sync`, `requests`; `userdata.sqlite` v8): the
+  catalog is built from the books on the Showcase (readable ones, one entry per
+  content; five queries for any number of books), changed chunks uploaded first
+  (each hash kept after its upload, so an interrupted upload resumes), then the index,
+  then what the hub's listing has beyond it is deleted. Rebuilt at the next tick after
+  a Showcase change, a publication or a scan, and at every full round. Requests are
+  kept from the pull in the cursor's transaction (`hub_requests`), so none is lost
+  when serving fails. Every 30 s the library asks `pending` and pulls only the
+  accounts ahead of their cursor. A `book_request` is served only if the book is on
+  the Showcase *now* (a member's catalog may be stale, and anyone with the library key
+  can name any book id): published to that account as **Read on phone** does (one
+  publication per requester), the request deleted; otherwise refused with a reason
+  and an `updated_at` later than the request's, so it wins the devices' merge. A
+  `cover_request` gets JPEG thumbnails 120 px wide (the `image` crate, decoding
+  limits, only covers of books on the Showcase), deleted with their book's leaving.
+- **Reader** (`assets/hub/showcase.js`, `/showcase`): the catalog kept per account in
+  IndexedDB (account database v2, store `catalog`), only changed chunks fetched, the
+  WASM `LibraryCatalog` checks and searches; a chunk that does not match its index
+  means the library is uploading: the kept catalog stays. Views in the library's
+  markup (`.books`, `.authors`, `.book-card`, `.facts`, `.pager`). **Get this book**
+  writes a `book_request` record and asks for answers every 15 s while one waits;
+  **Open** for a book on the shelf or already on the hub; **Download book file** makes
+  the `.sgbook` on the device (`bookfile.writeBookFile`, the instance's bytes for the
+  same entries); thumbnails asked for when a card is shown, kept on the device.
+- **What the hub learns**: the number, sizes and change times of a library's catalog
+  blobs, which thumbnail ids are fetched (opaque, per catalog key), and that and when
+  an account wrote a request record; never titles, queries, which book or cover was
+  asked for, nor whether a request was served.
+
 ## Crates (0.17.0)
 
 The repository is a Cargo workspace of three crates with one version
@@ -1336,11 +1417,14 @@ The repository is a Cargo workspace of three crates with one version
   install shelfgauge` installs it as before.
 - **`shelfgauge-core`** (`crates/shelfgauge-core/`): what runs both on the server and on
   a reading device — `format::model` (the book model and block numbering),
-  `config::{ReaderConfig, SplitMode}`, `render::{split, html, outline}`,
-  `annotations::{text, anchor, find}` and `publication` (the publication format's
-  types and decoding). It does no IO, parses no book files and does no cryptography; its
-  only dependencies are `postcard`, `serde`, `thiserror` and `tracing`, and it builds for
-  `wasm32-unknown-unknown` (checked in CI). Code that must render or count text exactly
+  `format::genres` (FB2 genre names, 0.22.0), `config::{ReaderConfig, SplitMode}`,
+  `render::{split, html, outline}`, `annotations::{text, anchor, find}`, `publication`
+  (the publication format's types and decoding), `catalog` and `fold` (the library's
+  catalog with its search and the folding of text, 0.22.0), `address` and `password`
+  (0.21.0). It does no IO, parses no book files and no encryption (only hashing:
+  HMAC, SHA-256, the Argon2id key derivation); its dependencies are `postcard`,
+  `serde`, `serde_json`, `thiserror`, `tracing`, `argon2`, `hmac`, `sha2` and
+  `unicode-normalization`, and it builds for `wasm32-unknown-unknown` (checked in CI). Code that must render or count text exactly
   as the reader does belongs here; anything that touches files, SQLite, Tokio or a
   parser library does not.
 - **`shelfgauge-wasm`** (`crates/shelfgauge-wasm/`, `publish = false`, for 0.18.0): the
