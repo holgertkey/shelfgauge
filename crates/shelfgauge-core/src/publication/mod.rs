@@ -103,6 +103,18 @@ pub enum FormatError {
         /// What this reader supports.
         supported: VersionRange,
     },
+    /// The catalog blob was written in a catalog format version this reader does not
+    /// support (see [`crate::catalog`]).
+    #[error(
+        "catalog format version {found} is not supported (supported: {supported}); \
+         a newer version of shelfgauge may be needed"
+    )]
+    UnsupportedCatalogVersion {
+        /// The blob's version.
+        found: u16,
+        /// What this reader supports.
+        supported: VersionRange,
+    },
     /// The blob is shorter than its framing requires.
     #[error("the blob is truncated")]
     Truncated,
@@ -369,16 +381,23 @@ impl<'a> Envelope<'a> {
     /// ));
     /// ```
     pub fn parse(blob: &'a [u8]) -> Result<Self, FormatError> {
+        Self::parse_in(blob, SUPPORTED_VERSIONS)
+    }
+
+    /// Takes apart a blob of a format whose readable versions are `supported` (the
+    /// catalog's envelope is the same as a publication's, with its own versions); see
+    /// [`Envelope::parse`].
+    pub fn parse_in(blob: &'a [u8], supported: VersionRange) -> Result<Self, FormatError> {
         let version = u16::from_be_bytes(
             blob.get(..2)
                 .ok_or(FormatError::Truncated)?
                 .try_into()
                 .expect("two bytes"),
         );
-        if !SUPPORTED_VERSIONS.contains(version) {
+        if !supported.contains(version) {
             return Err(FormatError::UnsupportedVersion {
                 found: version,
-                supported: SUPPORTED_VERSIONS,
+                supported,
             });
         }
         let header_len = usize::from(u16::from_be_bytes(

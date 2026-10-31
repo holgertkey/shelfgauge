@@ -109,7 +109,7 @@ pub fn derive(
 }
 
 /// HMAC-SHA256 of the concatenated `parts` under `key`.
-fn hmac_sha256(key: &[u8], parts: &[&[u8]]) -> [u8; 32] {
+pub(crate) fn hmac_sha256(key: &[u8], parts: &[&[u8]]) -> [u8; 32] {
     let mut mac =
         <hmac::Hmac<Sha256> as KeyInit>::new_from_slice(key).expect("HMAC takes any key length");
     for part in parts {

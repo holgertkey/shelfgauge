@@ -9,7 +9,7 @@
 //! Book keys and publication ids are secrets: their `Debug` output hides the value and
 //! they are never logged (`docs/ARCHITECTURE.md`, "Logging").
 
-mod seal;
+pub(crate) mod seal;
 
 pub use seal::{OpenError, compress, encrypt_padded, inflate, open, seal};
 pub use shelfgauge_core::publication as format;

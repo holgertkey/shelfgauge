@@ -1,4 +1,189 @@
 /**
+ * A library's catalog on the device (see [`catalog::DeviceCatalog`]): the page
+ * decrypts and inflates the blobs and hands the plaintexts here.
+ */
+export class LibraryCatalog {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        LibraryCatalogFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_librarycatalog_free(ptr, 0);
+    }
+    /**
+     * Drops the index and every chunk.
+     */
+    clear() {
+        wasm.librarycatalog_clear(this.__wbg_ptr);
+    }
+    /**
+     * The book with id `id` (hex) as JSON, or `undefined`.
+     * @param {string} id
+     * @returns {string | undefined}
+     */
+    get(id) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(id, wasm.__wbindgen_export, wasm.__wbindgen_export3);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.librarycatalog_get(retptr, this.__wbg_ptr, ptr0, len0);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            let v2;
+            if (r0 !== 0) {
+                v2 = getStringFromWasm0(r0, r1);
+                wasm.__wbindgen_export2(r0, r1 * 1, 1);
+            }
+            return v2;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * A page of `search`, `all`, `recent`, `author`, `series` or `genre` (with the
+     * query, key or code in `arg`), as JSON `{total, entries}`.
+     * @param {string} list
+     * @param {string} arg
+     * @param {number} offset
+     * @param {number} limit
+     * @returns {string}
+     */
+    list(list, arg, offset, limit) {
+        let deferred4_0;
+        let deferred4_1;
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(list, wasm.__wbindgen_export, wasm.__wbindgen_export3);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(arg, wasm.__wbindgen_export, wasm.__wbindgen_export3);
+            const len1 = WASM_VECTOR_LEN;
+            wasm.librarycatalog_list(retptr, this.__wbg_ptr, ptr0, len0, ptr1, len1, offset, limit);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+            var ptr3 = r0;
+            var len3 = r1;
+            if (r3) {
+                ptr3 = 0; len3 = 0;
+                throw takeObject(r2);
+            }
+            deferred4_0 = ptr3;
+            deferred4_1 = len3;
+            return getStringFromWasm0(ptr3, len3);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+            wasm.__wbindgen_export2(deferred4_0, deferred4_1, 1);
+        }
+    }
+    /**
+     * The `authors`, `series` or `genres` with their counts, as JSON.
+     * @param {string} which
+     * @returns {string}
+     */
+    names(which) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(which, wasm.__wbindgen_export, wasm.__wbindgen_export3);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.librarycatalog_names(retptr, this.__wbg_ptr, ptr0, len0);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+            var ptr2 = r0;
+            var len2 = r1;
+            if (r3) {
+                ptr2 = 0; len2 = 0;
+                throw takeObject(r2);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+            wasm.__wbindgen_export2(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
+     * An empty catalog.
+     */
+    constructor() {
+        const ret = wasm.librarycatalog_new();
+        this.__wbg_ptr = ret;
+        LibraryCatalogFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * Adds the plaintext of chunk `number`; throws if it does not match the index.
+     * @param {number} number
+     * @param {Uint8Array} plain
+     */
+    setChunk(number, plain) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passArray8ToWasm0(plain, wasm.__wbindgen_export);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.librarycatalog_setChunk(retptr, this.__wbg_ptr, number, ptr0, len0);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            if (r1) {
+                throw takeObject(r0);
+            }
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Takes the plaintext of a new index; throws if its generation is below `lowest`
+     * (the highest seen). JSON `{generation, entries, chunks: [sha256 hex]}`.
+     * @param {Uint8Array} plain
+     * @param {number} lowest
+     * @returns {string}
+     */
+    setIndex(plain, lowest) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passArray8ToWasm0(plain, wasm.__wbindgen_export);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.librarycatalog_setIndex(retptr, this.__wbg_ptr, ptr0, len0, lowest);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+            var ptr2 = r0;
+            var len2 = r1;
+            if (r3) {
+                ptr2 = 0; len2 = 0;
+                throw takeObject(r2);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+            wasm.__wbindgen_export2(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
+     * The number of books.
+     * @returns {number}
+     */
+    size() {
+        const ret = wasm.librarycatalog_size(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+}
+if (Symbol.dispose) LibraryCatalog.prototype[Symbol.dispose] = LibraryCatalog.prototype.free;
+
+/**
  * An opened publication (see [`book::Book`]).
  */
 export class Reader {
@@ -579,6 +764,9 @@ function __wbg_get_imports() {
     };
 }
 
+const LibraryCatalogFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_librarycatalog_free(ptr, 1));
 const ReaderFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_reader_free(ptr, 1));

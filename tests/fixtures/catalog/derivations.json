@@ -1,0 +1,18 @@
+{
+  "books": [
+    {
+      "book_id": "33f8267c1791e3e8bdc020724f17eedb",
+      "chunk_of_8": 2,
+      "content_key": "11111111111111111111111111111111",
+      "cover_id": "b9ffd8ed06cecf161675eae7c29402da"
+    },
+    {
+      "book_id": "7b8f94e27fe0a532effc068768608eb0",
+      "chunk_of_8": 0,
+      "content_key": "0010000000000000efbeadde",
+      "cover_id": "89324720647315cae0853d5dcab30172"
+    }
+  ],
+  "catalog_key": "4242424242424242424242424242424242424242424242424242424242424242",
+  "description": "book id = SHA-256('sg-catalog book' || 0 || content key)[..16]; chunk = HMAC-SHA256(catalog key, 'chunk' || 0 || book id)[..8] as u64 BE mod n; cover id = HMAC-SHA256(catalog key, 'cover' || 0 || book id)[..16]"
+}

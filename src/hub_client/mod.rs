@@ -13,6 +13,7 @@
 //! carry the request URL).
 
 pub mod book_file;
+pub mod catalog;
 pub mod keys;
 pub mod merge;
 pub mod records;

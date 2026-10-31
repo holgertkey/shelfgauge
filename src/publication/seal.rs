@@ -31,8 +31,41 @@ pub enum OpenError {
     Inflate(std::io::Error),
 }
 
-fn cipher(key: &BookKey) -> Aes256Gcm {
-    Aes256Gcm::new(&Key::<Aes256Gcm>::from(*key.as_bytes()))
+/// AES-256-GCM of `padded` under `key` with `nonce` and associated data `ad` (the
+/// ciphertext followed by the tag); shared with the catalog's blobs.
+pub(crate) fn aes_encrypt(
+    key: &[u8; 32],
+    ad: &[u8],
+    padded: &[u8],
+    nonce: [u8; NONCE_LEN],
+) -> Vec<u8> {
+    Aes256Gcm::new(&Key::<Aes256Gcm>::from(*key))
+        .encrypt(
+            &Nonce::from(nonce),
+            Payload {
+                msg: padded,
+                aad: ad,
+            },
+        )
+        .expect("AES-GCM encrypts any blob below 64 GiB")
+}
+
+/// Decrypts what [`aes_encrypt`] made.
+pub(crate) fn aes_decrypt(
+    key: &[u8; 32],
+    ad: &[u8],
+    ciphertext: &[u8],
+    nonce: &[u8; NONCE_LEN],
+) -> Result<Vec<u8>, OpenError> {
+    Aes256Gcm::new(&Key::<Aes256Gcm>::from(*key))
+        .decrypt(
+            &Nonce::from(*nonce),
+            Payload {
+                msg: ciphertext,
+                aad: ad,
+            },
+        )
+        .map_err(|_| OpenError::Decrypt)
 }
 
 /// Raw deflate (RFC 1951, no zlib header: `DecompressionStream("deflate-raw")`).
@@ -70,15 +103,7 @@ pub fn encrypt_padded(
     nonce: [u8; NONCE_LEN],
 ) -> Vec<u8> {
     let ad = associated_data(FORMAT_VERSION, id, path, header);
-    let ciphertext = cipher(key)
-        .encrypt(
-            &Nonce::from(nonce),
-            Payload {
-                msg: padded,
-                aad: &ad,
-            },
-        )
-        .expect("AES-GCM encrypts any blob below 64 GiB");
+    let ciphertext = aes_encrypt(key.as_bytes(), &ad, padded, nonce);
     Envelope {
         version: FORMAT_VERSION,
         header,
@@ -120,14 +145,6 @@ pub fn open(
 ) -> Result<Vec<u8>, OpenError> {
     let envelope = Envelope::parse(blob)?;
     let ad = associated_data(envelope.version, id, path, envelope.header);
-    let padded = cipher(key)
-        .decrypt(
-            &Nonce::from(*envelope.nonce),
-            Payload {
-                msg: envelope.ciphertext,
-                aad: &ad,
-            },
-        )
-        .map_err(|_| OpenError::Decrypt)?;
+    let padded = aes_decrypt(key.as_bytes(), &ad, envelope.ciphertext, envelope.nonce)?;
     inflate(unpad(&padded)?, limit)
 }

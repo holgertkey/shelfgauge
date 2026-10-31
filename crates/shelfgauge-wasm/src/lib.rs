@@ -5,7 +5,8 @@
 //! manifest and the parts and renders them with the same code as the instance, so
 //! untrusted data becomes escaped HTML. It also derives the keys of a hub password
 //! (Argon2id has no WebCrypto counterpart) and checks account addresses with the
-//! hub's rules. The boundary carries only bytes, strings and JSON strings.
+//! hub's rules, and it keeps, searches and lists a library's catalog
+//! ([`LibraryCatalog`]). The boundary carries only bytes, strings and JSON strings.
 //!
 //! Built with `scripts/build-wasm.sh` into `assets/hub/pkg/` (committed); natively it
 //! builds as a plain library for the tests.
@@ -13,6 +14,7 @@
 #![warn(missing_docs)]
 
 pub mod book;
+pub mod catalog;
 
 use shelfgauge_core::annotations::anchor::Anchor;
 use shelfgauge_core::format::model::BlockId;
@@ -133,6 +135,68 @@ impl Reader {
     }
 }
 
+/// A library's catalog on the device (see [`catalog::DeviceCatalog`]): the page
+/// decrypts and inflates the blobs and hands the plaintexts here.
+#[wasm_bindgen]
+#[derive(Default)]
+pub struct LibraryCatalog(catalog::DeviceCatalog);
+
+#[wasm_bindgen]
+impl LibraryCatalog {
+    /// An empty catalog.
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> LibraryCatalog {
+        Self::default()
+    }
+
+    /// Takes the plaintext of a new index; throws if its generation is below `lowest`
+    /// (the highest seen). JSON `{generation, entries, chunks: [sha256 hex]}`.
+    #[wasm_bindgen(js_name = setIndex)]
+    pub fn set_index(&mut self, plain: &[u8], lowest: f64) -> Result<String, JsError> {
+        self.0
+            .set_index(plain, lowest as u64)
+            .map_err(catalog_error)
+    }
+
+    /// Adds the plaintext of chunk `number`; throws if it does not match the index.
+    #[wasm_bindgen(js_name = setChunk)]
+    pub fn set_chunk(&mut self, number: u32, plain: &[u8]) -> Result<(), JsError> {
+        self.0.set_chunk(number, plain).map_err(catalog_error)
+    }
+
+    /// Drops the index and every chunk.
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    /// The number of books.
+    pub fn size(&self) -> usize {
+        self.0.len()
+    }
+
+    /// The book with id `id` (hex) as JSON, or `undefined`.
+    pub fn get(&self, id: &str) -> Option<String> {
+        self.0.get(id)
+    }
+
+    /// A page of `search`, `all`, `recent`, `author`, `series` or `genre` (with the
+    /// query, key or code in `arg`), as JSON `{total, entries}`.
+    pub fn list(
+        &self,
+        list: &str,
+        arg: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<String, JsError> {
+        self.0.list(list, arg, offset, limit).map_err(catalog_error)
+    }
+
+    /// The `authors`, `series` or `genres` with their counts, as JSON.
+    pub fn names(&self, which: &str) -> Result<String, JsError> {
+        self.0.names(which).map_err(catalog_error)
+    }
+}
+
 /// Checks the start of a book file (its first `HEAD_LEN` bytes, see
 /// [`container::check_head`]); throws for any other file, an EPUB too.
 #[wasm_bindgen(js_name = bookFileHead)]
@@ -212,6 +276,10 @@ pub fn normalize_label(text: &str) -> Option<String> {
 #[wasm_bindgen(js_name = normalizeAddress)]
 pub fn normalize_address(text: &str) -> Option<String> {
     address::parse_address(text).map(|(name, handle)| format!("{name}@{handle}"))
+}
+
+fn catalog_error(e: catalog::CatalogError) -> JsError {
+    JsError::new(&e.0)
 }
 
 fn container_error(e: container::ContainerError) -> JsError {

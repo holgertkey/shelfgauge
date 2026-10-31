@@ -4,7 +4,9 @@ The shared core of [shelfgauge](https://github.com/holgertkey/shelfgauge): the
 format-independent book model, the split of a book into reading parts, HTML rendering
 of a part, the rendered text that annotations are anchored in, search within a book,
 the publication format (the types and decoding of a published book's blobs), the
-address format of hub accounts and the derivation of keys from a hub password.
+catalog format of a library's Showcase with its search and lists, the folding of text
+for search, the names of FB2 genres, the address format of hub accounts and the
+derivation of keys from a hub password.
 
 It does no IO, no encryption and parses no book files (the parsers are in the `shelfgauge` crate),
 and it builds for `wasm32-unknown-unknown`, so a book renders the same on a reading

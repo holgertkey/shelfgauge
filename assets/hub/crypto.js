@@ -1,7 +1,9 @@
-// The hub reader's cryptography: publication blobs and sync records, with WebCrypto
-// and DecompressionStream. The layouts are those of the instance (Rust):
-// src/publication/seal.rs, crates/shelfgauge-core/src/publication/ and
-// src/hub_client/keys.rs; tests/fixtures/publication/ holds the shared vectors.
+// The hub reader's cryptography: publication and catalog blobs and sync records, with
+// WebCrypto and DecompressionStream. The layouts are those of the instance (Rust):
+// src/publication/seal.rs, crates/shelfgauge-core/src/publication/,
+// crates/shelfgauge-core/src/catalog/, src/hub_client/catalog.rs and
+// src/hub_client/keys.rs; tests/fixtures/publication/ and tests/fixtures/catalog/ hold
+// the shared vectors.
 
 // The publication format and record versions this reader opens. Format 2 (0.21) has a
 // plaintext header in each blob: the manifest's holds the book key sealed under the
@@ -10,6 +12,12 @@ export const FORMAT_VERSION = 2;
 export const RECORD_VERSION = 1;
 // The key scope this reader knows; another one needs a newer shelfgauge.
 export const LIBRARY_SCOPE = "library";
+// The catalog format version this reader opens (a library's Showcase; its own
+// versions, the same envelope).
+export const CATALOG_FORMAT_VERSION = 1;
+// The largest plaintexts of a catalog's index and chunks (as the core's limits).
+export const MAX_INDEX_LEN = 2 * 1024 * 1024;
+export const MAX_CHUNK_LEN = 16 * 1024 * 1024;
 // The largest blob header.
 const MAX_HEADER_LEN = 4096;
 
@@ -93,12 +101,21 @@ export function blobAssociatedData(version, publicationId, path, header = new Ui
  * unknown version (with a message for the person) and a malformed blob.
  */
 export function envelope(data) {
+  return parseEnvelope(data, FORMAT_VERSION, "");
+}
+
+/** A sealed catalog blob taken apart, as `envelope` with the catalog's version. */
+export function catalogEnvelope(data) {
+  return parseEnvelope(data, CATALOG_FORMAT_VERSION, "catalog ");
+}
+
+function parseEnvelope(data, expected, what) {
   if (data.length < 4) {
     throw new Error("truncated");
   }
   const version = (data[0] << 8) | data[1];
-  if (version !== FORMAT_VERSION) {
-    throw new Error(`unsupported version ${version}; ${version < FORMAT_VERSION ? "made by an older shelfgauge" : "a newer shelfgauge may be needed"}`);
+  if (version !== expected) {
+    throw new Error(`unsupported ${what}version ${version}; ${version < expected ? "made by an older shelfgauge" : "a newer shelfgauge may be needed"}`);
   }
   const headerLen = (data[2] << 8) | data[3];
   if (headerLen > MAX_HEADER_LEN || data.length < 4 + headerLen + NONCE_LEN + TAG_LEN) {
@@ -133,6 +150,52 @@ export function keyHeader(manifest) {
 export async function bookKeyFromHeader(header, libraryKey, idHex) {
   const raw = await openRecord(libraryKey, "book_key", idHex, unbase64url(header.book_key));
   return aesKey(raw);
+}
+
+/**
+ * The associated data of a catalog blob: "sg-catalog", 0, version, library id (16
+ * bytes), path ("index", "c/<n>", "t/<cover id>"), 0, the plaintext header.
+ */
+export function catalogAssociatedData(version, libraryId, path, header = new Uint8Array(0)) {
+  return concat(encoder.encode("sg-catalog"), new Uint8Array([0]), u16(version), libraryId,
+    encoder.encode(path), new Uint8Array([0]), header);
+}
+
+/**
+ * The header of a catalog's index blob (authenticated only once the index opens):
+ * `{ library, key_scope, key_owner, key_id, catalog_key }`.
+ */
+export function catalogHeader(index) {
+  const header = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(catalogEnvelope(index).header));
+  if (typeof header.library !== "string" || typeof header.key_scope !== "string"
+    || typeof header.key_owner !== "string" || !Number.isInteger(header.key_id)
+    || typeof header.catalog_key !== "string") {
+    throw new Error("a bad catalog header");
+  }
+  return header;
+}
+
+/**
+ * The catalog key (an AES key) from an index header, with the library key generation
+ * (an AES key) the header names: a record of kind "catalog_key", id the library id.
+ */
+export async function catalogKeyFromHeader(header, libraryKey) {
+  const raw = await openRecord(libraryKey, "catalog_key", header.library, unbase64url(header.catalog_key));
+  return aesKey(raw);
+}
+
+/**
+ * Opens catalog blob `path` of library `libraryId` (16 bytes) with the catalog key:
+ * decrypt (the header authenticated), unpad, inflate up to `limit` bytes.
+ */
+export async function openCatalogBlob(catalogKey, libraryId, path, blob, limit) {
+  const e = catalogEnvelope(blob);
+  const plain = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: e.nonce, additionalData: catalogAssociatedData(e.version, libraryId, path, e.header) },
+    catalogKey,
+    e.ciphertext,
+  );
+  return inflate(unpad(new Uint8Array(plain)), limit);
 }
 
 /** The associated data of a record: "sg-record", version, kind, 0, id. */

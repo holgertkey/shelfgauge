@@ -131,26 +131,7 @@ pub(crate) fn configure(conn: &Connection) -> rusqlite::Result<()> {
     conn.busy_timeout(BUSY_TIMEOUT)
 }
 
-/// Folds text for full-text search, applied to indexed text and queries alike.
-///
-/// `unicode61` folds case for all scripts and Latin diacritics, but not `ё`; it is
-/// mapped to `е` here, as Russian text uses both spellings. `й` stays distinct.
-pub fn fold_for_search(text: &str) -> String {
-    text.chars()
-        .map(|c| match c {
-            'ё' => 'е',
-            'Ё' => 'Е',
-            c => c,
-        })
-        .collect()
-}
-
-/// A normalized key for sorting and de-duplicating names: lowercase, `ё` → `е`,
-/// whitespace collapsed and trimmed.
-pub fn normalize_key(text: &str) -> String {
-    let lower = fold_for_search(&text.to_lowercase());
-    lower.split_whitespace().collect::<Vec<_>>().join(" ")
-}
+pub use shelfgauge_core::fold::{fold_for_search, normalize_key};
 
 /// The smallest string greater than every string starting with `prefix`, for index
 /// range scans (`key >= prefix AND key < upper`).
