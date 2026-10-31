@@ -98,6 +98,8 @@ pub(super) fn routes(state: &HubState) -> Router<HubState> {
         .route(&state.path("/open"), get(page))
         .route(&state.path("/share"), post(share_fallback))
         .route(&state.path("/device"), get(page))
+        // The library's Showcase: its catalog, kept and searched on the device (Phase 31).
+        .route(&state.path("/showcase"), get(page))
         // Signing in with an address and a password, and redeeming an invite (Phase 30).
         .route(&state.path("/signin"), get(page))
         .route(&state.path("/invite"), get(page))
@@ -348,7 +350,7 @@ fn shell(page: &impl Template) -> Response {
         .into_response()
 }
 
-/// `GET /pair`, `GET /open`, `GET /device` and `GET /`.
+/// `GET /pair`, `GET /open`, `GET /device`, `GET /showcase` and `GET /`.
 async fn page(State(state): State<HubState>) -> Response {
     shell(&HomePage {
         base: state.path(""),

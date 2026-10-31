@@ -30,7 +30,7 @@ import * as c from "./crypto.js";
 
 const REGISTRY = "shelfgauge-reader";
 const REGISTRY_VERSION = 1;
-const ACCOUNT_VERSION = 1;
+const ACCOUNT_VERSION = 2;
 // The database of 0.18–0.20 (one paired account), deleted on the first start.
 const OLD_DB = "shelfgauge-hub";
 // The most records in one push, and the largest record the hub takes.
@@ -86,6 +86,10 @@ function accountDb(account) {
       d.createObjectStore("outbox", { keyPath: ["kind", "id"] });
       d.createObjectStore("copies", { keyPath: "publication" });
       d.createObjectStore("files", { keyPath: ["publication", "path"] });
+    }
+    if (old < 2) {
+      // The library's catalog (showcase.js): "index", "c/<n>" and "t/<cover id>".
+      d.createObjectStore("catalog");
     }
   });
 }
@@ -894,4 +898,30 @@ export async function navigatorPersist() {
   } catch (e) {
     // Not offered here.
   }
+}
+
+// ---- The library's catalog (showcase.js) --------------------------------------
+
+/** The catalog value at `key` ("index", "c/<n>", "t/<cover id>"), or null. */
+export async function catalogGet(p, key) {
+  const value = await tx(p, ["catalog"], "readonly", (t) => done(t.objectStore("catalog").get(key)));
+  return value === undefined ? null : value;
+}
+
+/** The catalog's keys. */
+export function catalogKeys(p) {
+  return tx(p, ["catalog"], "readonly", (t) => done(t.objectStore("catalog").getAllKeys()));
+}
+
+/** Writes `put` (`[[key, value]]`) and deletes `drop` (keys) in one transaction. */
+export function catalogWrite(p, put, drop = []) {
+  return tx(p, ["catalog"], "readwrite", (t) => {
+    const catalog = t.objectStore("catalog");
+    for (const key of drop) {
+      catalog.delete(key);
+    }
+    for (const [key, value] of put) {
+      catalog.put(value, key);
+    }
+  });
 }

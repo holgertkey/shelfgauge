@@ -264,6 +264,14 @@ pub fn password_rules() -> String {
     .to_string()
 }
 
+/// A name's key for sorting and merging, as the library makes it
+/// ([`shelfgauge_core::fold::normalize_key`]): what the catalog's lists of authors and
+/// series take.
+#[wasm_bindgen(js_name = normalizeKey)]
+pub fn normalize_key(text: &str) -> String {
+    shelfgauge_core::fold::normalize_key(text)
+}
+
 /// A name or handle in its stored form, or `undefined` if it breaks the hub's format
 /// (see [`shelfgauge_core::address::normalize_label`]).
 #[wasm_bindgen(js_name = normalizeLabel)]

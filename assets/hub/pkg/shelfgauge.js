@@ -698,6 +698,32 @@ export function normalizeAddress(text) {
 }
 
 /**
+ * A name's key for sorting and merging, as the library makes it
+ * ([`shelfgauge_core::fold::normalize_key`]): what the catalog's lists of authors and
+ * series take.
+ * @param {string} text
+ * @returns {string}
+ */
+export function normalizeKey(text) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_export, wasm.__wbindgen_export3);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.normalizeKey(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred2_0 = r0;
+        deferred2_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export2(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * A name or handle in its stored form, or `undefined` if it breaks the hub's format
  * (see [`shelfgauge_core::address::normalize_label`]).
  * @param {string} text

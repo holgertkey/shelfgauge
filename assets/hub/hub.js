@@ -2,8 +2,8 @@
 // password), redeeming an invite (`/invite#<secret>.<one-time key>`), pairing the
 // owner's phone (`/pair#<secret>.<account key>`, or a book link with
 // `#pair=<secret>.<key>`), the shelf of each library this browser is signed in to
-// (`/`, with a switcher, All shelves and "Open file" for book files), My account
-// (`/device`) and the reading view (`/r/<publication id>?part=<n>`) of a hub
+// (`/`, with a switcher, All shelves and "Open file" for book files), the library's
+// Showcase (`/showcase`, showcase.js), My account (`/device`) and the reading view (`/r/<publication id>?part=<n>`) of a hub
 // publication or of a book file's copy kept on this device (bookfile.js).
 //
 // Books arrive as encrypted blobs; crypto.js opens them, the WASM module
@@ -14,6 +14,7 @@
 import * as account from "./account.js";
 import * as bookfile from "./bookfile.js";
 import * as c from "./crypto.js";
+import { showcasePage } from "./showcase.js";
 import * as store from "./store.js";
 
 const SHARE_SCALE = 10000;
@@ -346,6 +347,11 @@ async function shelfPage() {
   }
   let p = await store.current();
   head.push(switcher(all, p, showingAll));
+  if (!showingAll) {
+    head.push(el("p", { class: "hub-showcase-link" },
+      el("a", { class: "button", href: `${base}/showcase` }, "Showcase"),
+      " ", el("span", { class: "muted" }, `the books of ${libraryName(p)} to get`)));
+  }
   const items = async () => {
     if (!showingAll) {
       return shelfItems(p);
@@ -1610,6 +1616,8 @@ if (route === "/pair") {
   readerPage(route.slice(3));
 } else if (route === "/device") {
   devicePage();
+} else if (route === "/showcase") {
+  showcasePage({ el, show, notice, syncAccount, libraryName, unreachable, signedOut: signedOutHelp });
 } else if (route === "/open" || new URLSearchParams(location.search).has("shared")) {
   openPage();
 } else {

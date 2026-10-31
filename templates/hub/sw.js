@@ -2,7 +2,7 @@
 // this hub's base path and asset version filled in; src/hub/shell.rs).
 //
 // Offline reading:
-// - the app's pages (`/`, `/pair`, `/r/<id>`): static per version, served from the
+// - the app's pages (`/`, `/pair`, `/showcase`, `/r/<id>`): static per version, served from the
 //   cache (every /r/<id> is the same page), so pages and files are of one version; a
 //   new version takes over only when the shelf page asks (no open book switches);
 // - the app's files: precached per version, served from the cache;
@@ -60,7 +60,7 @@ self.addEventListener("activate", (event) => {
 });
 
 const BLOB = /^\/api\/pub\/[0-9a-f]{32}\/(manifest|p\/[0-9]+|i\/[0-9]+)$/;
-const PAGE = /^\/(pair|open|device|signin|invite|r\/[0-9a-f]{32})?$/;
+const PAGE = /^\/(pair|open|device|signin|invite|showcase|r\/[0-9a-f]{32})?$/;
 // How long the manifest may take before the cached copy is used.
 const MANIFEST_WAIT_MS = 4000;
 

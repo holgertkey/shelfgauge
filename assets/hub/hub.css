@@ -182,3 +182,48 @@
   border-top: 1px solid var(--border);
   padding-top: 0.75rem;
 }
+
+/* The library's Showcase (showcase.js): the library's lists and book card. */
+.hub-showcase-link {
+  margin: 0 0 1rem;
+}
+
+.hub-showcase-search {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0 0 0.75rem;
+}
+
+.hub-showcase-search input {
+  flex: 1;
+  min-width: 0;
+}
+
+.hub-showcase-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin: 0 0 0.75rem;
+}
+
+.hub-showcase-tabs a.active {
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.hub-back {
+  margin: 0 0 0.75rem;
+}
+
+.hub-waiting {
+  margin-top: 0.75rem;
+}
+
+@media (pointer: coarse) {
+  /* One tab per finger. */
+  .hub-showcase-tabs a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+  }
+}
