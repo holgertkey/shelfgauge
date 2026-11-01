@@ -1071,7 +1071,9 @@ Phase 26: `assets/hub/` (`hub.js` pages, `store.js` IndexedDB and API calls,
   asked for. A `401` forgets the pairing and the records.
 - **Unpaired** browsers make no API call: the shelf and `/r/<id>` say "This device is
   not paired" with instructions, never content.
-- **This device** (`/device`, 0.19.1; the top bar's `device-link`, cached by the
+- **This device** (`/device`, 0.19.1; the top bar's `device-link`: a person icon in
+  the shared shell, replaced by `hub.js` with the current account's initials on a
+  palette color picked by a hash of the account id, `.avatar` of the library; cached by the
   worker like the other pages; the reading view has neither it nor the home link —
   its sidebar's Bookshelf leads back): the library names from the shelf items' `instance`,
   the device name (`GET /api/devices`, the `current` entry, opened with the account

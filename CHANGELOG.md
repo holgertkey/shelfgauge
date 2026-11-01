@@ -24,6 +24,10 @@ Build numbers (`+NNN`) do not get their own sections.
   the library's Authors | Folders switch, instead of the Showcase button on the shelf
   (only Bookshelf with all shelves shown at once). The Showcase's lists (Recent,
   Authors, Series, Genres, All books) are tabs of the same style.
+- **My account** in the hub reader's top bar shows the account's initials on a color
+  of the profile palette, as a profile in the library (the color stays the same for
+  an account on every device), instead of a phone icon; a person icon before the
+  page knows the account and on a device not signed in.
 
 ### Fixed
 

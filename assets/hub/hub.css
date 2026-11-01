@@ -90,7 +90,20 @@
   font-size: 0.85rem;
 }
 
-/* The top bar's way to "This device", at its right end. */
+/* My account in the top bar: the account's initials on its color (hub.js,
+   showAccountAvatar), as the library's profile avatar; the button keeps the size it
+   has with the person icon. */
+.device-link:has(.avatar) {
+  padding: 2px;
+  border-radius: 50%;
+}
+
+.device-link .avatar {
+  width: 26px;
+  height: 26px;
+}
+
+/* The top bar's way to My account, at its right end. */
 .topbar:not(:has(.search)) > .theme-select {
   margin-left: auto;
 }

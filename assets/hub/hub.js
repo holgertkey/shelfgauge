@@ -1398,6 +1398,49 @@ async function findAccount(id) {
   return null;
 }
 
+/** The profile colors of style.css (`.avatar.pc-0` …). */
+const AVATAR_COLORS = 8;
+
+/**
+ * Up to two initials of `name`: the first letter or digit of its first two words,
+ * uppercased, "?" without any (`profiles::initials` of the library).
+ */
+function initials(name) {
+  const letters = String(name || "")
+    .split(/\s+/)
+    .map((word) => (word.match(/[\p{L}\p{N}]/u) || [""])[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+  return letters || "?";
+}
+
+/** A color of the palette for account id `account`: the same on every device. */
+function avatarColor(account) {
+  let hash = 0x811c9dc5;
+  for (const ch of String(account)) {
+    hash = Math.imul(hash ^ ch.codePointAt(0), 0x01000193) >>> 0;
+  }
+  return hash % AVATAR_COLORS;
+}
+
+/**
+ * The top bar's link to My account: the person icon of the page (the shell is the
+ * same for everyone) becomes the initials of the current account on its color.
+ */
+async function showAccountAvatar() {
+  const link = document.querySelector(".device-link");
+  const p = link && await store.current();
+  if (!p) {
+    return;
+  }
+  const label = `My account: ${p.name}@${p.handle}`;
+  link.title = label;
+  link.setAttribute("aria-label", label);
+  link.replaceChildren(el("span", { class: `avatar pc-${avatarColor(p.account)}`, "aria-hidden": "true" }, initials(p.name)));
+}
+
 /** The book key of a manifest of account `p` from its header, syncing once for a newer key. */
 async function bookKey(p, id, sealed) {
   let header;
@@ -1624,6 +1667,7 @@ await Promise.race([
   store.dropOldState().catch((e) => console.error(e)),
   new Promise((resolve) => setTimeout(resolve, 2000)),
 ]);
+showAccountAvatar().catch((e) => console.error(e));
 if (route === "/pair") {
   pairPage();
 } else if (route === "/signin") {
