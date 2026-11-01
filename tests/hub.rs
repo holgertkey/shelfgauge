@@ -2547,7 +2547,7 @@ async fn the_service_worker_and_manifest_make_the_reader_installable() {
             "{page}"
         );
         // The shelf's top bar leads to This device; the reading view has neither that
-        // nor the home link (its sidebar has My books).
+        // nor the home link (its sidebar has Bookshelf).
         assert!(page.contains(r#"class="icon-button home-link""#), "{page}");
         assert!(
             page.contains(r#"class="icon-button device-link""#),

@@ -589,12 +589,23 @@ function emptyShowcase() {
   return nodes;
 }
 
+/** The page tabs, Showcase active; its tab goes to the Showcase's start in place. */
+function showcaseTabs(title) {
+  const nodes = ui.pageTabs("showcase", title === undefined ? {} : { title });
+  const tab = nodes[nodes.length - 1].querySelector(".active");
+  tab.setAttribute("href", url({}));
+  tab.dataset.showcase = "";
+  return nodes;
+}
+
 function heading() {
   const name = ui.libraryName(p);
-  const updated = shown && shown.generation
-    ? ` Updated ${new Date(shown.generation).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" })}.`
+  const day = shown && shown.generation
+    ? new Date(shown.generation).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" })
     : "";
-  const nodes = [ui.el("h1", {}, "Showcase"), ui.el("p", { class: "muted" }, `The books of ${name}: get any of them onto your shelf.${updated}`)];
+  // Some locales end the date with a dot of their own ("1 ноября 2026 г."): no second one.
+  const updated = day ? ` Updated ${day}${day.endsWith(".") ? "" : "."}` : "";
+  const nodes = [...showcaseTabs(), ui.el("p", { class: "muted" }, `The books of ${name}: get any of them onto your shelf.${updated}`)];
   const online = onlineLine();
   if (online) {
     nodes.push(online);
@@ -645,8 +656,9 @@ function render() {
     return;
   }
   if (q.has("book")) {
+    // The card has its own title (the book's).
     const back = ui.el("p", { class: "hub-back" }, link("‹ Showcase", {}));
-    ui.show(back, ...bookCard(q.get("book")));
+    ui.show(...showcaseTabs(null), back, ...bookCard(q.get("book")));
     return;
   }
   const nodes = heading();
@@ -742,7 +754,7 @@ export async function showcasePage(helpers) {
     ui.show(...ui.signedOut());
     return;
   }
-  ui.show(ui.el("h1", {}, "Showcase"), ui.el("p", { class: "muted", role: "status" }, "Opening…"));
+  ui.show(...showcaseTabs(), ui.el("p", { class: "muted", role: "status" }, "Opening…"));
   await loadWasm();
   shown = await localCatalog(p);
   await readAccount();

@@ -601,7 +601,7 @@ Screen): Safari deletes the data of sites not visited for a week, which would si
 browser out and drop its copies, while a home screen app keeps them (your marks are
 safe in the library either way; sign in again if it happens).
 
-**My account** (the button at the right of the top bar on My books) shows each
+**My account** (the button at the right of the top bar on the Bookshelf) shows each
 account's address and devices (**Remove**; a new device is announced on the others),
 **Change password**, **Change name** and **Leave library** (these ask the current
 password), what the phone keeps offline (**Remove downloaded books** frees the space),
@@ -613,7 +613,7 @@ handing the browser to someone else). A forgotten password: ask the library's ad
 **Book files** (`.sgbook`): instead of putting a book on the hub, **Download book
 file** on the book card writes it into one file that you pass by any means
 (messenger, e-mail, USB, a synced folder) and open in the reader with **Open file** on
-My books, or by dropping it on the page. The hub keeps no copy; marks and position
+the Bookshelf, or by dropping it on the page. The hub keeps no copy; marks and position
 still sync through it. The file opens on the devices of every member of the library,
 also without a connection, and is useless to anyone else. An installed reader opens it
 by double-click on a computer with Chrome or Edge, and through **Share** on an Android
@@ -623,7 +623,7 @@ never exported. Each download is a new copy; files downloaded earlier keep openi
 from the phone; opening the file again puts the book back.
 
 **Your library on the phone** (the **Showcase**): the members of a library browse and
-search a catalog of its books in the reader (**Showcase** on My books), at home and
+search a catalog of its books in the reader (the **Showcase** tab), at home and
 away, also offline, and get any of them with **Get this book**. Only the books of the
 folders you open for it are there; every folder is closed until you open it. In the
 library's sidebar, in **Folders**, admins of a library on a hub have a checkbox next to

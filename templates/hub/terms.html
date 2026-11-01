@@ -18,6 +18,6 @@
   <p>To report abuse or ask for a book to be taken down:
     {% match contact_href %}{% when Some with (href) %}<a href="{{ href }}" rel="noopener">{{ contact }}</a>{% when None %}{{ contact }}{% endmatch %}</p>
   {%- endif %}
-  <p><a href="{{ base }}/">My books</a></p>
+  <p><a href="{{ base }}/">Bookshelf</a></p>
 </main>
 {% endblock %}

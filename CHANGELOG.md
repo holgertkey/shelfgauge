@@ -17,6 +17,19 @@ Build numbers (`+NNN`) do not get their own sections.
   the text size and the screen; the book's total is an estimate that settles as the
   parts are read.
 
+### Changed
+
+- **Bookshelf and Showcase tabs** in the hub reader: the shelf (called Bookshelf now,
+  My books before) and the Showcase are two tabs at the top of the page, styled as
+  the library's Authors | Folders switch, instead of the Showcase button on the shelf
+  (only Bookshelf with all shelves shown at once). The Showcase's lists (Recent,
+  Authors, Series, Genres, All books) are tabs of the same style.
+
+### Fixed
+
+- The Showcase's "Updated" date no longer ends with two dots in languages whose dates
+  end with one of their own (Russian: "1 ноября 2026 г.").
+
 ## [0.22.0] - 2026-10-31
 
 Libraries and hubs of 0.21.0 and 0.22.0 work with each other in any order; the

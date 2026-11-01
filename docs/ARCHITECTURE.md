@@ -1073,7 +1073,7 @@ Phase 26: `assets/hub/` (`hub.js` pages, `store.js` IndexedDB and API calls,
   not paired" with instructions, never content.
 - **This device** (`/device`, 0.19.1; the top bar's `device-link`, cached by the
   worker like the other pages; the reading view has neither it nor the home link —
-  its sidebar's My books leads back): the library names from the shelf items' `instance`,
+  its sidebar's Bookshelf leads back): the library names from the shelf items' `instance`,
   the device name (`GET /api/devices`, the `current` entry, opened with the account
   key), last sync (`state["synced_at"]`, written when a pull reaches the hub's newest
   record) and the outbox count, local counts (`store.offline()`, book file copies)
@@ -1397,7 +1397,9 @@ and away, and the circles of libraries later.
   and an `updated_at` later than the request's, so it wins the devices' merge. A
   `cover_request` gets JPEG thumbnails 120 px wide (the `image` crate, decoding
   limits, only covers of books on the Showcase), deleted with their book's leaving.
-- **Reader** (`assets/hub/showcase.js`, `/showcase`): the catalog kept per account in
+- **Reader** (`assets/hub/showcase.js`, `/showcase`; the shelf and the Showcase share
+  the page tabs Bookshelf | Showcase, `pageTabs` in `hub.js`, the library's `.modes`
+  switch, with only Bookshelf on all shelves at once): the catalog kept per account in
   IndexedDB (account database v2, store `catalog`), only changed chunks fetched, the
   WASM `LibraryCatalog` checks and searches; a chunk that does not match its index
   means the library is uploading: the kept catalog stays. Views in the library's

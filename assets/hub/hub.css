@@ -183,10 +183,13 @@
   padding-top: 0.75rem;
 }
 
-/* The library's Showcase (showcase.js): the library's lists and book card. */
-.hub-showcase-link {
+/* The page tabs Bookshelf | Showcase (hub.js, pageTabs): the library's Authors |
+   Folders switch (`.modes`, style.css) at the top of the page. */
+.hub-tabs {
   margin: 0 0 1rem;
 }
+
+/* The library's Showcase (showcase.js): the library's lists and book card. */
 
 .hub-showcase-search {
   display: flex;
@@ -199,16 +202,33 @@
   min-width: 0;
 }
 
+/* The Showcase's lists: the same tabs, a little smaller, as the reader's sidebar
+   tabs (reader.css); a narrow screen wraps them. */
 .hub-showcase-tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.25rem 1rem;
+  gap: 0.25rem;
   margin: 0 0 0.75rem;
 }
 
-.hub-showcase-tabs a.active {
-  font-weight: 600;
+.hub-showcase-tabs a {
+  flex: 1 1 auto;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+  text-align: center;
+  border-radius: var(--radius);
+}
+
+.hub-showcase-tabs a:hover {
   text-decoration: none;
+  background: var(--hover);
+}
+
+.hub-showcase-tabs a.active {
+  color: var(--fg);
+  font-weight: 600;
+  background: var(--active-bg);
 }
 
 .hub-back {
@@ -221,9 +241,11 @@
 
 @media (pointer: coarse) {
   /* One tab per finger. */
+  .hub-tabs a,
   .hub-showcase-tabs a {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     min-height: 2.75rem;
   }
 }

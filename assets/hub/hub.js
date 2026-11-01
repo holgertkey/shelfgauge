@@ -131,7 +131,7 @@ async function pairPage() {
   history.replaceState(null, "", location.pathname);
   if (!code) {
     const p = await store.current();
-    show(...(p ? [el("h1", {}, "This device is signed in"), el("p", {}, el("a", { href: `${base}/` }, "My books"))] : signedOutHelp()));
+    show(...(p ? [el("h1", {}, "This device is signed in"), el("p", {}, el("a", { href: `${base}/` }, "Bookshelf"))] : signedOutHelp()));
     return;
   }
   show(el("h1", {}, "Pairing this device…"));
@@ -225,6 +225,29 @@ function switcher(all, p, showingAll) {
   return el("div", { class: "hub-libraries" }, select);
 }
 
+/**
+ * The page's title for screen readers and the tabs Bookshelf | Showcase above the
+ * page (styled as the library's Authors | Folders switch, `.modes`). `current` is
+ * "shelf" or "showcase"; without `showcase` (all shelves at once: the Showcase is a
+ * library's) only Bookshelf. `title` null leaves the title out (a page with its own).
+ */
+function pageTabs(current, { showcase = true, title = current === "shelf" ? "Bookshelf" : "Showcase" } = {}) {
+  const nav = el("nav", { class: "modes hub-tabs", "aria-label": "Pages" });
+  const tabs = [["shelf", "Bookshelf", `${base}/`]];
+  if (showcase) {
+    tabs.push(["showcase", "Showcase", `${base}/showcase`]);
+  }
+  for (const [name, text, href] of tabs) {
+    const a = el("a", { href }, text);
+    if (name === current) {
+      a.className = "active";
+      a.setAttribute("aria-current", "page");
+    }
+    nav.append(a);
+  }
+  return title === null ? [nav] : [el("h1", { class: "visually-hidden" }, title), nav];
+}
+
 function renderShelf(items, status, { head = [], showLibrary = false } = {}) {
   const reading = items
     .filter((i) => i.position && i.position.progress < 1000)
@@ -232,7 +255,7 @@ function renderShelf(items, status, { head = [], showLibrary = false } = {}) {
   const rest = items
     .filter((i) => !reading.includes(i))
     .sort((a, b) => (a.title || "").localeCompare(b.title || ""));
-  const nodes = [el("h1", {}, "My books"), ...head.filter(Boolean)];
+  const nodes = [...pageTabs("shelf", { showcase: !showLibrary }), ...head.filter(Boolean)];
   if (status) {
     nodes.push(el("p", { class: "muted hub-sync", role: "status" }, status));
   }
@@ -347,11 +370,6 @@ async function shelfPage() {
   }
   let p = await store.current();
   head.push(switcher(all, p, showingAll));
-  if (!showingAll) {
-    head.push(el("p", { class: "hub-showcase-link" },
-      el("a", { class: "button", href: `${base}/showcase` }, "Showcase"),
-      " ", el("span", { class: "muted" }, `the books of ${libraryName(p)} to get`)));
-  }
   const items = async () => {
     if (!showingAll) {
       return shelfItems(p);
@@ -879,7 +897,7 @@ async function invitePage() {
 function readerMessage(title, ...lines) {
   const text = document.querySelector("article.reader .text");
   text.replaceChildren(el("h1", {}, title), ...lines.map((line) => el("p", {}, line)));
-  text.append(el("p", {}, el("a", { href: `${base}/` }, "My books")));
+  text.append(el("p", {}, el("a", { href: `${base}/` }, "Bookshelf")));
 }
 
 /** The opened publication: the WASM reader plus what it needs to fetch more. */
@@ -1445,7 +1463,7 @@ async function readerPage(id) {
     if (!found.sealed) {
       const fileItem = (await store.shelf(found.p)).find((i) => i.publication === id && i.kind === "file");
       if (fileItem) {
-        readerMessage(`Open the book file of “${fileItem.title}”`, "This book is on your shelf as a book file: the hub has no copy. Open the file on this device with Open file on My books.");
+        readerMessage(`Open the book file of “${fileItem.title}”`, "This book is on your shelf as a book file: the hub has no copy. Open the file on this device with Open file on the Bookshelf.");
         return;
       }
       readerMessage("This book is no longer on the hub", "It was not opened for a long time, or the library deleted it. Ask the library to send it again.");
@@ -1617,7 +1635,7 @@ if (route === "/pair") {
 } else if (route === "/device") {
   devicePage();
 } else if (route === "/showcase") {
-  showcasePage({ el, show, notice, syncAccount, libraryName, unreachable, signedOut: signedOutHelp });
+  showcasePage({ el, show, notice, syncAccount, libraryName, unreachable, signedOut: signedOutHelp, pageTabs });
 } else if (route === "/open" || new URLSearchParams(location.search).has("shared")) {
   openPage();
 } else {
