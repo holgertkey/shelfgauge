@@ -11,6 +11,8 @@
 {%- endblock %}
 {#- The way back is the sidebar's "Bookshelf" (and the system's back). #}
 {% block home %}{% endblock %}
+{#- The outline logo among the reader's outline icons (a wide screen only). #}
+{% block logo %}<svg class="icon brand-logo" aria-hidden="true"><use href="#i-logo"></use></svg>{% endblock %}
 {% block device %}{% endblock %}
 {% block search %}
   <form class="search find-form" method="get" role="search" data-href="" data-part="1">

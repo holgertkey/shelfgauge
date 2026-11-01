@@ -27,10 +27,13 @@
 {% include "partials/symbols.html" %}
 <header class="topbar">
   {%- block toggle %}{% endblock %}
-  <a class="brand" href="{{ base }}/">Shelfgauge</a>
+  {#- The app's logo (a bookshelf) with the name; on a phone the logo alone (the name is
+      hidden there), both leading to the Bookshelf. In color next to the colored
+      avatar; the reading view has the outline one of its other icons. #}
+  <a class="brand" href="{{ base }}/">{% block logo %}{% include "hub/logo.html" %}{% endblock %}Shelfgauge</a>
   {%- block home %}
   <a class="icon-button home-link" href="{{ base }}/" title="Bookshelf" aria-label="Bookshelf">
-    <svg class="icon" aria-hidden="true"><use href="#i-home"></use></svg>
+    {% include "hub/logo.html" %}
   </a>
   {%- endblock %}
   {%- block search %}{% endblock %}

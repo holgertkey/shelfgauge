@@ -261,7 +261,7 @@ function renderShelf(items, status, { head = [], showLibrary = false } = {}) {
   }
   nodes.push(openFileForm());
   if (!items.length) {
-    nodes.push(el("p", { class: "hint" }, "No books yet. Open a book link your library sent you, or a book file with Open file. The library's admin sends books with Read on phone on a book's page."));
+    nodes.push(el("p", { class: "hint" }, "No books yet. Open a book link your library sent you, or a book file (.sgbook) downloaded from your library with Open file, the folder at the top. The library's admin sends books with Read on phone on a book's page."));
   }
   const item = (i) => {
     const li = bookItem(i);
@@ -410,7 +410,11 @@ async function shelfPage() {
 /** The status line of opening a file (kept across shelf redraws). */
 let fileStatus = null;
 
-/** "Open file": a button for the file picker (and drag and drop on the page). */
+/**
+ * "Open file": a button in the top bar of the Bookshelf, next to My account, for the
+ * file picker (and drag and drop on the page); on the page the picker's input and the
+ * status line of opening a file (empty, so hidden, until a file is opened).
+ */
 function openFileForm() {
   const input = el("input", { type: "file", accept: bookfile.ACCEPT, hidden: "", class: "hub-file-input" });
   input.addEventListener("change", () => {
@@ -419,15 +423,32 @@ function openFileForm() {
     }
     input.value = "";
   });
-  const button = el("button", { type: "button", class: "hub-open-file" }, "Open file");
-  button.addEventListener("click", () => input.click());
+  const account = document.querySelector(".topbar .device-link");
+  if (account && !document.querySelector(".topbar .hub-open-file")) {
+    const title = "Open file: a book file (.sgbook) downloaded from your library";
+    const button = el("button", { type: "button", class: "icon-button hub-open-file", title, "aria-label": "Open file" });
+    button.append(icon("i-open"));
+    // The input of the shelf drawn last.
+    button.addEventListener("click", () => document.querySelector(".hub-file-input")?.click());
+    account.before(button);
+  }
   const status = el("p", { class: "hub-file-status", role: "status" });
   if (fileStatus) {
     status.textContent = fileStatus.text;
     status.classList.toggle("error", fileStatus.error);
   }
-  return el("div", { class: "hub-open" }, button, input,
-    el("span", { class: "muted" }, "a book file (.sgbook) downloaded from your library"), status);
+  return el("div", { class: "hub-open" }, input, status);
+}
+
+/** An icon of the page's symbols (partials/symbols.html). */
+function icon(id) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "icon");
+  svg.setAttribute("aria-hidden", "true");
+  const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+  use.setAttribute("href", `#${id}`);
+  svg.append(use);
+  return svg;
 }
 
 function setFileStatus(text, error = false) {
@@ -1506,7 +1527,7 @@ async function readerPage(id) {
     if (!found.sealed) {
       const fileItem = (await store.shelf(found.p)).find((i) => i.publication === id && i.kind === "file");
       if (fileItem) {
-        readerMessage(`Open the book file of “${fileItem.title}”`, "This book is on your shelf as a book file: the hub has no copy. Open the file on this device with Open file on the Bookshelf.");
+        readerMessage(`Open the book file of “${fileItem.title}”`, "This book is on your shelf as a book file: the hub has no copy. Open the file on this device with Open file at the top of the Bookshelf.");
         return;
       }
       readerMessage("This book is no longer on the hub", "It was not opened for a long time, or the library deleted it. Ask the library to send it again.");

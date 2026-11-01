@@ -64,22 +64,50 @@
   color: var(--muted);
 }
 
-/* "Open file" for book files (.sgbook) on the shelf. */
-.hub-open {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.25rem 0.75rem;
-  margin: 0 0 1rem;
+/* The app's logo in the top bar: before the name, alone on a phone (base.html); in
+   color (logo.html) with the books in the theme's profile colors, as the avatar. */
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
-.hub-open .muted {
-  font-size: 0.9rem;
+.brand-logo {
+  flex: none;
+  width: 1.4em;
+  height: 1.4em;
+}
+
+/* The outline logo of the reading view: the size of its other icons, a little larger. */
+.icon.brand-logo {
+  width: 1.25em;
+  height: 1.25em;
+}
+
+.logo-book-0 {
+  fill: var(--pcolor-0);
+}
+
+.logo-book-1 {
+  fill: var(--pcolor-1);
+}
+
+.logo-book-2 {
+  fill: var(--pcolor-7);
+}
+
+.logo-shelf {
+  fill: currentColor;
+}
+
+/* "Open file" for book files (.sgbook): a button in the Bookshelf's top bar (hub.js);
+   on the page only the status line of opening one. */
+.hub-open {
+  margin: 0;
 }
 
 .hub-file-status {
-  flex-basis: 100%;
-  margin: 0;
+  margin: 0 0 1rem;
 }
 
 .hub-file-status:empty {
@@ -110,8 +138,19 @@
 
 @media (max-width: 48rem) {
   /* The theme select is hidden there. */
-  .topbar:not(:has(.search)) > .device-link {
+  .topbar:not(:has(.search)) > .device-link,
+  .topbar:not(:has(.search)) > .hub-open-file {
     margin-left: auto;
+  }
+
+  .topbar > .hub-open-file + .device-link {
+    margin-left: 0;
+  }
+
+  /* The name with its logo is hidden there (style.css; this file's inline-flex comes
+     later): the home link shows the logo alone. */
+  .brand {
+    display: none;
   }
 }
 

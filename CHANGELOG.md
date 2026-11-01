@@ -28,6 +28,11 @@ Build numbers (`+NNN`) do not get their own sections.
   of the profile palette, as a profile in the library (the color stays the same for
   an account on every device), instead of a phone icon; a person icon before the
   page knows the account and on a device not signed in.
+- **The app's logo** (its icon, a bookshelf) in the hub reader's top bar: before the
+  name on a wide screen, alone on a phone instead of the house icon; it leads to the
+  Bookshelf. In color, the books in the theme's profile colors as the avatar's; an
+  outline one in the reading view, among its other icons. **Open file** is a button with a folder icon in the Bookshelf's top bar,
+  next to My account, instead of a button with a line of text above the books.
 
 ### Fixed
 

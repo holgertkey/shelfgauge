@@ -1327,7 +1327,7 @@ A publication in one file (decisions in `.debug/docs/sg-v2devplan.md`, Phase 27)
   shelf matches copies by content key: a book with a copy opens it, a `file` item
   without one asks for the file. One copy per book: opening another file of the same
   book replaces it. Removing the book from the shelf deletes the copy.
-- **Entry points**: "Open file" and drag and drop on the shelf; `/open` with
+- **Entry points**: "Open file" (a button in the Bookshelf's top bar) and drag and drop on the shelf; `/open` with
   `file_handlers` + `launchQueue` (installed app on desktop Chromium); `share_target`
   `POST /share`, which the Service Worker answers (the file kept in the cache
   `shelfgauge-shared`, `303` to `/open?shared=1`); without a worker the hub answers
