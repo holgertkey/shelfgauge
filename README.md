@@ -204,8 +204,11 @@ WantedBy=multi-user.target
   and a status line how much of the book you have read (both can be turned off in
   **Aa**). In the status line a thin line maps the whole book: ticks for chapters and
   bookmarks, and a dot for where you are. Pointing at the line shows the place (percentage and chapter); a click goes
-  there (on a touch screen, tap twice), and Back returns. `Esc` or `f`
-  leaves it, and it stays on for the next book until you do.
+  there (on a touch screen, tap twice), and Back returns. While the top bar is shown,
+  the status line gives page numbers instead, such as `245 / 1250, 1 / 34`: the page of
+  the book and of the chapter (only the book's in a book without chapters), for the
+  current text size and screen. The book's total is an estimate that settles as you
+  read on. `Esc` or `f` leaves it, and it stays on for the next book until you do.
 - **Search in the book**: while reading, the search field in the top bar (`/` or `s`)
   finds a word or phrase anywhere in the open book, as you type (at least 2
   characters); the results appear in a new sidebar tab marked with a magnifier and

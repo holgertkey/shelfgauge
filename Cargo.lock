@@ -2105,7 +2105,7 @@ dependencies = [
 
 [[package]]
 name = "shelfgauge"
-version = "0.22.0+002"
+version = "0.22.0+007"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2158,7 +2158,7 @@ dependencies = [
 
 [[package]]
 name = "shelfgauge-core"
-version = "0.22.0+002"
+version = "0.22.0+007"
 dependencies = [
  "argon2",
  "hmac",
@@ -2173,7 +2173,7 @@ dependencies = [
 
 [[package]]
 name = "shelfgauge-wasm"
-version = "0.22.0+002"
+version = "0.22.0+007"
 dependencies = [
  "askama",
  "base64",

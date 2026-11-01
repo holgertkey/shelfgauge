@@ -728,6 +728,33 @@ mark.sg-find.current {
   text-align: right;
 }
 
+/* Page numbers (reader.js): instead of the track and the figure while the top bar is
+   shown. Kept apart for the `:has` rule: a browser without it would drop the list. */
+.status-pages {
+  display: none;
+  flex: none;
+  margin: 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+:root.topbar-peek .status-line.has-pages :is(.track, .status-progress),
+:root.page-fits .status-line.has-pages :is(.track, .status-progress) {
+  display: none;
+}
+
+:root.topbar-peek .status-line.has-pages .status-pages,
+:root.page-fits .status-line.has-pages .status-pages {
+  display: inline;
+}
+
+:root:has(.topbar :focus-visible) .status-line.has-pages :is(.track, .status-progress) {
+  display: none;
+}
+
+:root:has(.topbar :focus-visible) .status-line.has-pages .status-pages {
+  display: inline;
+}
+
 /* At the top of the page the top bar is shown over the content (it is fixed in focus
    mode): keep its height free, so the page starts as it does outside focus mode. */
 :root.reading-focus .main {

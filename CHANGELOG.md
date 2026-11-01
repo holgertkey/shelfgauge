@@ -8,6 +8,15 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+### Added
+
+- **Page numbers** in the reader, the library's and the hub's: while the top bar is
+  shown (a tap in the middle of the page, a scroll up), the status line gives the
+  page of the book and of the chapter, such as `245 / 1250, 1 / 34`, instead of the
+  track and the percentage (only the book's in a book without chapters). Pages follow
+  the text size and the screen; the book's total is an estimate that settles as the
+  parts are read.
+
 ## [0.22.0] - 2026-10-31
 
 Libraries and hubs of 0.21.0 and 0.22.0 work with each other in any order; the

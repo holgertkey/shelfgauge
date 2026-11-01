@@ -144,6 +144,14 @@
     return { start, end };
   }
 
+  // The top of the readable area while focus mode hides the top bar: below the running
+  // head (fixed, so the same whether the bar is shown). Page numbers count pages of
+  // this height.
+  function readingTop() {
+    const head = document.querySelector(".running-head");
+    return (head ? Math.max(head.getBoundingClientRect().bottom, 0) : 0) + 4;
+  }
+
   // The top of the readable area: below the top bar, or below the running head while
   // focus mode hides the bar (its box may still be sliding away).
   function topLimit() {
@@ -155,8 +163,7 @@
         !root.classList.contains("topbar-peek") &&
         !root.classList.contains("page-fits"))
     ) {
-      const head = document.querySelector(".running-head");
-      return (head ? Math.max(head.getBoundingClientRect().bottom, 0) : 0) + 4;
+      return readingTop();
     }
     return Math.max(top.getBoundingClientRect().bottom, 0) + 4;
   }
@@ -2257,6 +2264,13 @@
   // `?progress=`. On a touch screen the first tap only shows the place. A part of notes
   // only comes after the main text: 100 %.
   const SCALE = 10000;
+  // Page counts of the parts read, per book and layout (localStorage), for the newest
+  // books and layouts.
+  const PAGES_KEY = "shelfgauge-pages";
+  const PAGES_BOOKS = 50;
+  const PAGES_LAYOUTS = 4;
+  // Parts shorter than this (1 % of the main text) do not set the density of the rest.
+  const PAGES_MIN_SHARE = SCALE / 100;
   let updateStatus = () => {};
   let drawBookmarks = () => {};
 
@@ -2286,6 +2300,9 @@
     let fill = null;
     let point = null;
 
+    // The last leaf block of the main text in the part.
+    let lastMain = null;
+
     // Characters of the main text before each leaf block of the part (built lazily).
     function counts() {
       if (!before) {
@@ -2294,6 +2311,7 @@
           if (!leaf.closest(".notes")) {
             before.set(leaf, total);
             total += leaf.textContent.length;
+            lastMain = leaf;
           }
         }
       }
@@ -2340,6 +2358,251 @@
           fill.style.width = `${value / 100}%`;
         }
       }
+      showPages(value);
+    }
+
+    // ---------- Page numbers ----------
+
+    // While the top bar is shown, the status line shows page numbers instead of the
+    // track and the figure (reader.css), centered: "245 / 1250, 1 / 34", the page of
+    // the book and of the chapter (the chapters of the track's ticks; none in a book
+    // without them).
+    // A page is a turn (`turnPage`): the readable height below the running head less
+    // a line. Pages of this part are counted from the layout. Those of the rest of
+    // the book are estimated: the parts read before (with the same layout) are kept
+    // on the device with their page counts, the others get the mean density of
+    // those. So the numbers go on from part to part as they are read.
+    const pagesLine = document.createElement("span");
+    pagesLine.className = "status-pages";
+    line.querySelector(".bar").append(pagesLine);
+    const ticks = track
+      ? Array.from(track.querySelectorAll(".tick.chapter"), (tick) => ({
+        at: Number(tick.dataset.at),
+        title: tick.dataset.title || "",
+      }))
+      : [];
+    const bookKey = (track && track.dataset.href) || window.location.pathname;
+    let stored = null;
+
+    // The layout pages depend on.
+    function layoutKey(step) {
+      const style = getComputedStyle(text);
+      const width = Math.round(text.getBoundingClientRect().width);
+      return `${Math.round(step)}|${width}|${style.fontFamily}|${style.fontSize}|${style.lineHeight}`;
+    }
+
+    // The parts of this book with page counts for `layout`, this one (`pages`) included,
+    // as `[start, end, pages]` in book order; saved when it changes.
+    function partPagesList(layout, pages) {
+      if (stored && stored.layout === layout && stored.pages === pages) {
+        return stored.list;
+      }
+      let all = {};
+      try {
+        all = JSON.parse(localStorage.getItem(PAGES_KEY) || "{}") || {};
+      } catch (e) {
+        all = {};
+      }
+      const time = Date.now();
+      const book = all[bookKey] || { layouts: {} };
+      const entry = book.layouts[layout] || { parts: {} };
+      for (const key of Object.keys(entry.parts)) {
+        const [s, e] = key.split("-").map(Number);
+        // Another split of the book: its parts over this one go.
+        if (s < end && e > start) {
+          delete entry.parts[key];
+        }
+      }
+      entry.parts[`${start}-${end}`] = pages;
+      entry.time = time;
+      book.layouts[layout] = entry;
+      book.time = time;
+      book.layouts = newest(book.layouts, PAGES_LAYOUTS);
+      all[bookKey] = book;
+      all = newest(all, PAGES_BOOKS);
+      try {
+        localStorage.setItem(PAGES_KEY, JSON.stringify(all));
+      } catch (e) {
+        // Without storage only this part is counted.
+      }
+      const list = Object.entries(entry.parts)
+        .map(([key, count]) => [...key.split("-").map(Number), Number(count)])
+        .filter(([s, e, count]) => e > s && count > 0)
+        .sort((a, b) => a[0] - b[0]);
+      stored = { layout, pages, list };
+      return list;
+    }
+
+    // The `limit` entries of `map` with the latest `time`.
+    function newest(map, limit) {
+      const entries = Object.entries(map);
+      if (entries.length <= limit) {
+        return map;
+      }
+      entries.sort((a, b) => (b[1].time || 0) - (a[1].time || 0));
+      return Object.fromEntries(entries.slice(0, limit));
+    }
+
+    // Pages per share of the parts counted, for the rest of the book. Short parts
+    // (front matter: a title page, a dedication) are sparse and would make the book
+    // look several times longer: only parts of at least `PAGES_MIN_SHARE` count once
+    // there is one.
+    function meanDensity(list) {
+      const large = list.filter(([s, e]) => e - s >= PAGES_MIN_SHARE);
+      const used = large.length ? large : list;
+      const shares = used.reduce((sum, [s, e]) => sum + e - s, 0);
+      return used.reduce((sum, [, , count]) => sum + count, 0) / shares;
+    }
+
+    // The pages before `share` of the book: those of the counted parts, the mean
+    // density of them elsewhere.
+    function pagesTo(share, list, density) {
+      let pages = 0;
+      let covered = 0;
+      for (const [s, e, count] of list) {
+        if (e <= share) {
+          pages += count;
+          covered += e - s;
+        } else if (s < share) {
+          pages += (count * (share - s)) / (e - s);
+          covered += share - s;
+        }
+      }
+      return pages + density * Math.max(share - covered, 0);
+    }
+
+    // The leaf before the title of each chapter (tick) in this part, by tick index
+    // (null for a chapter at the very start of the main text here); built once.
+    let chapterLeaves = null;
+
+    // The title of chapter `tick` in this part: the title at its share of the text, its
+    // title text preferred (shares are rounded); else the block there.
+    function chapterElement(tick) {
+      const map = counts();
+      let found = null;
+      let best = Infinity;
+      for (const title of titles) {
+        const leaf = Array.from(title.querySelectorAll("[id]")).find((el) => map.has(el));
+        if (!leaf) {
+          continue;
+        }
+        const at = start + ((end - start) * map.get(leaf)) / total;
+        const distance = Math.abs(at - tick.at) - (titleText(title) === tick.title ? 1 : 0);
+        if (Math.abs(at - tick.at) <= 2 && distance < best) {
+          best = distance;
+          found = title;
+        }
+      }
+      return found || blockAt(tick.at);
+    }
+
+    function partChapters() {
+      if (!chapterLeaves) {
+        chapterLeaves = new Map();
+        const map = counts();
+        const main = leaves().filter((leaf) => map.has(leaf));
+        ticks.forEach((tick, index) => {
+          if (tick.at < start || tick.at >= end) {
+            return;
+          }
+          const el = chapterElement(tick);
+          const leaf = el && (map.has(el) ? el : main.find((l) => el.contains(l)));
+          const at = leaf ? main.indexOf(leaf) : -1;
+          if (at >= 0) {
+            chapterLeaves.set(index, at > 0 ? main[at - 1] : null);
+          }
+        });
+      }
+      return chapterLeaves;
+    }
+
+    function showPages(value) {
+      const label = value === null || !(end > start) || !total ? "" : pageLabel();
+      if (pagesLine.textContent !== label) {
+        pagesLine.textContent = label;
+      }
+      line.classList.toggle("has-pages", label !== "");
+    }
+
+    function pageLabel() {
+      const top = readingTop();
+      const bottom = bottomLimit();
+      const lineHeight = parseFloat(getComputedStyle(text).lineHeight) || 24;
+      const step = bottom - top - lineHeight;
+      if (!(step > lineHeight)) {
+        return "";
+      }
+      counts();
+      const scroll = window.scrollY;
+      // The scroll that brings the end of the main text to the bottom edge.
+      const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+      const mainEnd = lastMain
+        ? Math.min(lastMain.getBoundingClientRect().bottom + scroll - bottom, maxScroll)
+        : maxScroll;
+      const partPages = mainEnd > 2 ? 1 + Math.ceil((mainEnd - 2) / step) : 1;
+      // The page of this part (0-based) showing document height `y` at the top, as
+      // turns from the top of the part reach it.
+      const here =
+        scroll >= mainEnd - 2
+          ? partPages - 1
+          : Math.min(Math.max(Math.floor(scroll / step + 0.05), 0), partPages - 1);
+
+      const list = partPagesList(layoutKey(step), partPages);
+      const density = meanDensity(list);
+      const first = Math.round(pagesTo(start, list, density));
+      const totalPages = Math.max(Math.round(pagesTo(SCALE, list, density)), first + partPages);
+      const page = first + here;
+      const label = `${page + 1} / ${totalPages}`;
+      if (!ticks.length) {
+        return label;
+      }
+
+      // The first page of each chapter (0-based, in the book): in this part the first
+      // one with its title as the top block (the leaf before it is above the top
+      // edge), elsewhere the estimate. Chapters in this part without a title found
+      // are left out.
+      const found = partChapters();
+      const firstPage = (index) => {
+        const tick = ticks[index];
+        if (tick.at < start) {
+          return Math.min(Math.round(pagesTo(tick.at, list, density)), first);
+        }
+        if (tick.at >= end) {
+          return tick.at === end
+            ? first + partPages
+            : Math.max(Math.round(pagesTo(tick.at, list, density)), first + partPages);
+        }
+        const leaf = found.get(index);
+        if (!leaf) {
+          return first;
+        }
+        const y = leaf.getBoundingClientRect().bottom + scroll;
+        return first + Math.min(Math.max(Math.ceil((y - top) / step - 0.05), 0), partPages - 1);
+      };
+      const known = ticks
+        .map((tick, index) => index)
+        .filter((index) => ticks[index].at < start || ticks[index].at >= end || found.has(index));
+      // The chapter: the last one starting at or before this page.
+      let current = -1;
+      let starts = 0;
+      for (let i = 0; i < known.length; i += 1) {
+        const at = firstPage(known[i]);
+        if (at > page || ticks[known[i]].at >= end) {
+          break;
+        }
+        current = i;
+        starts = at;
+      }
+      if (current < 0) {
+        return label;
+      }
+      const next = current + 1 < known.length ? firstPage(known[current + 1]) : totalPages;
+      const last = Math.max(next - 1, page);
+      // A chapter that is the whole book (one titled section) would repeat its pages.
+      if (starts === 0 && last === totalPages - 1) {
+        return label;
+      }
+      return `${label}, ${page - starts + 1} / ${last - starts + 1}`;
     }
 
     // The reading progress at `block`, or null outside the main text.
