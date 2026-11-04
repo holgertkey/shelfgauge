@@ -1,11 +1,11 @@
-# shelfgauge v0.22.0
+# shelfgauge v0.23.0
 
 A single-binary tool that indexes a folder tree of ebooks — FB2, EPUB, plain text and
 (optionally) HTML files, plain or inside `.zip` archives — into a local SQLite
 database and serves a browsable, searchable web library on `localhost`, with an
 in-browser reader.
 
-**Current version:** 0.22.0
+**Current version:** 0.23.0
 
 ## Status
 
@@ -249,10 +249,11 @@ WantedBy=multi-user.target
 - The reading position is saved as you read (after you stay at a place for a few
   seconds; never in footnotes, and not while you look at a bookmark or quote). The book
   card then offers **Continue reading** and shows how much you have read.
-- The library page lists the books you are **currently reading** (unfinished, most
-  recently read first) with a **Continue** link. The ✓ icon marks a book as finished;
-  **Clear list** empties the list but keeps where you stopped, and a book comes back
-  once you read it again.
+- The library page lists the books you are **currently reading** (not marked
+  finished, most recently read first) with a **Continue** link. The ✓ icon marks a
+  book as finished and keeps its progress; pressing it again on the book card (or in
+  the hub reader) unmarks it. **Clear list** empties the list but keeps where you
+  stopped, and a book comes back once you read it again.
 - Bookmarks and quotes belong to the book's content: they survive rescans, moves and
   renames. If a book file is replaced (e.g. a corrected edition), they are moved to it
   when it is opened and most of the quotes are found in it; quotes that are not found
@@ -697,4 +698,4 @@ MIT — see [LICENSE](LICENSE).
 
 ---
 
-_shelfgauge v0.22.0 — MIT License_
+_shelfgauge v0.23.0 — MIT License_

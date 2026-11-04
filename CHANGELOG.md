@@ -8,8 +8,23 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-11-04
+
+Libraries and hubs of 0.22.0 and 0.23.0 work with each other in any order. Phones get
+the finished toggle and Remove from the Bookshelf from a 0.23.0 hub (the hub serves
+the reader app); with a 0.22.0 hub they keep the 0.22.0 reader. A 0.22.0 library
+takes a book removed on a phone off its shelf but leaves its copy on the hub (until
+the hub's expiry or a removal by hand).
+
 ### Added
 
+- **Remove from the Bookshelf** in the hub reader: a trash button on the books under
+  "On the shelf" (none under "Currently reading": mark the book finished first) takes
+  a book off the person's Bookshelf on every device of their account, after a
+  confirmation. The copy on this device goes at once; the library takes its copy off
+  the hub at its next sync, and keeps the bookmarks, quotes and the reading position,
+  so the book comes back with them when it is sent again (Read on phone, Get this
+  book on the Showcase, or its book file opened again).
 - **Page numbers** in the reader, the library's and the hub's: while the top bar is
   shown (a tap in the middle of the page, a scroll up), the status line gives the
   page of the book and of the chapter, such as `245 / 1250, 1 / 34`, instead of the
@@ -19,6 +34,18 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ### Changed
 
+- **The finished mark** is a toggle and keeps the progress: the ✓ button marks a
+  book finished, pressing it again unmarks it, in the library (on "Currently
+  reading" and next to Continue reading on the book card) and in the hub reader (on
+  every book with a reading position, also on a phone). **Mark as finished** no
+  longer sets the progress to 100 % (books often end with notes and publisher's
+  pages, so the real progress was lost), and reading a marked book keeps the mark.
+  "Currently reading" and "Family is reading" list the books with a position and no
+  mark, whatever their progress: a book read to the end without the mark stays
+  there. The statistics count the marks as finished books. Books finished before
+  (progress 100 %) count as marked, so they stay off "Currently reading" after the
+  upgrade. The library's user data moves to a new schema: a 0.22.0 build does not
+  open it.
 - **Bookshelf and Showcase tabs** in the hub reader: the shelf (called Bookshelf now,
   My books before) and the Showcase are two tabs at the top of the page, styled as
   the library's Authors | Folders switch, instead of the Showcase button on the shelf

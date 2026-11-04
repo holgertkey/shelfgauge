@@ -39,7 +39,8 @@
         <div class="reading-actions">
           <a class="button primary" href="{{ item.continue_href }}">Continue</a>
           <form method="post" action="{{ item.finished_action }}">
-            <button type="submit" class="icon-button" title="Mark as finished" aria-label="Mark as finished"><svg class="icon" aria-hidden="true"><use href="#i-done"></use></svg></button>
+            <input type="hidden" name="finished" value="1">
+            <button type="submit" class="icon-button finished-toggle" aria-pressed="false" title="Mark as finished" aria-label="Mark as finished"><svg class="icon" aria-hidden="true"><use href="#i-done"></use></svg></button>
           </form>
         </div>
       </div>

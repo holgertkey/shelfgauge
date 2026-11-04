@@ -325,9 +325,9 @@ fn reading_and_quotes(
         Ok(live_books_by_key(index, key)?.first().copied())
     };
     let (mut reading, mut finished) = (0, 0);
-    for (key, progress) in &progress {
+    for (key, _, marked) in &progress {
         if in_library(key)?.is_some() {
-            if *progress >= 1000 {
+            if *marked {
                 finished += 1;
             } else {
                 reading += 1;

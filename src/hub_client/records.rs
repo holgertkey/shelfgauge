@@ -11,7 +11,9 @@
 //!   person; `null` otherwise). Local state (the book id hint, `anchor_lost`) stays
 //!   local.
 //! - `position`: `content_key`, `block`, `offset`, `suffix`, `progress` (per mille),
-//!   `book_title`, `book_authors`, `updated_at`.
+//!   `book_title`, `book_authors`, `updated_at`, `finished_at` (when the book was
+//!   marked finished, `null` if it is not; since 0.23: a record without the key counts
+//!   as finished at its `updated_at` when its `progress` is 1000, the old mark).
 //!
 //! Times are Unix seconds. The merge rules (concept §11) use `updated_at`.
 
@@ -157,7 +159,8 @@ pub fn position(
 ) -> Result<Option<Vec<u8>>, StorageError> {
     Ok(conn
         .query_row(
-            "SELECT block, offset, suffix, progress, book_title, book_authors, updated_at
+            "SELECT block, offset, suffix, progress, book_title, book_authors, updated_at,
+                    finished_at
                FROM reading_positions
               WHERE profile_id = ?1 AND book_key = ?2 AND deleted_at IS NULL",
             params![profile.0, content_key],
@@ -171,6 +174,7 @@ pub fn position(
                     "book_title": row.get::<_, String>(4)?,
                     "book_authors": row.get::<_, String>(5)?,
                     "updated_at": row.get::<_, i64>(6)?,
+                    "finished_at": row.get::<_, Option<i64>>(7)?,
                 }))
             },
         )

@@ -915,6 +915,30 @@ kbd {
   font-size: 0.9rem;
 }
 
+/* The book card's actions: the buttons, the progress and the finished toggle. */
+.book-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+
+.book-actions .progress {
+  margin-left: 0;
+}
+
+/* The finished mark: a check mark, in the accent color while pressed. */
+.finished-toggle {
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.finished-toggle[aria-pressed="true"],
+.finished-toggle[aria-pressed="true"]:hover {
+  color: var(--accent);
+}
+
 .book-annotations {
   margin-top: 1.5rem;
 }

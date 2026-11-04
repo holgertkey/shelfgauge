@@ -436,7 +436,8 @@ pub fn send_library_keys(
 }
 
 /// One full sync of `account`: hand it newer library keys, push the outbox, finish
-/// removals, pull and merge, notice expired publications; records the outcome on the
+/// removals, pull and merge, finish the removals the pull started (a member took a
+/// book off the Bookshelf), notice expired publications; records the outcome on the
 /// account. `instance` is this library's name on the shelf. Runs blocking HTTP.
 pub fn sync_once(
     userdata: &UserData,
@@ -451,11 +452,14 @@ pub fn sync_once(
     let result = (|| {
         report.pushed += send_library_keys(userdata, target, account, client)?;
         report.pushed += push(userdata, target, account, client)?;
-        let removing: Vec<ShelfEntry> = store::shelf(&userdata.lock(), account.profile)?
-            .into_iter()
-            .filter(|e| e.state == ShelfState::Removing)
-            .collect();
-        for entry in &removing {
+        let removing = |userdata: &UserData| -> Result<Vec<ShelfEntry>, SyncError> {
+            Ok(store::shelf(&userdata.lock(), account.profile)?
+                .into_iter()
+                .filter(|e| e.state == ShelfState::Removing)
+                .collect())
+        };
+        let before = removing(userdata)?;
+        for entry in &before {
             take_down(userdata, target, account, client, entry);
         }
         pull(
@@ -467,6 +471,20 @@ pub fn sync_once(
             instance,
             &mut report,
         )?;
+        // A member who took a book off their Bookshelf: its publication goes in this
+        // round, not the next.
+        for entry in removing(userdata)?
+            .iter()
+            .filter(|e| !before.iter().any(|b| b.content_key == e.content_key))
+        {
+            let done = take_down(userdata, target, account, client, entry);
+            tracing::info!(
+                profile = account.profile.0,
+                done,
+                by_member = true,
+                "book taken off the hub shelf"
+            );
+        }
         check_expired(userdata, target, account, client)?;
         Ok(())
     })();

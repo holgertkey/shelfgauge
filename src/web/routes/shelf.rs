@@ -668,6 +668,7 @@ async fn remove(
         profile = profile.0,
         book_id = id,
         done,
+        by_member = false,
         "book taken off the hub shelf"
     );
     Ok(if done { "removed" } else { "removing" })

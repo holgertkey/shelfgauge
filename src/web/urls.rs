@@ -244,7 +244,8 @@ impl Urls {
         ))
     }
 
-    /// Marks a book as finished, taking it off the "Currently reading" list (`POST`).
+    /// Marks a book as finished, taking it off the "Currently reading" list, or
+    /// unmarks it (`POST`, `finished=1|0`).
     pub fn finished(&self, id: i64) -> String {
         self.path(&format!("/book/{id}/finished"))
     }

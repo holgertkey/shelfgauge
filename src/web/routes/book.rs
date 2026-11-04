@@ -39,8 +39,13 @@ struct BookPage {
     read_href: Option<String>,
     /// "Continue reading" at the saved position.
     continue_href: Option<String>,
-    /// "read 37 %" / "finished".
+    /// "read 37 %".
     progress: Option<String>,
+    /// Whether the book is marked finished (`None` without a position: the toggle is
+    /// shown only with one).
+    finished: Option<bool>,
+    /// The toggle's form action.
+    finished_action: String,
     annotation: Vec<String>,
     /// The bookmarks and marks (`None` for a book that cannot have any).
     lists: Option<Lists>,
@@ -165,6 +170,8 @@ pub(crate) async fn card(
     render(&BookPage {
         continue_href: position.map(|p| urls.read_at(book.id, p.block)),
         progress: position.map(|p| progress_label(p.progress)),
+        finished: position.map(|p| p.finished_at.is_some()),
+        finished_action: urls.finished(book.id),
         family,
         shelf,
         shelf_notice,

@@ -28,7 +28,7 @@ use crate::storage::{StorageError, migrations, open_wal};
 
 /// Schema migrations of the user-data database; index `i` upgrades version `i` to
 /// `i + 1`. Append only: user data cannot be rebuilt.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9];
 
 /// Version 1: annotations and reading positions.
 ///
@@ -473,6 +473,19 @@ CREATE TABLE hub_requests (
 );
 "#;
 
+/// Version 9: the finished mark, `reading_positions.finished_at` (Unix seconds, `NULL`
+/// = not finished), set and cleared by hand; the progress is never changed by it.
+///
+/// Positions at progress 1000 (the old **Mark as finished**, which set the progress,
+/// or a book read to its last block) count as finished since their last save, so they
+/// stay off "Currently reading". The hub outbox triggers need no change: an update of
+/// the row already queues the position.
+const V9: &str = r#"
+ALTER TABLE reading_positions ADD COLUMN finished_at INTEGER;
+UPDATE reading_positions SET finished_at = updated_at
+ WHERE progress >= 1000 AND deleted_at IS NULL;
+"#;
+
 /// The schema version this build creates and understands.
 pub const SCHEMA_VERSION: u32 = MIGRATIONS.len() as u32;
 
@@ -747,16 +760,16 @@ pub fn latest_marks(
 }
 
 /// The live reading positions of `profile` in all books: `(book key, progress in per
-/// mille)`.
+/// mille, whether the book is marked finished)`.
 pub fn progress_by_book(
     conn: &Connection,
     profile: ProfileId,
-) -> Result<Vec<(Vec<u8>, u16)>, StorageError> {
+) -> Result<Vec<(Vec<u8>, u16, bool)>, StorageError> {
     let mut stmt = conn.prepare(
-        "SELECT book_key, progress FROM reading_positions
+        "SELECT book_key, progress, finished_at IS NOT NULL FROM reading_positions
           WHERE profile_id = ?1 AND deleted_at IS NULL",
     )?;
-    let rows = stmt.query_map([profile], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    let rows = stmt.query_map([profile], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
@@ -899,14 +912,21 @@ pub struct ReadingPosition {
     pub block: BlockId,
     /// The start of the block (fingerprint for re-attaching).
     pub suffix: String,
-    /// Progress through the main text in per mille (1000 = finished).
+    /// Progress through the main text in per mille (1000 = the end of the main text).
     pub progress: u16,
     /// When it was saved (Unix seconds).
     pub updated_at: i64,
+    /// When the book was marked finished (Unix seconds), `None` if it is not.
+    ///
+    /// Read from the database; [`save_position`] never writes it (see
+    /// [`set_finished`]).
+    pub finished_at: Option<i64>,
 }
 
 /// Saves a reading position of `profile`; the latest `updated_at` wins. A saved
-/// position puts the book back on the profile's "Currently reading" list.
+/// position puts the book back on the profile's "Currently reading" list unless it is
+/// marked finished: the finished mark is kept (reading a finished book does not
+/// unmark it), and a new row starts unfinished.
 pub fn save_position(
     conn: &Connection,
     profile: ProfileId,
@@ -940,8 +960,8 @@ pub fn save_position(
     Ok(())
 }
 
-const POSITION_COLUMNS: &str =
-    "book_key, book_id, book_title, book_authors, block, suffix, progress, updated_at";
+const POSITION_COLUMNS: &str = "book_key, book_id, book_title, book_authors, block, suffix, \
+    progress, updated_at, finished_at";
 
 /// The live reading position of `profile` in a book.
 pub fn position(
@@ -970,7 +990,7 @@ pub fn positions_for_key(
         "SELECT {POSITION_COLUMNS}, profile_id FROM reading_positions
           WHERE book_key = ?1 AND deleted_at IS NULL ORDER BY profile_id"
     ))?;
-    let rows = stmt.query_map([key], |row| Ok((row.get(8)?, position_row(row)?)))?;
+    let rows = stmt.query_map([key], |row| Ok((row.get(9)?, position_row(row)?)))?;
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
@@ -986,6 +1006,7 @@ fn position_row(row: &Row<'_>) -> rusqlite::Result<ReadingPosition> {
         suffix: row.get(5)?,
         progress: row.get(6)?,
         updated_at: row.get(7)?,
+        finished_at: row.get(8)?,
     })
 }
 
@@ -1020,18 +1041,22 @@ pub fn move_position(
             suffix: old.suffix,
             progress,
             updated_at: old.updated_at,
+            finished_at: None,
         },
     )?;
-    // Moving is not reading: a dismissed book stays off the list.
+    // Moving is not reading: a dismissed book stays off the list, a finished one
+    // stays finished.
     conn.execute(
-        "UPDATE reading_positions SET dismissed_at = ?3 WHERE profile_id = ?1 AND book_key = ?2",
-        params![profile, to.key, dismissed],
+        "UPDATE reading_positions SET dismissed_at = ?3, finished_at = ?4
+          WHERE profile_id = ?1 AND book_key = ?2",
+        params![profile, to.key, dismissed, old.finished_at],
     )?;
     Ok(())
 }
 
-/// The "Currently reading" list of `profile`: live positions of unfinished books not
-/// dismissed from the list, most recently read first.
+/// The "Currently reading" list of `profile`: live positions of books not marked
+/// finished (whatever their progress) and not dismissed from the list, most recently
+/// read first.
 pub fn reading_list(
     conn: &Connection,
     profile: ProfileId,
@@ -1039,7 +1064,7 @@ pub fn reading_list(
     let mut stmt = conn.prepare(&format!(
         "SELECT {POSITION_COLUMNS} FROM reading_positions
           WHERE profile_id = ?1 AND deleted_at IS NULL AND dismissed_at IS NULL
-            AND progress < 1000
+            AND finished_at IS NULL
           ORDER BY updated_at DESC, book_key"
     ))?;
     let rows = stmt.query_map([profile], position_row)?;
@@ -1055,13 +1080,13 @@ pub fn shared_reading(
 ) -> Result<Vec<(ProfileId, ReadingPosition)>, StorageError> {
     let mut stmt = conn.prepare(
         "SELECT r.book_key, r.book_id, r.book_title, r.book_authors, r.block, r.suffix,
-                r.progress, r.updated_at, r.profile_id
+                r.progress, r.updated_at, r.finished_at, r.profile_id
            FROM reading_positions r JOIN profiles p ON p.id = r.profile_id
           WHERE p.share_activity = 1 AND r.profile_id != ?1 AND r.deleted_at IS NULL
-            AND r.dismissed_at IS NULL AND r.progress < 1000
+            AND r.dismissed_at IS NULL AND r.finished_at IS NULL
           ORDER BY r.updated_at DESC, r.profile_id, r.book_key",
     )?;
-    let rows = stmt.query_map([profile], |row| Ok((row.get(8)?, position_row(row)?)))?;
+    let rows = stmt.query_map([profile], |row| Ok((row.get(9)?, position_row(row)?)))?;
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
@@ -1075,19 +1100,33 @@ pub fn dismiss_all(conn: &Connection, profile: ProfileId, now: i64) -> Result<u6
     )? as u64)
 }
 
-/// Marks a book as finished for `profile` (progress 1000, which takes it off the
-/// "Currently reading" list); its position is kept. Returns whether the book had a
-/// position.
-pub fn mark_finished(
+/// Marks a book as finished for `profile` (`finished`), which takes it off the
+/// "Currently reading" list, or unmarks it; the position and the progress are kept.
+/// Bumps `updated_at` to `now`, so the change wins over older saves and reaches the
+/// hub. Returns whether the book had a position (only a book with one can be marked).
+///
+/// # Examples
+///
+/// ```
+/// use shelfgauge::annotations::store::{UserData, set_finished};
+/// use shelfgauge::profiles::ProfileId;
+///
+/// let data = UserData::open_in_memory().unwrap();
+/// // A book never opened has no position and cannot be marked.
+/// assert!(!set_finished(&data.lock(), ProfileId::OWNER, b"key", true, 10).unwrap());
+/// ```
+pub fn set_finished(
     conn: &Connection,
     profile: ProfileId,
     key: &[u8],
+    finished: bool,
     now: i64,
 ) -> Result<bool, StorageError> {
+    let finished_at = finished.then_some(now);
     Ok(conn.execute(
-        "UPDATE reading_positions SET progress = 1000, updated_at = ?2
-          WHERE profile_id = ?3 AND book_key = ?1 AND deleted_at IS NULL",
-        params![key, now, profile],
+        "UPDATE reading_positions SET finished_at = ?2, updated_at = ?3
+          WHERE profile_id = ?4 AND book_key = ?1 AND deleted_at IS NULL",
+        params![key, finished_at, now, profile],
     )? > 0)
 }
 
@@ -1228,6 +1267,7 @@ mod tests {
             suffix: "start".into(),
             progress: 250,
             updated_at: at,
+            finished_at: None,
         }
     }
 
@@ -1281,10 +1321,23 @@ mod tests {
         };
         assert_eq!(keys(&conn), [b"b".to_vec(), b"c".to_vec(), b"a".to_vec()]);
 
-        assert!(mark_finished(&conn, P, b"c", 40).unwrap());
-        assert!(!mark_finished(&conn, P, b"x", 40).unwrap());
-        assert_eq!(position(&conn, P, b"c").unwrap().unwrap().progress, 1000);
+        assert!(set_finished(&conn, P, b"c", true, 40).unwrap());
+        assert!(!set_finished(&conn, P, b"x", true, 40).unwrap());
+        let c = position(&conn, P, b"c").unwrap().unwrap();
+        assert_eq!(
+            (c.progress, c.finished_at, c.updated_at),
+            (250, Some(40), 40),
+            "the mark keeps the progress"
+        );
         assert_eq!(keys(&conn), [b"b".to_vec(), b"a".to_vec()]);
+        assert_eq!(
+            progress_by_book(&conn, P)
+                .unwrap()
+                .iter()
+                .filter(|p| p.2)
+                .count(),
+            1
+        );
 
         assert_eq!(dismiss_all(&conn, P, 50).unwrap(), 3);
         assert!(keys(&conn).is_empty());
@@ -1301,6 +1354,80 @@ mod tests {
         // A deleted (removed book) position is not listed.
         remove_group(&conn, b"a", 70).unwrap();
         assert!(keys(&conn).is_empty());
+    }
+
+    #[test]
+    fn finished_mark_toggles_and_survives_reading() {
+        let data = UserData::open_in_memory().unwrap();
+        let conn = data.lock();
+        let listed = |conn: &Connection| reading_list(conn, P).unwrap().len();
+        save_position(&conn, P, &position_at(b"k", 5, 10)).unwrap();
+        assert!(set_finished(&conn, P, b"k", true, 20).unwrap());
+        assert_eq!(listed(&conn), 0);
+
+        // Reading on keeps the mark and only moves the position.
+        save_position(&conn, P, &position_at(b"k", 8, 30)).unwrap();
+        let read_on = position(&conn, P, b"k").unwrap().unwrap();
+        assert_eq!((read_on.block, read_on.finished_at), (b(8), Some(20)));
+        assert_eq!(listed(&conn), 0);
+
+        // Re-attaching keeps it too.
+        move_position(&conn, P, b"k", &snapshot(b"m"), b(3), 400).unwrap();
+        assert_eq!(
+            position(&conn, P, b"m").unwrap().unwrap().finished_at,
+            Some(20)
+        );
+
+        // Unmarking puts the book back, with its progress.
+        assert!(set_finished(&conn, P, b"m", false, 40).unwrap());
+        let back = position(&conn, P, b"m").unwrap().unwrap();
+        assert_eq!(
+            (back.finished_at, back.progress, back.updated_at),
+            (None, 400, 40)
+        );
+        assert_eq!(listed(&conn), 1);
+
+        // A book read to the end without the mark stays on the list.
+        let mut end = position_at(b"e", 9, 50);
+        end.progress = 1000;
+        save_position(&conn, P, &end).unwrap();
+        assert_eq!(listed(&conn), 2);
+    }
+
+    #[test]
+    fn version_8_finished_positions_get_the_mark() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::storage::configure(&conn).unwrap();
+        migrations::apply(&mut conn, &MIGRATIONS[..8]).unwrap();
+        conn.execute_batch(
+            "INSERT INTO reading_positions (profile_id, book_key, book_id, block, suffix,
+                 progress, book_title, book_authors, updated_at)
+             VALUES (1, x'01', 1, 3, 's', 1000, 'T', 'A', 5),
+                    (1, x'02', 2, 3, 's', 420, 'T2', 'A2', 6);
+             INSERT INTO reading_positions (profile_id, book_key, book_id, block, suffix,
+                 progress, book_title, book_authors, updated_at, deleted_at)
+             VALUES (1, x'03', 3, 3, 's', 1000, 'T3', 'A3', 7, 8);",
+        )
+        .unwrap();
+        migrations::apply(&mut conn, MIGRATIONS).unwrap();
+        let finished = position(&conn, P, b"\x01").unwrap().unwrap();
+        assert_eq!((finished.progress, finished.finished_at), (1000, Some(5)));
+        let reading = position(&conn, P, b"\x02").unwrap().unwrap();
+        assert_eq!(reading.finished_at, None);
+        let deleted: Option<i64> = conn
+            .query_row(
+                "SELECT finished_at FROM reading_positions WHERE book_key = x'03'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(deleted, None, "a deleted position is left alone");
+        let keys: Vec<Vec<u8>> = reading_list(&conn, P)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.book.key)
+            .collect();
+        assert_eq!(keys, [b"\x02".to_vec()]);
     }
 
     #[test]
@@ -1426,7 +1553,7 @@ mod tests {
         save_position(&conn, anna, &position_at(b"k", 9, 20)).unwrap();
         assert_eq!(progress_by_book(&conn, anna).unwrap().len(), 1);
         assert_eq!(positions_for_key(&conn, b"k").unwrap().len(), 2);
-        assert!(mark_finished(&conn, anna, b"k", 30).unwrap());
+        assert!(set_finished(&conn, anna, b"k", true, 30).unwrap());
         assert_eq!(reading_list(&conn, P).unwrap().len(), 1);
         assert!(reading_list(&conn, anna).unwrap().is_empty());
         assert_eq!(dismiss_all(&conn, P, 40).unwrap(), 1);
@@ -1440,7 +1567,10 @@ mod tests {
             reading_list(&conn, P).unwrap().is_empty(),
             "still dismissed"
         );
-        assert_eq!(reading_list(&conn, anna).unwrap()[0].block, b(7));
+        // Anna marked the book finished before: reading on and moving keep the mark.
+        let hers = position(&conn, anna, b"new").unwrap().unwrap();
+        assert_eq!((hers.block, hers.finished_at), (b(7), Some(30)));
+        assert!(reading_list(&conn, anna).unwrap().is_empty());
 
         // Library-wide maintenance covers both; deleting a profile removes its rows.
         remove_group(&conn, b"k", 60).unwrap();
@@ -1487,7 +1617,7 @@ mod tests {
         let for_anna = shared_reading(&conn, anna).unwrap();
         assert_eq!(for_anna.len(), 1);
         assert_eq!(for_anna[0].0, P);
-        mark_finished(&conn, P, b"c", 40).unwrap();
+        set_finished(&conn, P, b"c", true, 40).unwrap();
         assert!(shared_reading(&conn, anna).unwrap().is_empty());
     }
 

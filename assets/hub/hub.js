@@ -150,6 +150,98 @@ async function pairPage() {
 
 // ---- Shelf ---------------------------------------------------------------------
 
+/**
+ * When the book of `position` (a position record) was marked finished (Unix seconds),
+ * or null. A record from before 0.23 has no `finished_at`: it counts as finished at
+ * its `updated_at` when it reached the end (progress 1000, the old mark).
+ */
+function finishedAt(position) {
+  if (!position) {
+    return null;
+  }
+  if (Object.prototype.hasOwnProperty.call(position, "finished_at")) {
+    return Number.isFinite(position.finished_at) ? position.finished_at : null;
+  }
+  return position.progress >= 1000 && Number.isFinite(position.updated_at) ? position.updated_at : null;
+}
+
+/**
+ * Marks the book of shelf `item` finished, or unmarks it: its position record gets
+ * `finished_at` (now, or null) and a new `updated_at`, the progress and the place stay.
+ * Goes out with the next push (kept in the outbox while offline).
+ */
+async function setFinished(item, finished) {
+  const p = item.account;
+  const id = await c.positionId(p.mac, c.unbase64url(item.content_key));
+  const position = await store.get(p, "position", id);
+  if (!position) {
+    return;
+  }
+  const t = now();
+  position.finished_at = finished ? t : null;
+  position.updated_at = t;
+  await store.write(p, "position", id, position);
+}
+
+/**
+ * Removes the book of shelf `item` from the Bookshelf: its shelf item is deleted (on
+ * every device of the account at their next sync; the library takes its copy off the
+ * hub), this device's book file copy goes at once. Asks first.
+ */
+async function removeFromShelf(item) {
+  const title = item.title || "Untitled";
+  if (!confirm(`Remove “${title}” from your Bookshelf? Your bookmarks and quotes stay in the library.`)) {
+    return false;
+  }
+  const p = item.account;
+  const contentKey = c.unbase64url(item.content_key);
+  await store.remove(p, "shelf_item", await c.shelfId(p.mac, contentKey));
+  await store.dropCopies(p, (copy) => copy.content_key === item.content_key).catch((e) => console.error(e));
+  return true;
+}
+
+/**
+ * The buttons of a book on the shelf: the finished toggle (a book with a position)
+ * and, off "Currently reading", Remove from the Bookshelf. `changed` redraws the
+ * shelf after a change.
+ */
+function bookActions(item, reading, changed) {
+  const actions = el("span", { class: "hub-book-actions" });
+  if (item.position) {
+    const finished = finishedAt(item.position) !== null;
+    const title = finished ? "Finished: press to unmark" : "Mark as finished";
+    const toggle = el("button", {
+      type: "button",
+      class: "icon-button finished-toggle hub-finished",
+      "aria-pressed": String(finished),
+      title,
+      "aria-label": title,
+    });
+    toggle.append(icon("i-done"));
+    toggle.addEventListener("click", async () => {
+      toggle.disabled = true;
+      await setFinished(item, !finished);
+      changed(item.account);
+    });
+    actions.append(toggle);
+  }
+  if (!reading) {
+    const title = "Remove from the Bookshelf";
+    const trash = el("button", { type: "button", class: "icon-button hub-remove", title, "aria-label": title });
+    trash.append(icon("i-delete"));
+    trash.addEventListener("click", async () => {
+      trash.disabled = true;
+      if (await removeFromShelf(item)) {
+        changed(item.account);
+      } else {
+        trash.disabled = false;
+      }
+    });
+    actions.append(trash);
+  }
+  return actions;
+}
+
 function bookItem(item) {
   // A book on the shelf as files only opens from a copy on this device.
   const target = item.copy ? item.copy.publication : (item.kind === "file" ? null : item.publication);
@@ -248,9 +340,14 @@ function pageTabs(current, { showcase = true, title = current === "shelf" ? "Boo
   return title === null ? [nav] : [el("h1", { class: "visually-hidden" }, title), nav];
 }
 
-function renderShelf(items, status, { head = [], showLibrary = false } = {}) {
+/**
+ * Draws the shelf: "Currently reading" (a position and no finished mark), the rest
+ * "On the shelf". `changed(p)` runs after a book's finished mark or removal changed
+ * account `p` here.
+ */
+function renderShelf(items, status, { head = [], showLibrary = false, changed = () => {} } = {}) {
   const reading = items
-    .filter((i) => i.position && i.position.progress < 1000)
+    .filter((i) => i.position && finishedAt(i.position) === null)
     .sort((a, b) => b.position.updated_at - a.position.updated_at);
   const rest = items
     .filter((i) => !reading.includes(i))
@@ -268,6 +365,7 @@ function renderShelf(items, status, { head = [], showLibrary = false } = {}) {
     if (showLibrary && i.library) {
       li.append(el("span", { class: "muted hub-book-library" }, i.library));
     }
+    li.append(bookActions(i, reading.includes(i), changed));
     return li;
   };
   if (reading.length) {
@@ -290,6 +388,7 @@ async function shelfItems(p) {
   for (const item of items) {
     item.offline = offline.has(item.publication);
     item.library = libraryName(p);
+    item.account = p;
     // The newest copy of the book.
     item.copy = copies
       .filter((copy) => copy.content_key === item.content_key)
@@ -377,8 +476,21 @@ async function shelfPage() {
     const lists = await Promise.all(all.map((a) => shelfItems(a)));
     return lists.flat();
   };
-  renderShelf(await items(), "Updating…", { head, showLibrary: showingAll });
-  let status = "";
+  let status = "Updating…";
+  // A finished mark or a removal made here: drawn at once, pushed in the background
+  // (kept in the outbox while offline), the removed book's downloaded blobs dropped.
+  const changed = async (a) => {
+    await dropUnshelved(all);
+    redraw();
+    store.push(a).catch((e) => {
+      if (!unreachable(e) && !(e instanceof store.HubFull) && !(e instanceof store.Unpaired)) {
+        console.error(e);
+      }
+    });
+  };
+  const redraw = async () => renderShelf(await items(), status, { head, showLibrary: showingAll, changed });
+  await redraw();
+  status = "";
   for (const a of showingAll ? all : [p]) {
     try {
       const synced = await syncAccount(a);
@@ -402,7 +514,7 @@ async function shelfPage() {
     }
   }
   await dropUnshelved(all);
-  renderShelf(await items(), status, { head, showLibrary: showingAll });
+  await redraw();
 }
 
 // ---- Book files ----------------------------------------------------------------
@@ -1323,6 +1435,8 @@ function deviceSource(book, item, p, sync) {
         return; // In the notes: not a reading position.
       }
       const id = await c.positionId(p.mac, c.unbase64url(contentKey));
+      // Reading a book marked finished keeps the mark (also one of before 0.23).
+      const stored = await store.get(p, "position", id);
       await store.write(p, "position", id, Object.assign({
         content_key: contentKey,
         block: ordinal(body.block),
@@ -1330,6 +1444,7 @@ function deviceSource(book, item, p, sync) {
         suffix: position.suffix,
         progress: position.progress,
         updated_at: now(),
+        finished_at: finishedAt(stored),
       }, snapshot));
       if (keepalive) {
         // Saved as the page is hidden or left (reader.js): pushed at once, as the

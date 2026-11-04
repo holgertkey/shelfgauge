@@ -23,15 +23,27 @@
       <dt>Added</dt><dd>{{ added }}</dd>
     </dl>
     {%- if let Some(read) = read_href %}
-    <p class="actions">
+    <div class="actions book-actions">
       {%- if let Some(continue_href) = continue_href %}
       <a class="button primary" href="{{ continue_href }}">Continue reading</a>
       <a class="button" href="{{ read }}">Read from the start</a>
       {%- if let Some(progress) = progress %} <span class="progress muted">{{ progress }}</span>{% endif %}
+      {%- if let Some(finished) = finished %}
+      <form method="post" action="{{ finished_action }}">
+        <input type="hidden" name="back" value="book">
+        {%- if finished %}
+        <input type="hidden" name="finished" value="0">
+        <button type="submit" class="icon-button finished-toggle" aria-pressed="true" title="Finished: press to unmark"><svg class="icon" aria-hidden="true"><use href="#i-done"></use></svg>Finished</button>
+        {%- else %}
+        <input type="hidden" name="finished" value="1">
+        <button type="submit" class="icon-button finished-toggle" aria-pressed="false" title="Mark as finished"><svg class="icon" aria-hidden="true"><use href="#i-done"></use></svg>Finished</button>
+        {%- endif %}
+      </form>
+      {%- endif %}
       {%- else %}
       <a class="button primary" href="{{ read }}">Read</a>
       {%- endif %}
-    </p>
+    </div>
     {%- endif %}
     {%- if !family.is_empty() %}
     <p class="family-line muted">Also reading:

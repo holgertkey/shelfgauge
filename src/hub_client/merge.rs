@@ -9,8 +9,11 @@
 //! any others (with no book id), so they attach when the book appears (§10).
 //!
 //! A deleted (`null`) annotation or position on the hub means the book left the
-//! shelf: local marks stay untouched. A deleted shelf item takes the book off this
-//! library's shelf.
+//! shelf: local marks stay untouched. A deleted shelf item (another client, such as a
+//! member's phone, took the book off the Bookshelf) starts this library's removal of
+//! the book: the entry becomes `removing` and the book is queued, so the next
+//! `take_down` deletes this library's publication on the hub and pushes the marks and
+//! the position as deletions there; they stay in the library.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -83,6 +86,19 @@ struct PositionIn {
     book_title: String,
     book_authors: String,
     updated_at: i64,
+    /// `None` when the record has no `finished_at` key (a 0.22 client), `Some(None)`
+    /// for `null`.
+    #[serde(default, deserialize_with = "present")]
+    finished_at: Option<Option<i64>>,
+}
+
+/// Tells a present field (`Some`, also for `null`) from an absent one (the `default`).
+fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
 }
 
 fn b64(text: &str) -> Option<Vec<u8>> {
@@ -248,7 +264,8 @@ fn shelf_item(
 }
 
 /// A shelf item deleted on the hub: the book left the shelf on another client, unless
-/// this library changed its entry later.
+/// this library changed its entry later. Completed as this library's own removal
+/// would be (`removing`, the book queued); an entry already `removing` stays so.
 fn shelf_deleted(
     conn: &Connection,
     profile: ProfileId,
@@ -260,8 +277,14 @@ fn shelf_deleted(
         .find(|e| keys::shelf_id(key, &e.content_key) == record.id);
     match found {
         Some(entry) if entry.updated_at <= record.updated_at => {
-            store::delete_entry(conn, profile, &entry.content_key)?;
-            drop_outbox(conn, profile, "shelf_item", &entry.content_key)?;
+            store::set_state(
+                conn,
+                profile,
+                &entry.content_key,
+                store::ShelfState::Removing,
+                None,
+            )?;
+            store::enqueue_book(conn, profile, &entry.content_key)?;
             Ok(Applied::Shelf)
         }
         _ => Ok(Applied::Kept),
@@ -399,18 +422,27 @@ fn position(
         .map(|(_, id)| id)
         .or_else(|| book_id(&content))
         .unwrap_or(0);
-    // A newer position brings the book back to "Currently reading"; a book removed
-    // from this library keeps its removal mark.
+    let progress = p.progress.clamp(0, 1000);
+    // The finished mark: a record with the field sets it; one without (a 0.22 client)
+    // keeps the local mark, and for a new row counts as finished at its time when it
+    // reached the end (the old mark, the legacy rule).
+    let finished_at = p
+        .finished_at
+        .unwrap_or_else(|| (progress >= 1000).then_some(p.updated_at));
+    // A newer position brings the book back to "Currently reading" (unless it is
+    // marked finished); a book removed from this library keeps its removal mark.
     conn.execute(
         "INSERT INTO reading_positions
              (profile_id, book_key, book_id, block, offset, suffix, progress, book_title,
-              book_authors, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+              book_authors, updated_at, finished_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
          ON CONFLICT (profile_id, book_key) DO UPDATE SET
              block = excluded.block, offset = excluded.offset, suffix = excluded.suffix,
              progress = excluded.progress, book_title = excluded.book_title,
              book_authors = excluded.book_authors, updated_at = excluded.updated_at,
-             dismissed_at = NULL",
+             dismissed_at = NULL,
+             finished_at = CASE WHEN ?12 THEN excluded.finished_at
+                                ELSE reading_positions.finished_at END",
         params![
             profile.0,
             content,
@@ -418,10 +450,12 @@ fn position(
             p.block,
             p.offset,
             p.suffix,
-            p.progress.clamp(0, 1000),
+            progress,
             p.book_title,
             p.book_authors,
             p.updated_at,
+            finished_at,
+            p.finished_at.is_some(),
         ],
     )?;
     drop_outbox(conn, profile, "position", &content)?;
@@ -584,5 +618,70 @@ mod tests {
             )
             .unwrap();
         assert_eq!(owner, 2);
+    }
+
+    #[test]
+    fn the_finished_mark_present_null_or_absent() {
+        let (userdata, key) = setup();
+        let conn = userdata.lock();
+        let content = [0u8, 1, 2];
+        let id = keys::position_id(&key, &content);
+        let apply = |at: i64, progress: i64, finished: Option<Option<i64>>| {
+            let mut json = serde_json::json!({
+                "content_key": "AAEC", "block": 1, "offset": 0, "suffix": "s",
+                "progress": progress, "book_title": "T", "book_authors": "A",
+                "updated_at": at,
+            });
+            if let Some(finished) = finished {
+                json["finished_at"] = serde_json::json!(finished);
+            }
+            let plain = serde_json::to_vec(&json).unwrap();
+            let r = record(
+                "position",
+                &id,
+                Some(seal_record(&key, "position", &id, &plain).unwrap()),
+            );
+            apply(&conn, ProfileId::OWNER, &key, &r, &|_| None, "Home").unwrap()
+        };
+        let mark = |conn: &Connection| -> Option<i64> {
+            conn.query_row(
+                "SELECT finished_at FROM reading_positions WHERE book_key = ?1",
+                [&content[..]],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+
+        // A mark from a device.
+        assert_eq!(
+            apply(10, 400, Some(Some(9))),
+            Applied::Position(content.to_vec())
+        );
+        assert_eq!(mark(&conn), Some(9));
+        // A 0.22-style record without the field keeps it.
+        assert_eq!(apply(20, 500, None), Applied::Position(content.to_vec()));
+        assert_eq!(mark(&conn), Some(9));
+        // `null` unmarks.
+        apply(30, 500, Some(None));
+        assert_eq!(mark(&conn), None);
+        // Absent again keeps "not finished", even at the end.
+        apply(40, 1000, None);
+        assert_eq!(mark(&conn), None);
+        // The library writes the field.
+        let plain = records::position(&conn, ProfileId::OWNER, &content)
+            .unwrap()
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&plain).unwrap();
+        assert_eq!(json["finished_at"], serde_json::Value::Null);
+        assert!(json.as_object().unwrap().contains_key("finished_at"));
+
+        // A new row from an old record at the end counts as finished then (the old
+        // mark); one short of the end does not.
+        conn.execute("DELETE FROM reading_positions", []).unwrap();
+        apply(50, 1000, None);
+        assert_eq!(mark(&conn), Some(50));
+        conn.execute("DELETE FROM reading_positions", []).unwrap();
+        apply(60, 999, None);
+        assert_eq!(mark(&conn), None);
     }
 }

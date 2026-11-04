@@ -13,8 +13,8 @@
 //   reached the hub's newest record (ms), "password_changed" → the last password change
 //   the hub told, "offline:<publication>" → every blob of it is cached;
 // - "records": the account's sync records, still encrypted: { kind, id, seq, data }
-//   (data a Uint8Array, null for a record the hub deleted); changes made here are
-//   written here first;
+//   (data a Uint8Array, null for a deleted record; a deletion made here also has
+//   deleted_at, Unix seconds); changes made here are written here first;
 // - "outbox": { kind, id } of the records changed here and not pushed yet;
 // - "copies": books opened from book files (bookfile.js): { publication,
 //   content_key, title, authors, key_id, imported_at }; "files": their sealed blobs
@@ -458,7 +458,9 @@ export async function remoteWins(key, remote, local) {
     return false;
   }
   if (!local || !local.data) {
-    return true;
+    // A deletion made here loses only to a later change (the book put back on the
+    // shelf), not to the state it deleted.
+    return !(local && Number.isFinite(local.deleted_at) && r.time <= local.deleted_at);
   }
   const l = await stamp(key, local.kind, local.id, local.data);
   return !l || newer(r, l);
@@ -544,11 +546,14 @@ export async function push(p, { keepalive = false } = {}) {
     const batch = entries.slice(at, at + PUSH_BATCH);
     const records = (await tx(p, ["records"], "readonly", (t) =>
       Promise.all(batch.map((e) => done(t.objectStore("records").get([e.kind, e.id]))))))
-      .filter((r) => r && r.data && r.data.length <= MAX_RECORD_BYTES);
+      .filter((r) => r && (!r.data || r.data.length <= MAX_RECORD_BYTES));
     if (!records.length) {
       continue;
     }
-    const body = JSON.stringify({ records: records.map((r) => ({ kind: r.kind, id: r.id, data: c.base64url(r.data) })) });
+    // A record without data is a deletion (`null`, as the hub takes it).
+    const body = JSON.stringify({
+      records: records.map((r) => ({ kind: r.kind, id: r.id, data: r.data ? c.base64url(r.data) : null })),
+    });
     const response = await api("sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -635,6 +640,19 @@ export async function write(p, kind, id, value) {
   const data = await c.sealRecord(p.aes, kind, id, plain);
   await tx(p, ["records", "outbox"], "readwrite", (t) => {
     t.objectStore("records").put({ kind, id, seq: null, data });
+    t.objectStore("outbox").put({ kind, id });
+  });
+}
+
+/**
+ * Deletes record `id` of `kind` here (a tombstone, `data` null) and queues the
+ * deletion for the hub. Used for a shelf item: the book leaves the Bookshelf on every
+ * device of the account, and the library completes the removal.
+ */
+export async function remove(p, kind, id) {
+  const deletedAt = Math.floor(Date.now() / 1000);
+  await tx(p, ["records", "outbox"], "readwrite", (t) => {
+    t.objectStore("records").put({ kind, id, seq: null, data: null, deleted_at: deletedAt });
     t.objectStore("outbox").put({ kind, id });
   });
 }

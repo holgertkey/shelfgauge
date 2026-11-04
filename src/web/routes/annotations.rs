@@ -507,6 +507,7 @@ pub(crate) async fn position(
                     suffix: quote.suffix,
                     progress,
                     updated_at: now(),
+                    finished_at: None,
                 },
             )?;
             Ok(())
@@ -515,22 +516,58 @@ pub(crate) async fn position(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// `POST /book/{id}/finished` (form): marks the book as finished, which takes it off
-/// the "Currently reading" list; back to the library page.
+/// The form of `POST /book/{id}/finished`.
+#[derive(Debug, Deserialize)]
+pub(crate) struct FinishedForm {
+    /// `1` marks the book finished, `0` unmarks it (a form without it marks: a page
+    /// from before the toggle).
+    #[serde(default = "FinishedForm::mark")]
+    finished: String,
+    /// `book` goes back to the book card, anything else to the library page.
+    #[serde(default)]
+    back: String,
+}
+
+impl FinishedForm {
+    fn mark() -> String {
+        "1".to_owned()
+    }
+}
+
+/// `POST /book/{id}/finished` (form, `finished=1|0`): marks the book as finished,
+/// which takes it off the "Currently reading" list, or unmarks it; the position and
+/// the progress are kept. A book without a position is left as it is. Back to the
+/// book card with `back=book`, otherwise to the library page.
 pub(crate) async fn finished(
     State(state): State<AppState>,
     current: CurrentProfile,
     Path(id): Path<String>,
+    form: Result<axum::Form<FinishedForm>, axum::extract::rejection::FormRejection>,
 ) -> Result<Redirect, AppError> {
     let id = parse_id(&id)?;
+    let (finished, back) = match form {
+        Ok(axum::Form(form)) => (form.finished != "0", form.back),
+        Err(_) => (true, String::new()),
+    };
     state
         .user_db(move |state, index| {
             let (_, snapshot) = readable_book(index, id)?;
-            store::mark_finished(&state.userdata().lock(), current.id(), &snapshot.key, now())?;
+            store::set_finished(
+                &state.userdata().lock(),
+                current.id(),
+                &snapshot.key,
+                finished,
+                now(),
+            )?;
             Ok(())
         })
         .await?;
-    Ok(Redirect::to(&state.urls().home()))
+    let urls = state.urls();
+    Ok(Redirect::to(&if back == "book" {
+        urls.book(id)
+    } else {
+        urls.home()
+    }))
 }
 
 /// `POST /reading/clear` (form): empties the "Currently reading" list (the positions
@@ -750,13 +787,10 @@ pub(crate) fn also_reading(
         .collect())
 }
 
-/// "read 37 %" or "finished" for a progress in per mille.
+/// "read 37 %" for a progress in per mille ("read 100 %" at the end: finished is the
+/// mark, not the progress).
 pub(crate) fn progress_label(progress: u16) -> String {
-    if progress >= 1000 {
-        "finished".to_owned()
-    } else {
-        format!("read {} %", progress / 10)
-    }
+    format!("read {} %", progress.min(1000) / 10)
 }
 
 #[cfg(test)]
@@ -791,6 +825,6 @@ mod tests {
     fn progress_labels() {
         assert_eq!(progress_label(0), "read 0 %");
         assert_eq!(progress_label(379), "read 37 %");
-        assert_eq!(progress_label(1000), "finished");
+        assert_eq!(progress_label(1000), "read 100 %");
     }
 }

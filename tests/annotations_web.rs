@@ -632,10 +632,13 @@ async fn reading_position() {
         card.contains(&format!("read?at={p21}\">Continue")),
         "{card}"
     );
-    // The last block of the main text: finished.
+    // The last block of the main text: read 100 %, but not marked finished.
     let last = server.block_of(id, &para(3, 4)).await;
     server.json(&url, serde_json::json!({"block": last})).await;
-    assert!(server.ok(&format!("/book/{id}")).await.contains("finished"));
+    let card = server.ok(&format!("/book/{id}")).await;
+    assert!(card.contains("read 100 %"), "{card}");
+    assert!(card.contains("aria-pressed=\"false\""), "{card}");
+    assert!(!card.contains("aria-pressed=\"true\""), "{card}");
     // Invalid blocks.
     let reply = server
         .json(&url, serde_json::json!({"block": "b9999"}))
@@ -653,7 +656,7 @@ async fn reading_position() {
     // `remember_position = false`: hidden, and nothing is saved.
     let off = lib.server(|c| c.reader.remember_position = false);
     let card = off.ok(&format!("/book/{id}")).await;
-    assert!(!card.contains("Continue reading") && !card.contains("finished"));
+    assert!(!card.contains("Continue reading") && !card.contains("finished-toggle"));
     let read = off.ok(&format!("/book/{id}/read")).await;
     assert!(read.contains("data-position=\"\""), "{read}");
     off.json(&url, serde_json::json!({"block": p21})).await;
@@ -1110,9 +1113,11 @@ async fn currently_reading_list() {
         "{home}"
     );
 
-    // Mark as finished: off the list, "finished" on the card.
+    // Mark as finished (the library page's button): off the list, the toggle pressed
+    // on the card, the progress kept.
+    assert!(home.contains("name=\"finished\" value=\"1\""), "{home}");
     let reply = server
-        .form(&format!("/book/{}/finished", ids[1]), &[])
+        .form(&format!("/book/{}/finished", ids[1]), &[("finished", "1")])
         .await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER);
     assert_eq!(reply.location(), "/");
@@ -1121,11 +1126,46 @@ async fn currently_reading_list() {
         !home.contains(">Book b</a>") && home.contains(">Book a</a>"),
         "{home}"
     );
+    let card = server.ok(&format!("/book/{}", ids[1])).await;
+    assert!(card.contains("aria-pressed=\"true\""), "{card}");
+    assert!(card.contains("name=\"finished\" value=\"0\""), "{card}");
+    assert!(card.contains("read 1"), "{card}");
+    // A form without the field (a page from before the toggle) marks too.
+    let reply = server
+        .form(&format!("/book/{}/finished", ids[1]), &[])
+        .await;
+    assert_eq!(reply.location(), "/");
+    assert!(!server.ok("/").await.contains(">Book b</a>"));
+
+    // Unmark from the card: back on the list, back to the card.
+    let reply = server
+        .form(
+            &format!("/book/{}/finished", ids[1]),
+            &[("finished", "0"), ("back", "book")],
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::SEE_OTHER);
+    assert_eq!(reply.location(), format!("/book/{}", ids[1]));
+    assert!(server.ok("/").await.contains(">Book b</a>"));
+    let card = server.ok(&format!("/book/{}", ids[1])).await;
+    assert!(card.contains("aria-pressed=\"false\""), "{card}");
+    // Reading a marked book keeps the mark.
+    server
+        .form(&format!("/book/{}/finished", ids[1]), &[("finished", "1")])
+        .await;
+    let p1 = server.block_of(ids[1], &para(2, 1)).await;
+    server
+        .json(
+            &format!("/book/{}/position", ids[1]),
+            serde_json::json!({"block": p1}),
+        )
+        .await;
+    assert!(!server.ok("/").await.contains(">Book b</a>"));
     assert!(
         server
             .ok(&format!("/book/{}", ids[1]))
             .await
-            .contains("finished")
+            .contains("aria-pressed=\"true\"")
     );
 
     // Clear the list: the positions stay on the cards.
@@ -1250,6 +1290,7 @@ async fn reattach_and_cleanup_cover_every_profile() {
                     suffix: mark.quote.text.clone(),
                     progress: 300,
                     updated_at: 5,
+                    finished_at: None,
                 },
             )
             .unwrap();

@@ -361,11 +361,19 @@ in the core crate), `src/web/routes/annotations.rs`, `assets/reader.js`/`reader.
   offers
   "Continue reading" / "Read from the start" and shows progress; an explicit `?at=`
   always wins. `[reader] remember_position` turns it off.
-- **Currently reading** (library page): the unfinished books with a position, most
-  recently read first, up to `library.reading_list_size`, only books whose content key
-  is live in the index. "Mark as finished" sets the progress to 100 %; "Clear list"
-  sets `reading_positions.dismissed_at` (userdata schema v2) and keeps the positions;
-  the next saved position (reading again, not re-attaching) clears it.
+- **Currently reading** (library page): the books with a position and no finished
+  mark (whatever their progress), most recently read first, up to
+  `library.reading_list_size`, only books whose content key is live in the index.
+  The finished mark (0.23.0, userdata schema v9) is `reading_positions.finished_at`
+  (Unix seconds, `NULL` = not finished), a toggle (`POST /book/{id}/finished`,
+  `finished=1|0`, on the list and on the book card): it never changes the progress,
+  bumps `updated_at` (so it syncs as a position change), and a saved position keeps it
+  (reading a marked book does not unmark it); only a book with a position can be
+  marked. The migration marked the positions at progress 1000 (the old **Mark as
+  finished** set it) at their `updated_at`. "Family is reading" and the statistics
+  use the mark too. "Clear list" sets `reading_positions.dismissed_at` (userdata
+  schema v2) and keeps the positions; the next saved position (reading again, not
+  re-attaching) clears it.
 - **Implementation notes.**
   - Offsets count code points of a block's *rendered text*, which must equal the
     browser's `textContent` of `id="b<n>"`: containers concatenate their children with
@@ -1089,9 +1097,16 @@ Phase 26: `assets/hub/` (`hub.js` pages, `store.js` IndexedDB and API calls,
   record could add the library's avatar later).
 - **Shelf** (`/`): pulled records (`GET /api/sync`) are stored encrypted and opened
   when the page is drawn; a shelf item counts only if its record id equals
-  `shelf_id` of its content key. "Currently reading" (with a position below 100 %,
-  newest first), then the other books by title, each with its library's name. Offline
-  it shows the books as of the last pull.
+  `shelf_id` of its content key. "Currently reading" (with a position and no finished
+  mark, newest first), then the other books by title ("On the shelf"), each with its
+  library's name. Every book with a position has the finished toggle (writes the
+  position record with `finished_at` and a new `updated_at`; `savePosition` carries
+  the mark over); the books under "On the shelf" have **Remove from the Bookshelf**
+  (0.23.0): after a confirmation the reader writes a tombstone of the shelf item
+  (`store.remove`, a record with `data: null` and a local `deleted_at`, pushed as a
+  deletion; a pulled record older than that local deletion does not undo it) and
+  drops this device's book file copy and cached blobs. Offline it shows the books as
+  of the last pull; the changes wait in the outbox.
 - **Reading view** (`/r/<id>?part=<n>`): the shelf item gives the book key; the
   manifest and the part are fetched, opened (`crypto.js`) and rendered by the WASM
   module, and the page — the instance's `read.html` markup — is filled in (title,
@@ -1231,7 +1246,10 @@ card's shelf section and the sync worker
   (publication id, book key, content key, title, authors, instance, kind,
   format version, `updated_at`), `annotation` (the §10 row without the local book id
   hint and `anchor_lost`; `deleted_at` for a deletion by the person), `position` (block, offset, suffix, progress per mille,
-  `updated_at`). Binary values are base64url.
+  `updated_at`, `finished_at`: the finished mark, `null` if none; 0.23.0). Binary
+  values are base64url. A `position` without the `finished_at` key (a 0.22 client)
+  keeps the library's mark in a merge, and for a new row (and in the reader) counts
+  as finished at its `updated_at` when its progress is 1000 (the old mark).
 - **Push** (`hub_client::sync::push`): batches of 200 outbox entries; the user-data
   lock is never held during a hub call; an entry leaves the outbox only if its record
   reads the same after the push (a change made meanwhile stays queued). Records sealed
@@ -1251,8 +1269,14 @@ card's shelf section and the sync worker
   sealed under the account key at their place, ids matching (`shelf_id`,
   `position_id`, the annotation's own id), another profile's annotation id is never
   written. A `null` annotation or position on the hub (the book left the shelf) never
-  touches local data; a `null` shelf item not older than the local entry takes the
-  book off this library's shelf. Records of books this library lacks are stored with
+  touches local data; a `null` shelf item not older than the local entry (a member
+  removed the book from the Bookshelf on a phone, 0.23.0) starts this library's own
+  removal: the entry becomes `removing` and the book is queued, and the same sync
+  round (a `removing` pass after the pull) deletes this library's publication on the
+  hub and pushes the marks and the position as deletions there; the library keeps
+  them, so the book comes back with them when it is published again. (Each profile's
+  shelf entry has its own publication: the removal never touches another member's
+  copy.) Records of books this library lacks are stored with
   book id 0 and attach when the book appears (§10); the cleanup after a scan never
   marks the marks of a book on a hub shelf as removed, so they wait as long as the
   book is on the shelf. Ties compare the plaintext bytes as pushed or stored, never a
@@ -1261,7 +1285,8 @@ card's shelf section and the sync worker
   instance is an entry with `own = 0` ("from `<instance>`" on the card).
 - **Worker** (`web::hub_sync`, started by `serve`): one task; every 30 s it pushes
   profiles with queued changes; every `sync_interval_minutes` (and at start) a full
-  sync (`sync::sync_once`: push, finish `removing` entries, pull and merge, expiry),
+  sync (`sync::sync_once`: push, finish `removing` entries, pull and merge, finish the
+  removals the pull started, expiry),
   recorded in `hub_accounts.synced_at` / `sync_error`; failures back off doubling up to
   an hour (an unauthorized token: an hour). Pulled annotations rewrite the books'
   Markdown export. **Sync now** on the hub page runs the same full sync. Logs counts

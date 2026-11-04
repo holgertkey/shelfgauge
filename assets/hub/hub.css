@@ -55,6 +55,29 @@
   font-size: 0.85rem;
 }
 
+/* A book's buttons (hub.js, bookActions): the finished toggle (style.css's
+   .finished-toggle) and Remove from the Bookshelf, at the end of the line. */
+.hub-book-actions {
+  display: inline-flex;
+  align-self: center;
+  gap: 0.25rem;
+  margin-left: auto;
+}
+
+.hub-book .hub-progress + .hub-book-actions,
+.hub-book .hub-progress + .hub-book-library + .hub-book-actions {
+  margin-left: 0;
+}
+
+.hub-book-actions .icon-button {
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.hub-book-actions .hub-remove:hover {
+  color: var(--error);
+}
+
 .hub-sync {
   font-size: 0.9rem;
 }
@@ -298,6 +321,13 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    min-height: 2.75rem;
+  }
+
+  /* One finger wide. */
+  .hub-book-actions .icon-button {
+    justify-content: center;
+    min-width: 2.75rem;
     min-height: 2.75rem;
   }
 }
