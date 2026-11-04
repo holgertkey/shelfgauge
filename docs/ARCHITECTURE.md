@@ -1157,11 +1157,12 @@ Phase 26: `assets/hub/` (`hub.js` pages, `store.js` IndexedDB and API calls,
   a network error, a timeout or a `5xx` from the reverse proxy in front of a hub that
   is down — from the cache; the rest of the API is never cached (a `5xx` there is
   "unreachable" for the app, not an error). A full storage only means no offline
-  copy: the worker still serves, and the shelf says "offline" only when every blob
-  is in the cache. IndexedDB connections close on `versionchange` (a newer app in
+  copy: the worker still serves, and a book counts as kept on the device ("This
+  device") only when every blob is in the cache. IndexedDB connections close on `versionchange` (a newer app in
   another tab upgrades the database) and the page reloads. Only ciphertext is
   cached. After a book is opened the app fetches all its blobs once more through the
-  worker and marks it "offline" on the shelf; the shelf deletes the copies of books
+  worker and flags it (`offline:<publication>`; the shelf shows no badge for it since
+  0.23.0); the shelf deletes the copies of books
   that left it; forgetting the pairing deletes all. `manifest.webmanifest` (standalone,
   start URL and scope = the base path) makes the reader installable — on iOS a home
   screen app escapes Safari's 7-day eviction of unused sites; the unpaired page says

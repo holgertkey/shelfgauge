@@ -47,26 +47,26 @@
   overflow-wrap: anywhere;
 }
 
-.hub-book .hub-progress {
-  margin-left: auto;
+/* The library a book came from, its percentage and its buttons (hub.js, bookActions:
+   the finished toggle, style.css's .finished-toggle, and Remove from the Bookshelf):
+   a line of their own under the title, the buttons at the right. */
+.hub-book-row {
+  display: flex;
+  flex-basis: 100%;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
 }
 
-.hub-book .hub-offline {
-  font-size: 0.85rem;
+/* The library the book came from: at the left of that line. */
+.hub-book-row .hub-book-from {
+  margin-right: auto;
+  overflow-wrap: anywhere;
 }
 
-/* A book's buttons (hub.js, bookActions): the finished toggle (style.css's
-   .finished-toggle) and Remove from the Bookshelf, at the end of the line. */
 .hub-book-actions {
   display: inline-flex;
-  align-self: center;
   gap: 0.25rem;
-  margin-left: auto;
-}
-
-.hub-book .hub-progress + .hub-book-actions,
-.hub-book .hub-progress + .hub-book-library + .hub-book-actions {
-  margin-left: 0;
 }
 
 .hub-book-actions .icon-button {

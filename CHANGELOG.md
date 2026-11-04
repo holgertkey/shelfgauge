@@ -25,6 +25,8 @@ the hub's expiry or a removal by hand).
   the hub at its next sync, and keeps the bookmarks, quotes and the reading position,
   so the book comes back with them when it is sent again (Read on phone, Get this
   book on the Showcase, or its book file opened again).
+  A book's library ("from …"), its percentage and its buttons are on a line of their
+  own under the title and the authors, the buttons at the right.
 - **Page numbers** in the reader, the library's and the hub's: while the top bar is
   shown (a tap in the middle of the page, a scroll up), the status line gives the
   page of the book and of the chapter, such as `245 / 1250, 1 / 34`, instead of the
@@ -46,6 +48,8 @@ the hub's expiry or a removal by hand).
   (progress 100 %) count as marked, so they stay off "Currently reading" after the
   upgrade. The library's user data moves to a new schema: a 0.22.0 build does not
   open it.
+- The Bookshelf no longer marks books "offline" or "file · offline": books read
+  here open without a connection all the same.
 - **Bookshelf and Showcase tabs** in the hub reader: the shelf (called Bookshelf now,
   My books before) and the Showcase are two tabs at the top of the page, styled as
   the library's Authors | Folders switch, instead of the Showcase button on the shelf

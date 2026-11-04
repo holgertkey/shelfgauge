@@ -248,26 +248,12 @@ function bookItem(item) {
   const link = target
     ? el("a", { href: `${base}/r/${target}` }, item.title || "Untitled")
     : el("strong", {}, item.title || "Untitled");
-  const meta = [];
-  if (item.authors) {
-    meta.push(item.authors);
-  }
-  if (item.instance) {
-    meta.push(`from ${item.instance}`);
-  }
   const li = el("li", { class: "hub-book" }, link);
-  if (meta.length) {
-    li.append(el("span", { class: "muted" }, meta.join(" · ")));
+  if (item.authors) {
+    li.append(el("span", { class: "muted" }, item.authors));
   }
-  if (item.copy) {
-    li.append(el("span", { class: "muted hub-offline", title: "Opened from a book file: kept on this device, opens without a connection" }, "file · offline"));
-  } else if (item.offline) {
-    li.append(el("span", { class: "muted hub-offline", title: "Saved on this device: opens without a connection" }, "offline"));
-  } else if (!target) {
+  if (!target) {
     li.append(el("span", { class: "muted hub-file-hint" }, "Open its book file on this device"));
-  }
-  if (item.position && Number.isFinite(item.position.progress)) {
-    li.append(el("span", { class: "muted hub-progress" }, `${Math.min(Math.floor(item.position.progress / 10), 100)} %`));
   }
   return li;
 }
@@ -365,7 +351,17 @@ function renderShelf(items, status, { head = [], showLibrary = false, changed = 
     if (showLibrary && i.library) {
       li.append(el("span", { class: "muted hub-book-library" }, i.library));
     }
-    li.append(bookActions(i, reading.includes(i), changed));
+    // The library it came from (at the left), the percentage and the buttons (at the
+    // right): a line of their own, whatever the length of the title.
+    const row = el("div", { class: "hub-book-row" });
+    if (i.instance) {
+      row.append(el("span", { class: "muted hub-book-from" }, `from ${i.instance}`));
+    }
+    if (i.position && Number.isFinite(i.position.progress)) {
+      row.append(el("span", { class: "muted hub-progress" }, `${Math.min(Math.floor(i.position.progress / 10), 100)} %`));
+    }
+    row.append(bookActions(i, reading.includes(i), changed));
+    li.append(row);
     return li;
   };
   if (reading.length) {
@@ -380,13 +376,11 @@ function renderShelf(items, status, { head = [], showLibrary = false, changed = 
   show(...nodes);
 }
 
-/** The shelf of account `p` with each book's offline state and its book file copy here. */
+/** The shelf of account `p` with each book's book file copy here. */
 async function shelfItems(p) {
   const items = await store.shelf(p);
-  const offline = await store.offline(p).catch(() => new Set());
   const copies = await store.copies(p).catch(() => []);
   for (const item of items) {
-    item.offline = offline.has(item.publication);
     item.library = libraryName(p);
     item.account = p;
     // The newest copy of the book.
@@ -510,7 +504,7 @@ async function shelfPage() {
       if (!unreachable(e)) {
         console.error(e);
       }
-      status = "Offline: showing the books as of the last update. Books marked offline open.";
+      status = "Offline: showing the books as of the last update. Books saved on this device open.";
     }
   }
   await dropUnshelved(all);
