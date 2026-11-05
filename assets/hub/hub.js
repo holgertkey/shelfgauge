@@ -14,7 +14,7 @@
 import * as account from "./account.js";
 import * as bookfile from "./bookfile.js";
 import * as c from "./crypto.js";
-import { showcasePage } from "./showcase.js";
+import { bookId, libraryOnlineAt, onlineNode, refusalText, requestBook, showcasePage } from "./showcase.js";
 import * as store from "./store.js";
 
 const SHARE_SCALE = 10000;
@@ -251,7 +251,7 @@ function bookActions(item, reading, changed) {
 
 function bookItem(item) {
   // A book on the shelf as files only opens from a copy on this device.
-  const target = item.copy ? item.copy.publication : (item.kind === "file" ? null : item.publication);
+  const target = item.copy ? item.copy.publication : (item.kind === "file" ? null : (item.kept || item.publication));
   const link = target
     ? el("a", { href: `${base}/r/${target}` }, item.title || "Untitled")
     : el("strong", {}, item.title || "Untitled");
@@ -394,6 +394,7 @@ async function shelfItems(p) {
     item.copy = copies
       .filter((copy) => copy.content_key === item.content_key)
       .sort((a, b) => b.imported_at - a.imported_at)[0] || null;
+    item.kept = item.kind === "file" ? null : await keptCopy(p, item);
   }
   return items;
 }
@@ -411,15 +412,50 @@ async function syncAccount(p) {
   return p;
 }
 
-/** Drops the downloaded blobs of publications no account here has on its shelf. */
+/**
+ * Drops the downloaded blobs (and offline marks) of publications no account here has
+ * on its shelf. A book kept whole here whose shelf item moved to a new publication
+ * (the library sent it again for another device, Phase 31.6) stays until the new one
+ * is here as a whole: it opens in its place (`keptCopy`).
+ */
 async function dropUnshelved(all) {
   const kept = new Set();
+  const marked = [];
   for (const a of all) {
-    for (const i of await store.shelf(a).catch(() => [])) {
+    const shelf = await store.shelf(a).catch(() => []);
+    const marks = await store.offlineMarks(a).catch(() => new Map());
+    marked.push([a, marks]);
+    const current = new Map(shelf.map((i) => [i.content_key, i.publication]));
+    for (const i of shelf) {
       kept.add(i.publication);
+    }
+    for (const [id, key] of marks) {
+      const now = key === null ? undefined : current.get(key);
+      if (now !== undefined && now !== id && !marks.has(now)) {
+        kept.add(id);
+      }
     }
   }
   await store.dropBlobs((id) => !kept.has(id)).catch((e) => console.error(e));
+  for (const [a, marks] of marked) {
+    const gone = [...marks.keys()].filter((id) => !kept.has(id));
+    if (gone.length) {
+      await store.forgetMarks(a, gone).catch((e) => console.error(e));
+    }
+  }
+}
+
+/**
+ * The publication kept whole here of shelf item `item` of account `p` in place of its
+ * own (an earlier publication of the same book), or null: none, or its own is here.
+ */
+async function keptCopy(p, item) {
+  const marks = await store.offlineMarks(p).catch(() => new Map());
+  if (marks.has(item.publication)) {
+    return null;
+  }
+  const found = [...marks].find(([id, key]) => id !== item.publication && key === item.content_key);
+  return found ? found[0] : null;
 }
 
 /** The notices of account `p`: a new device, a password changed elsewhere. */
@@ -1068,6 +1104,110 @@ function goneFromHub() {
   readerMessage("This book is no longer on the hub", "Its copy on the hub is gone: it was not opened for a long time, or the library deleted it. Ask the library to send it again.");
 }
 
+// How often the reading view looks for a book asked for again.
+const REQUEST_POLL_MS = 15000;
+
+/** How many days this hub keeps a book after it was last opened (0: always), or null. */
+async function expiryDays() {
+  const info = await store.api("info").then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  const days = info && info.limits ? info.limits.publication_expiry_days : null;
+  return Number.isInteger(days) ? days : null;
+}
+
+/**
+ * The reading view of shelf item `item` of account `p` whose copy on the hub is gone
+ * and not kept here (Phase 31.6: the hub keeps books only for a while): asks the
+ * library for it with a `book_request` (as the Showcase's Get this book; the library
+ * sends a book on the member's own shelf even from a closed folder) and waits,
+ * looking every REQUEST_POLL_MS; the book opens once its shelf item names a new
+ * publication. A refusal, or the book leaving the shelf, ends the wait. A book the
+ * hub's operator took down (`410`) is not asked for.
+ */
+async function askLibrary(p, item) {
+  if (await store.takenDown(p, item.publication).catch((e) => {
+    if (e instanceof store.Unpaired) {
+      throw e;
+    }
+    return false;
+  })) {
+    // A legal step of the hub's operator: the library is not asked to send it again.
+    readerMessage("This book is no longer on the hub", "The hub's operator took it down.");
+    return;
+  }
+  const text = document.querySelector("article.reader .text");
+  const name = libraryName(p);
+  const title = item.title || "Untitled";
+  const id = await bookId(c.unbase64url(item.content_key));
+  const days = await expiryDays();
+  const why = days ? `Its copy on the hub is gone (this hub keeps a book ${days} ${days === 1 ? "day" : "days"} after it was last opened), and it is not on this device.` : "Its copy on the hub is gone, and it is not on this device.";
+  let onlineAt = null;
+  let offline = false;
+  let asked = false;
+  const draw = () => {
+    const status = offline
+      ? "Offline: the request goes out once this device is online."
+      : `Asked ${name} for this book: it comes when its computer is on.`;
+    text.replaceChildren(el("div", { class: "hub-download" },
+      ...[
+        el("h1", {}, title),
+        el("p", {}, why),
+        el("p", { class: "notice hub-waiting", role: "status" }, status),
+        onlineNode(el, name, onlineAt),
+        el("p", {}, el("a", { href: `${base}/` }, "Bookshelf")),
+      ].filter(Boolean)));
+  };
+  // One look: false when the wait is over.
+  const look = async () => {
+    try {
+      p = await syncAccount(p);
+      offline = false;
+    } catch (e) {
+      if (e instanceof store.Unpaired) {
+        throw e;
+      }
+      offline = unreachable(e);
+      if (!offline) {
+        console.error(e);
+      }
+    }
+    const now = (await store.shelf(p)).find((i) => i.content_key === item.content_key);
+    if (!now) {
+      readerMessage("This book is no longer on your shelf", `${title} was taken off your Bookshelf.`);
+      return false;
+    }
+    if (now.publication !== item.publication) {
+      location.replace(`${base}/r/${now.publication}`);
+      return false;
+    }
+    const request = await store.get(p, "book_request", id).catch(() => null);
+    if (asked && request && request.state === "refused") {
+      readerMessage(`${name} did not send this book`, request.reason === "closed"
+        ? `${name} does not send ${title} any more. Ask its admin.`
+        : refusalText(name, request.reason));
+      return false;
+    }
+    if (asked && !request && !offline) {
+      // Answered, yet the shelf names the same publication: it is on the hub again.
+      if (await store.blob(p, item.publication, "manifest").catch(() => null)) {
+        location.reload();
+        return false;
+      }
+    }
+    if (!request || request.state !== "pending") {
+      await requestBook(p, id);
+      store.push(p).catch(() => {});
+    }
+    asked = true;
+    onlineAt = await libraryOnlineAt(p, onlineAt);
+    draw();
+    return true;
+  };
+  draw();
+  while (await look()) {
+    await after(REQUEST_POLL_MS);
+  }
+}
+
 /**
  * Puts the whole of `book` (a hub publication) on this device before it opens: every
  * blob not in the cache yet, four at a time through the Service Worker, with a
@@ -1076,8 +1216,9 @@ function goneFromHub() {
  *
  * Resolves with true when the book is on this device as a whole (marked offline),
  * false when it can only open from the network (no Service Worker controls this page:
- * nothing is kept), and null when it does not open (a message is shown: gone from the
- * hub, not enough space). Throws `store.Unpaired`.
+ * nothing is kept), "gone" when its copy on the hub went during the download, and null
+ * when it does not open (a message is shown: not enough space). Throws
+ * `store.Unpaired`.
  */
 async function downloadBook(book) {
   if (book.copy) {
@@ -1095,7 +1236,7 @@ async function downloadBook(book) {
     const todo = await store.missing(book.id, paths);
     let done = total - todo.length;
     if (!todo.length) {
-      await store.markOffline(book.p, book.id);
+      await store.markOffline(book.p, book.id, book.summary.content_key);
       return true;
     }
     if (first) {
@@ -1145,8 +1286,7 @@ async function downloadBook(book) {
       throw failure;
     }
     if (failure === "gone") {
-      goneFromHub();
-      return null;
+      return "gone";
     }
     if (failure === "space") {
       text.replaceChildren(el("div", { class: "hub-download" },
@@ -1630,6 +1770,13 @@ async function findAccount(id) {
       return { p, copy: null, sealed: await store.blob(p, id, "manifest") };
     }
   }
+  // An earlier publication of a shelf book, kept whole here (`keptCopy`).
+  for (const p of all) {
+    const key = (await store.offlineMarks(p).catch(() => new Map())).get(id);
+    if (key) {
+      return { p, copy: null, sealed: await store.blob(p, id, "manifest"), kept: key };
+    }
+  }
   // A link of a book not on the shelf yet: the hub answers only the library's members.
   for (const p of all) {
     try {
@@ -1754,12 +1901,21 @@ async function readerPage(id) {
       return;
     }
     if (!found.sealed) {
-      const fileItem = (await store.shelf(found.p)).find((i) => i.publication === id && i.kind === "file");
-      if (fileItem) {
-        readerMessage(`Open the book file of “${fileItem.title}”`, "This book is on your shelf as a book file: the hub has no copy. Open the file on this device with Open file at the top of the Bookshelf.");
+      const shelfItem = (await store.shelf(found.p)).find((i) => i.publication === id);
+      if (shelfItem && shelfItem.kind === "file") {
+        readerMessage(`Open the book file of “${shelfItem.title}”`, "This book is on your shelf as a book file: the hub has no copy. Open the file on this device with Open file at the top of the Bookshelf.");
         return;
       }
-      goneFromHub();
+      if (!shelfItem) {
+        goneFromHub();
+        return;
+      }
+      const kept = await keptCopy(found.p, shelfItem);
+      if (kept) {
+        location.replace(`${base}/r/${kept}${location.search}${location.hash}`);
+        return;
+      }
+      await askLibrary(found.p, shelfItem);
       return;
     }
     const opened = await bookKey(found.p, id, found.sealed);
@@ -1771,12 +1927,25 @@ async function readerPage(id) {
     const key = opened.key;
     const sealed = found.sealed;
     const copy = found.copy;
-    let item = (await store.shelf(p)).find((i) => (copy ? i.content_key === copy.content_key : i.publication === id));
+    let item = (await store.shelf(p)).find((i) => (copy
+      ? i.content_key === copy.content_key
+      : i.publication === id || (found.kept && i.content_key === found.kept)));
+    if (found.kept && !item) {
+      // A kept earlier publication of a book that left the shelf: not put back on it.
+      readerMessage("This book is no longer on your shelf", "Its copy on this device goes at the next sync.");
+      return;
+    }
     if (!copy && item) {
       // A book file's copy of the same book on this device opens without the hub.
       const other = (await store.copies(p)).find((x) => x.publication !== id && x.content_key === item.content_key);
       if (other) {
         location.replace(`${base}/r/${other.publication}${location.search}${location.hash}`);
+        return;
+      }
+      // So does an earlier publication of it kept whole here.
+      const kept = item.publication === id ? await keptCopy(p, item) : null;
+      if (kept) {
+        location.replace(`${base}/r/${kept}${location.search}${location.hash}`);
         return;
       }
     }
@@ -1807,7 +1976,12 @@ async function readerPage(id) {
       readerMessage("This book could not be opened", "Its shelf entry does not match the published book. Publish it again from your library.");
       return;
     }
-    if ((await downloadBook(book)) === null) {
+    const downloaded = await downloadBook(book);
+    if (downloaded === "gone") {
+      await askLibrary(p, item);
+      return;
+    }
+    if (downloaded === null) {
       return;
     }
     const params = new URLSearchParams(location.search);

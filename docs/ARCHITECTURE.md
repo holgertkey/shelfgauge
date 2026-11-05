@@ -1136,6 +1136,19 @@ Phase 26: `assets/hub/` (`hub.js` pages, `store.js` IndexedDB and API calls,
   library: dropped at the device's next sync), by **Remove downloaded books**, by
   signing out, or at once on an operator's takedown (`410`); a `404` (expiry, or a
   deletion whose tombstone the device has not pulled yet) keeps it.
+- **The hub as a mailbox** (Phase 31.6): a short `publication_expiry_days` (a hub
+  setting, default 0 = never; `/api/info` names it) keeps books on the hub only for
+  a few days; nothing else on the hub changes. A shelf book whose copy is gone, with
+  none on the device (`!found.sealed`, or a `404` during the download), opens
+  `askLibrary` in `hub.js`: a `book_request` (the catalog book id of the shelf item's
+  content key, `requestBook` in `showcase.js`, later than an earlier answer kept
+  here), the library's online line, and a look every 15 s (a sync); the book opens
+  when its shelf item names a new publication, a refusal or the item leaving the
+  shelf ends the wait. A republish gives a new publication id; the offline flag holds
+  the book's content key (`{ content_key }`), so a device keeps its earlier copy while
+  the book is on the shelf and the new publication is not here as a whole
+  (`dropUnshelved`), and the Bookshelf and the reading view open it in its place
+  (`keptCopy`).
 - **Marks and position on the device**: `reader.js` reads and writes through a data
   source (`window.shelfgaugeSource`: `page`, `lists`, `create`, `remove`,
   `savePosition`, `find`); the instance's source is the server as before, the hub's
@@ -1438,7 +1451,15 @@ and away, and the circles of libraries later.
   when serving fails. Every 30 s the library asks `pending` and pulls only the
   accounts ahead of their cursor. A `book_request` is served only if the book is on
   the Showcase *now* (a member's catalog may be stale, and anyone with the library key
-  can name any book id): published to that account as **Read on phone** does (one
+  can name any book id), or (Phase 31.6) it is on the requesting account's own shelf
+  as an upload, published or expired (`hub_shelf`: the admin's earlier **Read on
+  phone**, also from a closed folder; another account's shelf does not count; an
+  entry a device wrote, a book opened by a link, only for a content key this library
+  itself uploaded for some account, which every member could open). A shelf entry
+  still marked published is checked against the hub's listing first and marked
+  expired when its copy is gone, so a copy expired since the last full round, or a
+  link's copy, is sent again. The
+  book is published to that account as **Read on phone** does (one
   publication per requester), the request deleted; otherwise refused with a reason
   and an `updated_at` later than the request's, so it wins the devices' merge. A
   `cover_request` gets JPEG thumbnails 120 px wide (the `image` crate, decoding

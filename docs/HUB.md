@@ -176,10 +176,20 @@ rsync -a /srv/shelfgauge-hub/blobs/ /backup/blobs/
 
 **Expiry and takedowns**: `publication_expiry_days` frees the hub's disk by deleting
 its copy of a book nobody opened for that many days; the phones that have the book
-keep theirs and read it offline as long as it is on their Bookshelf (a phone without
-a copy says the book is no longer on the hub, until its library sends it again).
+keep theirs and read it offline as long as it is on their Bookshelf. A phone without
+a copy asks the book's library for it when the book is opened, and the library sends
+it again (a new copy on the hub) the next time its computer is on.
 `shelfgauge hub takedown <publication-id>` deletes the hub's copy too, and a phone that
 has one deletes it the next time it opens the book with a connection.
+
+**Keeping books only until delivered (a mailbox)**: with a small
+`publication_expiry_days` (3, say) the hub keeps the libraries' catalogs, shelves,
+marks and positions, but a book only for the few days its readers need to download
+it (the first open on a device downloads the whole book). Far less disk, and far
+fewer books stored on your server. The cost: a book sent to a phone and not opened
+within those days, or opened on a new device later, comes only once its library's
+computer is on again. The reader shows the number of days (from `/api/info`). The
+default, 0, keeps books until their library deletes them.
 
 **Updates**: replace the binary and `systemctl restart shelfgauge-hub`; the database
 migrates itself (from 0.18–0.20 see the README, "Upgrading from 0.18–0.20").

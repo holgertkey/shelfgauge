@@ -11,7 +11,9 @@
 // Each account has its own database "shelfgauge-account-<account>":
 // - "state": "seq" → the cursor of the last pull, "synced_at" → when a pull last
 //   reached the hub's newest record (ms), "password_changed" → the last password change
-//   the hub told, "offline:<publication>" → every blob of it is cached;
+//   the hub told, "offline:<publication>" → every blob of it is cached ({ content_key },
+//   or true from an older reader: the content key keeps a copy whose shelf item moved to
+//   a new publication, Phase 31.6);
 // - "records": the account's sync records, still encrypted: { kind, id, seq, data }
 //   (data a Uint8Array, null for a deleted record; a deletion made here also has
 //   deleted_at, Unix seconds); changes made here are written here first;
@@ -176,6 +178,10 @@ export async function forget(p) {
     }
     for (const copy of await copies(p)) {
       publications.add(copy.publication);
+    }
+    // Earlier publications of shelf books kept here (hub.js `keptCopy`).
+    for (const id of (await offlineMarks(p)).keys()) {
+      publications.add(id);
     }
   } catch (e) {
     // Its database is broken or gone: only the registry row is left to delete.
@@ -822,9 +828,43 @@ export async function storageInfo() {
   return info;
 }
 
-/** Notes that every blob of publication `id` of account `p` is cached. */
-export function markOffline(p, id) {
-  return tx(p, ["state"], "readwrite", (t) => t.objectStore("state").put(true, `offline:${id}`));
+/** Notes that every blob of publication `id` (book `contentKey`) of account `p` is cached. */
+export function markOffline(p, id, contentKey) {
+  return tx(p, ["state"], "readwrite", (t) => t.objectStore("state").put({ content_key: contentKey }, `offline:${id}`));
+}
+
+/**
+ * The publications of account `p` marked as kept whole here → their content key
+ * (null for a mark of an older reader).
+ */
+export async function offlineMarks(p) {
+  const marks = new Map();
+  await tx(p, ["state"], "readonly", async (t) => {
+    const state = t.objectStore("state");
+    const keys = (await done(state.getAllKeys())).filter((key) => typeof key === "string" && key.startsWith("offline:"));
+    const values = await Promise.all(keys.map((key) => done(state.get(key))));
+    keys.forEach((key, n) => {
+      const value = values[n];
+      marks.set(key.slice(8), value && typeof value.content_key === "string" ? value.content_key : null);
+    });
+  });
+  return marks;
+}
+
+/** Forgets the offline marks of the publications `ids` of account `p`. */
+export function forgetMarks(p, ids) {
+  return tx(p, ["state"], "readwrite", (t) => {
+    const state = t.objectStore("state");
+    for (const id of ids) {
+      state.delete(`offline:${id}`);
+    }
+  });
+}
+
+/** Whether the hub's operator took publication `id` down (`410` for its manifest). */
+export async function takenDown(p, id) {
+  const response = await api(`pub/${id}/manifest`, {}, p.token);
+  return response.status === 410;
 }
 
 /**

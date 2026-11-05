@@ -12,7 +12,8 @@
 //
 // "Get this book" writes a `book_request` record into the person's account; the
 // library publishes the book onto their shelf at its next check (every 30 s while its
-// computer is on), or refuses it (`refused` with a reason). A book card shows the
+// computer is on), or refuses it (`refused` with a reason). The reading view asks the
+// same way for a shelf book whose copy on the hub is gone (Phase 31.6, hub.js). A book card shows the
 // book's thumbnail: kept here, else fetched from the hub, else asked for with a
 // `cover_request` record (the library makes it at its next check). "Download book
 // file" makes a book file here from a published book's blobs (bookfile.js). Text from
@@ -201,20 +202,24 @@ async function refreshCatalog() {
 
 /** When the library's computer last checked in (from `GET /api/account`). */
 async function refreshOnline() {
+  onlineAt = await libraryOnlineAt(p, onlineAt);
+}
+
+/**
+ * When the library of account `account` last checked in with the hub (Unix seconds),
+ * or null (it does not let its members know); `known` when the hub cannot be asked.
+ */
+export async function libraryOnlineAt(account, known = null) {
   try {
-    const response = await store.api("account", {}, p.token);
+    const response = await store.api("account", {}, account.token);
     if (response.ok) {
       const at = (await response.json()).library_online_at;
-      onlineAt = Number.isFinite(at) ? at : null;
+      return Number.isFinite(at) ? at : null;
     }
   } catch (e) {
     // Offline: as known.
   }
-}
-
-/** Whether the library's computer is online now (as far as the hub knows). */
-function isOnline() {
-  return onlineAt !== null && Date.now() / 1000 - onlineAt < ONLINE_WITHIN_S;
+  return known;
 }
 
 /** "3 hours ago" for a Unix time in seconds. */
@@ -232,13 +237,34 @@ function ago(seconds) {
 
 /** A line on the library's computer: online, last online, or nothing when unknown. */
 function onlineLine() {
-  const name = ui.libraryName(p);
-  if (onlineAt === null) {
+  return onlineNode(ui.el, ui.libraryName(p), onlineAt);
+}
+
+/** Whether a library whose computer last checked in at `at` (or null) is online now. */
+function isOnlineAt(at) {
+  return at !== null && Date.now() / 1000 - at < ONLINE_WITHIN_S;
+}
+
+/** What a pending request to library `name` waits for, from its last check-in `at`. */
+export function waitingText(name, at) {
+  return isOnlineAt(at)
+    ? `Asked for it. ${name} is online: the book comes to your shelf within a minute.`
+    : at !== null
+      ? `Asked for it. Waiting for ${name} to come online (last online ${ago(at)}): it sends the book to your shelf when its computer is on.`
+      : `Asked for it. Waiting for ${name} to come online: it sends the book to your shelf when its computer is on.`;
+}
+
+/**
+ * The line saying whether library `name` is online, from its last check-in `at`
+ * (`libraryOnlineAt`), made with `el`; null when the library does not tell.
+ */
+export function onlineNode(el, name, at) {
+  if (at === null) {
     return null;
   }
-  return isOnline()
-    ? ui.el("p", { class: "muted hub-online", role: "status" }, ui.el("span", { class: "hub-online-dot", "aria-hidden": "true" }), ` ${name} is online.`)
-    : ui.el("p", { class: "muted hub-online", role: "status" }, `${name} was last online ${ago(onlineAt)}.`);
+  return isOnlineAt(at)
+    ? el("p", { class: "muted hub-online", role: "status" }, el("span", { class: "hub-online-dot", "aria-hidden": "true" }), ` ${name} is online.`)
+    : el("p", { class: "muted hub-online", role: "status" }, `${name} was last online ${ago(at)}.`);
 }
 
 /** The person's shelf and requests, by catalog book id. */
@@ -302,7 +328,11 @@ function bookState(entry) {
 }
 
 function refusal(reason) {
-  const name = ui.libraryName(p);
+  return refusalText(ui.libraryName(p), reason);
+}
+
+/** Why library `name` refused a book request, from its `reason`. */
+export function refusalText(name, reason) {
   switch (reason) {
     case "closed":
       return "This book is not on the Showcase any more.";
@@ -439,12 +469,7 @@ function actions(entry) {
     row.append(ui.el("a", { class: "button primary", href: `${base}/r/${entry.publication}` }, "Open"), " ");
   }
   if (state === "pending") {
-    const text = isOnline()
-      ? `Asked for it. ${name} is online: the book comes to your shelf within a minute.`
-      : onlineAt !== null
-        ? `Asked for it. Waiting for ${name} to come online (last online ${ago(onlineAt)}): it sends the book to your shelf when its computer is on.`
-        : `Asked for it. Waiting for ${name} to come online: it sends the book to your shelf when its computer is on.`;
-    nodes.push(ui.el("p", { class: "notice hub-waiting", role: "status" }, text));
+    nodes.push(ui.el("p", { class: "notice hub-waiting", role: "status" }, waitingText(name, onlineAt)));
     return nodes;
   }
   const get = ui.el("button", { type: "button", class: state === "published" ? "" : "primary" }, state === "refused" ? "Ask again" : "Get this book");
@@ -707,8 +732,7 @@ function genreTitle(code) {
 
 /** "Get this book": a request record, pushed at once; the answer comes by polling. */
 async function ask(entry) {
-  const value = { book: entry.id, reason: null, state: "pending", updated_at: Math.floor(Date.now() / 1000) };
-  await store.write(p, "book_request", entry.id, value);
+  const value = await requestBook(p, entry.id);
   requests.set(entry.id, value);
   render();
   try {
@@ -719,6 +743,20 @@ async function ask(entry) {
     }
   }
   poll();
+}
+
+/**
+ * Writes a pending request of account `account` for catalog book `id` (hex) and
+ * leaves it for the next push; the request's value. Later than an earlier answer kept
+ * here, so it wins the merge even when the library's clock is ahead of this device's.
+ */
+export async function requestBook(account, id) {
+  const earlier = await store.get(account, "book_request", id).catch(() => null);
+  const now = Math.floor(Date.now() / 1000);
+  const updatedAt = earlier && Number.isInteger(earlier.updated_at) ? Math.max(now, earlier.updated_at + 1) : now;
+  const value = { book: id, reason: null, state: "pending", updated_at: updatedAt };
+  await store.write(account, "book_request", id, value);
+  return value;
 }
 
 /** While a request waits, asks for the answers every POLL_MS. */

@@ -91,7 +91,8 @@ max_blob_bytes = 67108864
 # new books and marks are refused until space is freed.
 max_total_bytes = 0
 # A publication not opened for this many days is deleted (0 = never); the devices
-# that have it keep their copies.
+# that have it keep their copies. A few days (3) make the hub a mailbox: a device
+# without the book asks its library, which sends it again when its computer is on.
 publication_expiry_days = 0
 # API requests per minute and device token.
 requests_per_minute = 600

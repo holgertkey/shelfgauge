@@ -39,5 +39,7 @@ max_devices = 5
 # CHANGE: about 80 % of the free disk (here 20 GiB); 0 = no limit.
 max_total_bytes = 21474836480
 # Books not opened for half a year are deleted here (0 = never); phones that have
-# them keep their copies.
+# them keep their copies. A few days (3) make the hub a mailbox: it keeps books only
+# until the phones have them, and a phone without the book asks its library, which
+# sends it again when its computer is on.
 publication_expiry_days = 180

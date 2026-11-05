@@ -9,7 +9,24 @@ Build numbers (`+NNN`) do not get their own sections.
 ## [Unreleased]
 
 Phones get these changes from a hub of this version (the hub serves the reader app);
-the hub's routes, the formats and the library do not change.
+the hub's routes and the formats do not change. A library sends a book again on a
+member's request only from this version on.
+
+### Added
+
+- **The hub as a mailbox.** A hub can keep books only for a few days
+  (`publication_expiry_days` set to, say, 3): it then holds the libraries' catalogs,
+  shelves, marks and reading positions, and passes the books through. Opening a book
+  on the Bookshelf whose copy on the hub is gone, with no copy on the device (a new
+  device, a book not opened in time), now asks its library for it at once: the
+  reading view says "Asked `<library>` for this book: it comes when its computer is
+  on", with the library's online line and how long the hub keeps books, and opens
+  the book as soon as the library has sent it again. The library sends a book on the
+  member's own Bookshelf even when its folder is not on the Showcase (it went there
+  with Read on phone, or by a link to a book the library sent to the hub); another
+  member's book, a book no longer in the library or one protected by DRM is refused,
+  and the reading view says why. The default stays 0
+  (books are kept until deleted).
 
 ### Changed
 
@@ -23,7 +40,15 @@ the hub's routes, the formats and the library do not change.
   stays when the hub's copy expires (`publication_expiry_days`): it goes only with
   the book (removed from the Bookshelf on any device, **Delete for everyone** in the
   library, **Remove downloaded books**, signing out) or at once on an operator's
-  takedown. A device without a copy still says the book is no longer on the hub.
+  takedown. When the library sends a book again (for another device), a device
+  that has the earlier copy keeps reading it instead of downloading it once more.
+
+### Fixed
+
+- A book request reaching the library before it noticed that the book's copy on the
+  hub had expired (or for a book put on the shelf by a link, whose copy the library
+  never checks) was answered with nothing sent; the library now checks the hub first
+  and sends the book again.
 
 ## [0.23.0] - 2026-11-04
 

@@ -2114,6 +2114,333 @@ async fn a_forged_request_for_a_closed_book_is_refused() {
     assert_eq!(lib.value::<i64>("SELECT count(*) FROM hub_requests"), 0);
 }
 
+/// Deletes `lib`'s publication `id` on the hub, as the hub's expiry does.
+async fn expire_on_hub(hub: &TestHub, lib: &Lib, id: &str) {
+    let token = lib.hub_library().token.as_str().to_owned();
+    let (status, _) = hub
+        .api(Method::DELETE, &format!("pub/{id}"), Some(&token), None)
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+}
+
+/// The answer to book request `book` among the account's records: `None` once it is
+/// deleted (served).
+async fn request_answer(
+    hub: &TestHub,
+    token: &str,
+    key: &AccountKey,
+    book: &str,
+) -> Option<serde_json::Value> {
+    common::hub::pull_records(hub, token, key)
+        .await
+        .into_iter()
+        .find(|(kind, id, _)| kind == "book_request" && id == book)
+        .expect("the request record")
+        .2
+}
+
+/// Phase 31.6: a book sent with Read on phone from a closed folder, whose copy expired
+/// on the hub, is sent again when the member's device asks for it (the shelf entry is
+/// the admin's decision); the shelf item keeps its book, with a new publication.
+#[tokio::test]
+async fn an_expired_shelf_book_from_a_closed_folder_is_sent_again_on_request() {
+    use shelfgauge::hub_client::store::ShelfState;
+
+    let hub = TestHub::start().await;
+    let lib = showcase_library(&hub).await;
+    let phone = lib.phone(&hub).await;
+    open_folder(&lib, "sf", true).await;
+    let gamma = lib.book("closed/gamma.fb2");
+    assert_eq!(lib.publish(gamma).await, "published");
+    let old = lib.shelf()[0].clone();
+    let old_id = old.publication.unwrap().to_string();
+    expire_on_hub(&hub, &lib, &old_id).await;
+
+    let book = catalog_id(&lib, "closed/gamma.fb2");
+    ask(
+        &hub,
+        &phone.token,
+        &phone.key,
+        &book,
+        shelfgauge::annotations::now(),
+    )
+    .await;
+    lib.sync().await;
+    assert_eq!(
+        request_answer(&hub, &phone.token, &phone.key, &book).await,
+        None,
+        "served"
+    );
+    let new = lib.shelf()[0].clone();
+    assert_eq!(new.state, ShelfState::Published);
+    assert_eq!(new.content_key, old.content_key, "the same shelf item");
+    let new_id = new.publication.unwrap().to_string();
+    assert_ne!(new_id, old_id, "a new publication");
+    let (status, _) = hub.blob(&phone.token, &new_id, "manifest").await;
+    assert_eq!(status, StatusCode::OK);
+    let item = phone
+        .pull(&hub)
+        .await
+        .into_iter()
+        .find_map(|(kind, _, data)| (kind == "shelf_item").then_some(data))
+        .flatten()
+        .unwrap();
+    assert_eq!(item["publication"], new_id.as_str());
+    assert_eq!(item["title"], "Gamma");
+}
+
+/// Regression (Phase 31.6): a request pulled at a tick, before the full round noticed
+/// that the copy expired, must send the book again, not be answered with nothing (the
+/// shelf entry still said `published`).
+#[tokio::test]
+async fn a_request_for_a_copy_expired_since_the_last_round_sends_it_again() {
+    use shelfgauge::hub_client::store::ShelfState;
+
+    let hub = TestHub::start().await;
+    let lib = showcase_library(&hub).await;
+    let phone = lib.phone(&hub).await;
+    let gamma = lib.book("closed/gamma.fb2");
+    assert_eq!(lib.publish(gamma).await, "published");
+    let old_id = lib.shelf()[0].publication.unwrap().to_string();
+    expire_on_hub(&hub, &lib, &old_id).await;
+    assert_eq!(
+        lib.shelf()[0].state,
+        ShelfState::Published,
+        "not noticed yet"
+    );
+
+    // As the tick's pull keeps it.
+    let book = catalog_id(&lib, "closed/gamma.fb2");
+    ask(
+        &hub,
+        &phone.token,
+        &phone.key,
+        &book,
+        shelfgauge::annotations::now(),
+    )
+    .await;
+    let plain = serde_json::json!({
+        "book": book, "reason": null, "state": "pending", "updated_at": 1,
+    })
+    .to_string();
+    lib.userdata
+        .lock()
+        .execute(
+            "INSERT INTO hub_requests (profile_id, kind, record_id, plain, pulled_at)
+             VALUES (?1, 'book_request', ?2, ?3, 1)",
+            rusqlite::params![
+                shelfgauge::profiles::ProfileId::OWNER.0,
+                book,
+                plain.into_bytes()
+            ],
+        )
+        .unwrap();
+    assert_eq!(
+        shelfgauge::web::hub_sync::serve_pulled_requests(&lib.state).await,
+        Some(1)
+    );
+    let entry = lib.shelf()[0].clone();
+    assert_eq!(entry.state, ShelfState::Published);
+    let new_id = entry.publication.unwrap().to_string();
+    assert_ne!(new_id, old_id, "sent again");
+    let (status, _) = hub.blob(&phone.token, &new_id, "manifest").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        request_answer(&hub, &phone.token, &phone.key, &book).await,
+        None
+    );
+
+    // A copy still on the hub is not sent twice.
+    lib.userdata
+        .lock()
+        .execute(
+            "INSERT INTO hub_requests (profile_id, kind, record_id, plain, pulled_at)
+             VALUES (?1, 'book_request', ?2, ?3, 2)",
+            rusqlite::params![
+                shelfgauge::profiles::ProfileId::OWNER.0,
+                book,
+                serde_json::json!({
+                    "book": book, "reason": null, "state": "pending", "updated_at": 2,
+                })
+                .to_string()
+                .into_bytes()
+            ],
+        )
+        .unwrap();
+    assert_eq!(
+        shelfgauge::web::hub_sync::serve_pulled_requests(&lib.state).await,
+        Some(1)
+    );
+    assert_eq!(
+        lib.shelf()[0].publication.unwrap().to_string(),
+        new_id,
+        "unchanged"
+    );
+}
+
+/// Phase 31.6: only the requesting member's own shelf lets a book from a closed folder
+/// out: another member's shelf book is refused as `closed`, and a shelf book no longer
+/// in the library as `missing`.
+#[tokio::test]
+async fn shelf_requests_are_refused_for_another_members_book_and_a_removed_one() {
+    let hub = TestHub::start().await;
+    let lib = showcase_library(&hub).await;
+    let phone = lib.phone(&hub).await;
+    let (token, key) = member_device(&hub, &lib, "Olga").await;
+    let gamma = lib.book("closed/gamma.fb2");
+    assert_eq!(lib.publish(gamma).await, "published");
+    let gamma_id = lib.shelf()[0].publication.unwrap().to_string();
+    expire_on_hub(&hub, &lib, &gamma_id).await;
+
+    // Olga forges a request for the owner's shelf book.
+    let book = catalog_id(&lib, "closed/gamma.fb2");
+    ask(&hub, &token, &key, &book, shelfgauge::annotations::now()).await;
+    lib.sync().await;
+    let answer = request_answer(&hub, &token, &key, &book).await.unwrap();
+    assert_eq!(answer["state"], "refused");
+    assert_eq!(answer["reason"], "closed");
+
+    // The book leaves the library: the owner's own request is refused as missing.
+    std::fs::remove_file(lib.root().join("closed/gamma.fb2")).unwrap();
+    lib.rescan();
+    ask(
+        &hub,
+        &phone.token,
+        &phone.key,
+        &book,
+        shelfgauge::annotations::now(),
+    )
+    .await;
+    lib.sync().await;
+    let answer = request_answer(&hub, &phone.token, &phone.key, &book)
+        .await
+        .unwrap();
+    assert_eq!(answer["state"], "refused");
+    assert_eq!(answer["reason"], "missing");
+}
+
+/// The content key of the library's book `file`.
+fn content_key(lib: &Lib, file: &str) -> Vec<u8> {
+    let index = rusqlite::Connection::open(lib.library.db_path()).unwrap();
+    index
+        .query_row(
+            "SELECT content_hash FROM books WHERE id = ?1",
+            [lib.book(file)],
+            |r| r.get(0),
+        )
+        .unwrap()
+}
+
+/// Puts book `file` on the shelf of the member with `token`/`key` as their device
+/// does when it opens a link to `publication`.
+async fn shelve_by_link(
+    hub: &TestHub,
+    lib: &Lib,
+    token: &str,
+    key: &AccountKey,
+    file: &str,
+    publication: &str,
+) {
+    let content = content_key(lib, file);
+    common::hub::push_record(
+        hub,
+        token,
+        key,
+        "shelf_item",
+        &keys::shelf_id(key, &content),
+        Some(serde_json::json!({
+            "authors": "", "book_key": null, "content_key": URL_SAFE_NO_PAD.encode(&content),
+            "format_version": 2, "instance": "Home library", "kind": "upload",
+            "publication": publication, "title": file,
+            "updated_at": shelfgauge::annotations::now(),
+        })),
+    )
+    .await;
+}
+
+/// The publication the shelf item of book `file` names on the member's account.
+async fn shelved_publication(
+    hub: &TestHub,
+    lib: &Lib,
+    token: &str,
+    key: &AccountKey,
+    file: &str,
+) -> String {
+    let id = keys::shelf_id(key, &content_key(lib, file));
+    common::hub::pull_records(hub, token, key)
+        .await
+        .into_iter()
+        .find(|(kind, i, _)| kind == "shelf_item" && i == &id)
+        .and_then(|(_, _, data)| data)
+        .expect("on the shelf")["publication"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// Phase 31.6: a member's device puts a book on their shelf by opening a link to
+/// another account's publication (an entry the library does not own). Once that copy
+/// expired, the member's request sends the book to them, from the Showcase or from a
+/// closed folder (a book this library sent to the hub, which every member could open),
+/// instead of being answered with nothing because the entry still said published.
+#[tokio::test]
+async fn a_book_opened_by_a_link_is_sent_again_once_its_copy_expired() {
+    let hub = TestHub::start().await;
+    let lib = showcase_library(&hub).await;
+    let (token, key) = member_device(&hub, &lib, "Olga").await;
+    open_folder(&lib, "sf", true).await;
+    for file in ["sf/inner/beta.fb2", "closed/gamma.fb2"] {
+        assert_eq!(lib.publish(lib.book(file)).await, "published");
+        let owners = lib
+            .shelf()
+            .into_iter()
+            .find(|e| e.content_key == content_key(&lib, file))
+            .unwrap()
+            .publication
+            .unwrap()
+            .to_string();
+        shelve_by_link(&hub, &lib, &token, &key, file, &owners).await;
+        lib.sync().await;
+        expire_on_hub(&hub, &lib, &owners).await;
+
+        let book = catalog_id(&lib, file);
+        ask(&hub, &token, &key, &book, shelfgauge::annotations::now()).await;
+        lib.sync().await;
+        assert_eq!(
+            request_answer(&hub, &token, &key, &book).await,
+            None,
+            "{file}: served"
+        );
+        let sent = shelved_publication(&hub, &lib, &token, &key, file).await;
+        assert_ne!(sent, owners, "{file}: a new publication");
+        let (status, _) = hub.blob(&token, &sent, "manifest").await;
+        assert_eq!(status, StatusCode::OK, "{file}: on the hub");
+    }
+}
+
+/// Phase 31.6: a shelf item a member's device forged for a book this library never
+/// sent to the hub lets nothing out of a closed folder.
+#[tokio::test]
+async fn a_forged_shelf_item_does_not_open_a_closed_folder() {
+    let hub = TestHub::start().await;
+    let lib = showcase_library(&hub).await;
+    let (token, key) = member_device(&hub, &lib, "Olga").await;
+    let forged = "ab".repeat(16);
+    shelve_by_link(&hub, &lib, &token, &key, "closed/gamma.fb2", &forged).await;
+    lib.sync().await;
+    let book = catalog_id(&lib, "closed/gamma.fb2");
+    ask(&hub, &token, &key, &book, shelfgauge::annotations::now()).await;
+    lib.sync().await;
+    let answer = request_answer(&hub, &token, &key, &book).await.unwrap();
+    assert_eq!(answer["state"], "refused");
+    assert_eq!(answer["reason"], "closed");
+    assert_eq!(
+        shelved_publication(&hub, &lib, &token, &key, "closed/gamma.fb2").await,
+        forged,
+        "nothing sent"
+    );
+}
+
 #[tokio::test]
 async fn thumbnails_are_made_on_request_for_showcase_books_only() {
     use shelfgauge::hub_client::catalog::open;

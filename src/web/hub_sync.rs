@@ -177,8 +177,9 @@ enum Answer {
 
 /// Serves the members' requests kept from their accounts (`hub_client::requests`):
 /// a book on the Showcase *now* (not as a member's catalog says: it may be stale or
-/// forged) is published to the person's shelf, anything else refused; thumbnails of
-/// books on the Showcase are made and uploaded. Answers how many were answered.
+/// forged), or one on the member's own shelf whose copy on the hub is gone, is
+/// published to the person's shelf, anything else refused; thumbnails of books on the
+/// Showcase are made and uploaded. Answers how many were answered.
 pub(crate) async fn serve_requests(
     state: &AppState,
     library: &HubLibrary,
@@ -271,6 +272,19 @@ pub(crate) async fn serve_requests(
     Ok(answered)
 }
 
+/// Serves the requests already pulled, as the worker does at a tick between two full
+/// rounds (no expiry check of the shelf first); how many were answered, `None` without
+/// a hub library or when a step failed. For tests.
+#[doc(hidden)]
+pub async fn serve_pulled_requests(state: &AppState) -> Option<usize> {
+    let userdata = state.userdata_handle();
+    let library = blocking(move || store::library(&userdata.lock()))
+        .await
+        .ok()?
+        .ok()??;
+    serve_requests(state, &library).await.ok()
+}
+
 /// Runs `f` with the user-data database on a blocking thread.
 async fn user<T: Send + 'static>(
     state: &AppState,
@@ -290,7 +304,16 @@ async fn done_request(
     .await
 }
 
-/// A book request: published if the book is on the Showcase now.
+/// A book request: published if the book is on the Showcase now, or if it is on the
+/// member's own shelf as an upload whose copy on the hub may be gone (an expired copy,
+/// Phase 31.6: the shelf entry is the admin's earlier decision, even for a book in a
+/// closed folder). Only the requesting member's shelf counts: another member's book is
+/// refused as `closed`. An entry the member's device wrote (a book opened by a link)
+/// counts only for a book this library itself sent to the hub, which every member
+/// could open; a forged entry names nothing this library sent. A shelf entry still
+/// marked published is checked against the hub first and marked expired when its copy
+/// is gone, so the book is sent again instead of the request being answered with
+/// nothing.
 async fn serve_book(
     state: &AppState,
     library: &HubLibrary,
@@ -298,14 +321,72 @@ async fn serve_book(
     built: &catalog_sync::Built,
     asked: &crate::hub_client::requests::BookRequest,
 ) -> Result<Answer, super::AppError> {
-    let book = asked
-        .book
-        .parse::<shelfgauge_core::catalog::BookId>()
-        .ok()
-        .and_then(|id| built.books.get(&id).copied());
-    let Some(book) = book else {
+    use crate::hub_client::store::{ShelfKind, ShelfState};
+    let Ok(id) = asked.book.parse::<shelfgauge_core::catalog::BookId>() else {
         return Ok(Answer::Refused("closed"));
     };
+    let profile = account.profile;
+    let entry = user(state, move |conn| {
+        let Some(entry) = store::shelf(conn, profile)?.into_iter().find(|e| {
+            e.kind == ShelfKind::Upload
+                && matches!(e.state, ShelfState::Published | ShelfState::Expired)
+                && shelfgauge_core::catalog::BookId::from_content_key(&e.content_key) == id
+        }) else {
+            return Ok(None);
+        };
+        let sent = entry.own
+            || conn
+                .query_row(
+                    "SELECT EXISTS (SELECT 1 FROM hub_shelf
+                                WHERE book_key = ?1 AND own = 1 AND kind = 'upload')",
+                    [&entry.content_key],
+                    |r| r.get::<_, bool>(0),
+                )
+                .map_err(crate::storage::StorageError::from)?;
+        Ok(Some((entry, sent)))
+    })
+    .await?;
+    let book = match (built.books.get(&id).copied(), &entry) {
+        (Some(book), _) => book,
+        (None, Some((entry, true))) => {
+            let key = entry.content_key.clone();
+            let found = state
+                .db(move |conn| Ok(live_books_by_key(conn, &key)?.first().copied()))
+                .await?;
+            match found {
+                Some(book) => book,
+                None => return Ok(Answer::Refused("missing")),
+            }
+        }
+        (None, _) => return Ok(Answer::Refused("closed")),
+    };
+    if let Some((entry, _)) = entry.filter(|(e, _)| e.state == ShelfState::Published) {
+        let listed = {
+            let library = library.clone();
+            blocking(move || HubClient::new(library.hub_url.clone()).publications(&library.token))
+                .await?
+        };
+        let on_hub = match listed {
+            Ok(on_hub) => on_hub,
+            Err(e) => {
+                tracing::info!(error = %e, "the hub's publications could not be read");
+                return Ok(Answer::Later);
+            }
+        };
+        if entry.publication.is_some_and(|p| !on_hub.contains(&p)) {
+            let key = entry.content_key.clone();
+            user(state, move |conn| {
+                Ok(store::set_state(
+                    conn,
+                    profile,
+                    &key,
+                    ShelfState::Expired,
+                    None,
+                )?)
+            })
+            .await?;
+        }
+    }
     let code = super::routes::shelf::publish(state, library.clone(), account.clone(), book).await;
     Ok(match code {
         Ok("published") => {

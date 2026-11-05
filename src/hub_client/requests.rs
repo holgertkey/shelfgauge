@@ -1,10 +1,12 @@
 //! Members' requests to their library (Phase 31): a book of the Showcase or
 //! thumbnails, written by a member's device as records of their account, read by the
-//! library at its sync.
+//! library at its sync. A book on the member's own shelf whose copy on the hub is gone
+//! (expired, Phase 31.6) is asked for the same way, by the reading view, and served
+//! even when it is not on the Showcase.
 //!
 //! - `book_request` (id: the catalog book id in hex), JSON `{book, reason, state,
 //!   updated_at}`: `state` `pending` (the device) or `refused` (the library, with a
-//!   `reason`: `closed` (not on the Showcase now), `drm`, `quota`, `too-large`,
+//!   `reason`: `closed` (not on the Showcase now, nor on the member's shelf), `drm`, `quota`, `too-large`,
 //!   `missing` (no such book any more) or `failed`). A request served is deleted by the
 //!   library: the book is on the person's shelf (a `shelf_item`).
 //! - `cover_request` (any id the device chooses), JSON `{covers, updated_at}`: thumbnail
