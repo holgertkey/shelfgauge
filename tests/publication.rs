@@ -1232,3 +1232,389 @@ fn password_vector_is_stable() {
         }),
     );
 }
+
+/// The recompressions of [`image_size_report`]: the longest side of an image and the
+/// JPEG quality.
+const REPORT_VARIANTS: [(u32, u8); 2] = [(1600, 80), (1000, 75)];
+
+/// What [`report_recompress`] did with an image.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum ImageClass {
+    /// A GIF (may be animated): kept.
+    Gif,
+    /// Did not decode within the limits: kept.
+    Undecodable,
+    /// Uses transparency: resized PNG.
+    Alpha,
+    /// Not a JPEG, at most 256 colors (line art, diagrams): resized PNG.
+    FewColors,
+    /// Gray (all channels within a small tolerance): resized gray JPEG.
+    Gray,
+    /// Everything else: resized JPEG.
+    Photo,
+}
+
+/// One image as [`image_size_report`] would publish it, at most `max_side` px on its
+/// longest side and with JPEG quality `quality`: the bytes (the original when the
+/// recompression saves less than 20 %), its class and whether it was replaced.
+fn report_recompress(
+    mime: &str,
+    data: &[u8],
+    max_side: u32,
+    quality: u8,
+) -> (Vec<u8>, ImageClass, bool) {
+    use image::codecs::jpeg::JpegEncoder;
+    use image::codecs::png::{CompressionType, FilterType as PngFilter, PngEncoder};
+    use image::imageops::FilterType;
+
+    if mime == "image/gif" {
+        return (data.to_vec(), ImageClass::Gif, false);
+    }
+    let decoded = image::ImageReader::new(std::io::Cursor::new(data))
+        .with_guessed_format()
+        .ok()
+        .and_then(|mut reader| {
+            let mut limits = image::Limits::default();
+            limits.max_image_width = Some(16384);
+            limits.max_image_height = Some(16384);
+            limits.max_alloc = Some(512 * 1024 * 1024);
+            reader.limits(limits);
+            reader.decode().ok()
+        });
+    let Some(mut img) = decoded else {
+        return (data.to_vec(), ImageClass::Undecodable, false);
+    };
+    if img.width().max(img.height()) > max_side {
+        img = img.resize(max_side, max_side, FilterType::Lanczos3);
+    }
+    let rgba = img.to_rgba8();
+    let alpha = rgba.pixels().any(|p| p[3] < 255);
+    let gray = rgba.pixels().all(|p| {
+        let [r, g, b, _] = p.0;
+        r.abs_diff(g) <= 3 && g.abs_diff(b) <= 3 && r.abs_diff(b) <= 3
+    });
+    let few_colors = mime != "image/jpeg" && {
+        let mut colors = std::collections::HashSet::new();
+        rgba.pixels().all(|p| {
+            colors.insert(p.0);
+            colors.len() <= 256
+        })
+    };
+    let class = if alpha {
+        ImageClass::Alpha
+    } else if few_colors {
+        ImageClass::FewColors
+    } else if gray {
+        ImageClass::Gray
+    } else {
+        ImageClass::Photo
+    };
+    let mut out = Vec::new();
+    let encoded = match class {
+        ImageClass::Alpha | ImageClass::FewColors => img.write_with_encoder(
+            PngEncoder::new_with_quality(&mut out, CompressionType::Best, PngFilter::Adaptive),
+        ),
+        ImageClass::Gray => {
+            JpegEncoder::new_with_quality(&mut out, quality).encode_image(&img.to_luma8())
+        }
+        _ => JpegEncoder::new_with_quality(&mut out, quality).encode_image(&img.to_rgb8()),
+    };
+    if encoded.is_ok() && out.len() * 5 < data.len() * 4 {
+        (out, class, true)
+    } else {
+        (data.to_vec(), class, false)
+    }
+}
+
+/// Reports what would make the publications of the books (any registered format) in
+/// the directory named by `SHELFGAUGE_PUBLICATION_SAMPLES` smaller, all sizes sealed
+/// (compressed, padded, encrypted) as on the hub: the images' share, images no part
+/// refers to (and that are not the cover), whether the cover is also an image of the
+/// text, images with the same bytes as an earlier
+/// one, and, for each of [`REPORT_VARIANTS`], dropping those and recompressing every
+/// other image (resized, JPEG for JPEGs, PNG with transparency or at most 256 colors,
+/// gray JPEG for gray images, GIFs kept, an image kept unless 20 % smaller); then the
+/// classes of the images, their sizes in pixels, deflating images and deflate level 9 for the manifest and
+/// parts. Decoding and encoding images unoptimized is slow, so:
+/// `cargo test --test publication --config 'profile.dev.package."*".opt-level=3' -- --ignored --nocapture image_size_report`.
+#[test]
+#[ignore = "needs real books in SHELFGAUGE_PUBLICATION_SAMPLES"]
+fn image_size_report() {
+    use std::cell::RefCell;
+    use std::collections::BTreeSet;
+    use std::io::Write as _;
+    use std::time::Instant;
+
+    struct Recording(RefCell<BTreeSet<String>>);
+
+    impl ReaderLinks for Recording {
+        fn block(&self, _: usize, _: BlockId) -> String {
+            String::new()
+        }
+
+        fn image(&self, id: &str) -> String {
+            self.0.borrow_mut().insert(id.to_owned());
+            String::new()
+        }
+    }
+
+    let Ok(dir) = std::env::var("SHELFGAUGE_PUBLICATION_SAMPLES") else {
+        eprintln!("SHELFGAUGE_PUBLICATION_SAMPLES is not set");
+        return;
+    };
+    let registry = shelfgauge::format::Registry::with_builtin_formats();
+    let mut paths: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    paths.sort();
+    let config = ReaderConfig::default();
+    let key = BookKey::generate().unwrap();
+    let kb = |n: usize| format!("{:.0} KB", n as f64 / 1024.0);
+    let pct = |part: usize, whole: usize| {
+        if whole == 0 {
+            "–".to_owned()
+        } else {
+            format!("{:.0} %", part as f64 * 100.0 / whole as f64)
+        }
+    };
+    let deflate9 = |data: &[u8]| {
+        let mut encoder =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::best());
+        encoder.write_all(data).unwrap();
+        encoder.finish().unwrap().len()
+    };
+
+    let variants: Vec<String> = REPORT_VARIANTS
+        .iter()
+        .map(|(side, quality)| format!("{side} px q{quality}"))
+        .collect();
+    println!(
+        "| book | file | sealed | images (sealed) | count | cover | unreferenced | duplicates | {} |",
+        variants.join(" | ")
+    );
+    println!(
+        "|---|---|---|---|---|---|---|{}",
+        "---|".repeat(variants.len())
+    );
+    let mut classes: BTreeMap<(usize, ImageClass), (usize, usize, usize, usize)> = BTreeMap::new();
+    let (mut file_total, mut sealed_total, mut images_total) = (0, 0, 0);
+    let mut after_totals = vec![0usize; variants.len()];
+    let mut dimensions: Vec<(ImageClass, u32, u32)> = Vec::new();
+    let (mut text_default, mut text_best, mut img_raw, mut img_deflated) = (0, 0, 0, 0);
+    for path in paths {
+        let Some(parser) = registry.for_path(&path) else {
+            continue;
+        };
+        let data = std::fs::read(&path).unwrap();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        run_with_parser_stack(|| {
+            let (Ok(metadata), Ok(content)) =
+                (parser.parse_metadata(&data), parser.parse_content(&data))
+            else {
+                return;
+            };
+            let Ok(publication) = build(&info(), &content, metadata.cover.as_ref(), &config) else {
+                return;
+            };
+            let sealed = publication.seal(&id(), &key, &[]).unwrap();
+            let total: usize = sealed.iter().map(|(_, b)| b.len()).sum();
+            let n_text = 1 + publication.parts.len();
+            let images_sealed: usize = sealed[n_text..].iter().map(|(_, b)| b.len()).sum();
+            for (_, plain) in publication.blobs().iter().take(n_text) {
+                text_default += compress(plain).len();
+                text_best += deflate9(plain);
+            }
+            for data in &publication.images {
+                img_raw += data.len();
+                img_deflated += compress(data).len();
+            }
+
+            // Images no part refers to and that are not the cover.
+            let links = Recording(RefCell::new(BTreeSet::new()));
+            let parts = split(&content, &config);
+            for index in 0..parts.len() {
+                render_part(&content, &parts, index, &links);
+            }
+            let referenced = links.0.into_inner();
+            let cover = publication.manifest.cover.map(|n| n as usize);
+            let used = |n: usize| {
+                Some(n) == cover || referenced.contains(&publication.manifest.images[n].id)
+            };
+            let unreferenced: Vec<usize> = (0..publication.images.len())
+                .filter(|&n| !used(n))
+                .collect();
+            let unref_bytes: usize = unreferenced
+                .iter()
+                .map(|&n| sealed[n_text + n].1.len())
+                .sum();
+
+            // The cover: also an image of the text, or only the cover.
+            let cover_cell = match cover {
+                None => "none".to_owned(),
+                Some(n) if referenced.contains(&publication.manifest.images[n].id) => {
+                    format!("in the text ({})", kb(sealed[n_text + n].1.len()))
+                }
+                Some(n) => format!("only ({})", kb(sealed[n_text + n].1.len())),
+            };
+
+            // Used images with the same bytes as an earlier used one.
+            let mut seen = BTreeSet::new();
+            let duplicates: Vec<usize> = (0..publication.images.len())
+                .filter(|&n| used(n) && !seen.insert(publication.images[n].as_slice()))
+                .collect();
+            let dup_bytes: usize = duplicates.iter().map(|&n| sealed[n_text + n].1.len()).sum();
+
+            // Per variant: unreferenced dropped, duplicates once, the rest recompressed.
+            let mut cells = Vec::new();
+            for (v, &(side, quality)) in REPORT_VARIANTS.iter().enumerate() {
+                let start = Instant::now();
+                let mut smaller = publication.clone();
+                let mut replaced = 0;
+                for (n, data) in smaller.images.iter_mut().enumerate() {
+                    if !used(n) || duplicates.contains(&n) {
+                        data.clear();
+                        continue;
+                    }
+                    let (out, class, done) = report_recompress(
+                        &publication.manifest.images[n].mime,
+                        data,
+                        side,
+                        quality,
+                    );
+                    if v == 0 {
+                        let size = image::ImageReader::new(std::io::Cursor::new(&data[..]))
+                            .with_guessed_format()
+                            .ok()
+                            .and_then(|reader| reader.into_dimensions().ok());
+                        if let Some((width, height)) = size {
+                            dimensions.push((class, width.max(height), width.min(height)));
+                        }
+                    }
+                    let entry = classes.entry((v, class)).or_default();
+                    entry.0 += 1;
+                    entry.1 += data.len();
+                    entry.2 += out.len();
+                    entry.3 += usize::from(done);
+                    replaced += usize::from(done);
+                    *data = out;
+                }
+                let after: usize = smaller
+                    .seal(&id(), &key, &[])
+                    .unwrap()
+                    .iter()
+                    .enumerate()
+                    .filter(|&(i, _)| i < n_text || !smaller.images[i - n_text].is_empty())
+                    .map(|(_, (_, b))| b.len())
+                    .sum();
+                after_totals[v] += after;
+                cells.push(format!(
+                    "{} (−{}, {replaced} replaced, {:.1} s)",
+                    kb(after),
+                    pct(total - after, total),
+                    start.elapsed().as_secs_f64()
+                ));
+            }
+            file_total += data.len();
+            sealed_total += total;
+            images_total += images_sealed;
+            println!(
+                "| {name} | {} | {} | {} ({}) | {} | {cover_cell} | {} ({}) | {} ({}) | {} |",
+                kb(data.len()),
+                kb(total),
+                kb(images_sealed),
+                pct(images_sealed, total),
+                publication.images.len(),
+                unreferenced.len(),
+                kb(unref_bytes),
+                duplicates.len(),
+                kb(dup_bytes),
+                cells.join(" | "),
+            );
+        });
+    }
+    let cells: Vec<String> = after_totals
+        .iter()
+        .map(|&after| {
+            format!(
+                "{} (−{})",
+                kb(after),
+                pct(sealed_total - after, sealed_total)
+            )
+        })
+        .collect();
+    println!(
+        "| all | {} | {} | {} ({}) |  |  |  |  | {} |",
+        kb(file_total),
+        kb(sealed_total),
+        kb(images_total),
+        pct(images_total, sealed_total),
+        cells.join(" | "),
+    );
+    println!();
+    println!("| variant | class | images | original | recompressed | replaced |");
+    println!("|---|---|---|---|---|---|");
+    for ((v, class), (count, before, after, done)) in &classes {
+        println!(
+            "| {} | {class:?} | {count} | {} | {} ({}) | {done} |",
+            variants[*v],
+            kb(*before),
+            kb(*after),
+            pct(*after, *before),
+        );
+    }
+    println!();
+    let limits = [300, 600, 1000, 1600, 2400];
+    println!(
+        "| class | images | longest side {} > {} | median | max | median shorter side |",
+        limits.map(|l| format!("≤ {l} |")).join(" "),
+        limits[limits.len() - 1],
+    );
+    println!(
+        "|---|---|{}---|---|---|---|",
+        "---|".repeat(limits.len() + 1)
+    );
+    let mut by_class: BTreeMap<Option<ImageClass>, Vec<(u32, u32)>> = BTreeMap::new();
+    for &(class, long, short) in &dimensions {
+        by_class.entry(Some(class)).or_default().push((long, short));
+        by_class.entry(None).or_default().push((long, short));
+    }
+    for (class, mut sizes) in by_class {
+        let mut counts = vec![0; limits.len() + 1];
+        for &(long, _) in &sizes {
+            counts[limits
+                .iter()
+                .position(|&l| long <= l)
+                .unwrap_or(limits.len())] += 1;
+        }
+        sizes.sort_unstable();
+        let long_median = sizes[sizes.len() / 2].0;
+        let max = sizes[sizes.len() - 1].0;
+        let mut shorter: Vec<u32> = sizes.iter().map(|&(_, short)| short).collect();
+        shorter.sort_unstable();
+        println!(
+            "| {} | {} | {} | {long_median} | {max} | {} |",
+            class.map_or("all".to_owned(), |class| format!("{class:?}")),
+            sizes.len(),
+            counts
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(" | "),
+            shorter[shorter.len() / 2],
+        );
+    }
+    println!();
+    println!(
+        "Manifest and parts deflated: {} at the default level, {} at level 9 ({} of it).",
+        kb(text_default),
+        kb(text_best),
+        pct(text_best, text_default),
+    );
+    println!(
+        "Images: {} raw, {} deflated ({} of it).",
+        kb(img_raw),
+        kb(img_deflated),
+        pct(img_deflated, img_raw),
+    );
+}
