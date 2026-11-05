@@ -1117,8 +1117,25 @@ Phase 26: `assets/hub/` (`hub.js` pages, `store.js` IndexedDB and API calls,
   note panels). The track's `?progress=` picks the part by the manifest's progress
   ranges and the block by `reader.js`'s rule. Reading settings are kept in this
   browser (`theme.js` with `data-local-settings`). Decrypted text exists only in
-  memory and the page. A publication that is gone (expired, removed) says so with a
-  link back to the shelf.
+  memory and the page. A publication that is gone from the hub (expired, removed,
+  taken down) with no copy here says so with a link back to the shelf.
+- **Books kept on the device** (Phase 31.3): a hub publication is on the device as a
+  whole before it opens: `downloadBook` in `hub.js` lists its blobs (the manifest,
+  every part and image), looks up which are not in `shelfgauge-blobs` yet
+  (`store.missing`), and fetches those four at a time through the worker in a
+  download view (title, a progress bar, "`<n>` of `<total>`", **Cancel**); a blob
+  still not in the cache after its answer means a full storage ("Not enough space",
+  the book does not open: reading on the phone is offline only); the hub out of reach
+  stops it with **Try again**, which fetches only the missing blobs (the cached ones
+  stay). Then the book is flagged `offline:<publication>` and opens at its position;
+  a kept book opens without the view. `navigator.storage.persist()` is asked at a
+  device's first download. Without a Service Worker controlling the page (none in the
+  browser, or a reload that bypassed it) the book opens from the network as before
+  and is not kept. Book files never download. The copy goes only with the book: when
+  its shelf item goes (a removal on any device, **Delete for everyone** in the
+  library: dropped at the device's next sync), by **Remove downloaded books**, by
+  signing out, or at once on an operator's takedown (`410`); a `404` (expiry, or a
+  deletion whose tombstone the device has not pulled yet) keeps it.
 - **Marks and position on the device**: `reader.js` reads and writes through a data
   source (`window.shelfgaugeSource`: `page`, `lists`, `create`, `remove`,
   `savePosition`, `find`); the instance's source is the server as before, the hub's
@@ -1153,17 +1170,18 @@ Phase 26: `assets/hub/` (`hub.js` pages, `store.js` IndexedDB and API calls,
   a book at that very moment might; accepted); a publication's parts
   and images never change, so they are served from the cache `shelfgauge-blobs` once
   fetched; its manifest comes from the network when it answers within 4 s (the hub's
-  expiry counts manifest fetches; a `404`/`410` deletes the cached copy), else — on
-  a network error, a timeout or a `5xx` from the reverse proxy in front of a hub that
-  is down — from the cache; the rest of the API is never cached (a `5xx` there is
+  expiry counts manifest fetches; a `410`, a takedown, deletes the cached copy), else
+  — on a network error, a timeout, a `5xx` from the reverse proxy in front of a hub
+  that is down, or a `404` (the hub's copy expired or was deleted,
+  Phase 31.3) — from the cache; the rest of the API is never cached (a `5xx` there is
   "unreachable" for the app, not an error). A full storage only means no offline
   copy: the worker still serves, and a book counts as kept on the device ("This
   device") only when every blob is in the cache. IndexedDB connections close on `versionchange` (a newer app in
   another tab upgrades the database) and the page reloads. Only ciphertext is
-  cached. After a book is opened the app fetches all its blobs once more through the
-  worker and flags it (`offline:<publication>`; the shelf shows no badge for it since
-  0.23.0); the shelf deletes the copies of books
-  that left it; forgetting the pairing deletes all. `manifest.webmanifest` (standalone,
+  cached. A book is downloaded as a whole through the worker before it opens and
+  flagged (`offline:<publication>`; see "Books kept on the device"; the shelf shows
+  no badge for it since 0.23.0); the shelf deletes the copies of books that left it;
+  forgetting the pairing deletes all. `manifest.webmanifest` (standalone,
   start URL and scope = the base path) makes the reader installable — on iOS a home
   screen app escapes Safari's 7-day eviction of unused sites; the unpaired page says
   that cleared data means pairing again. The shell answers at the base path with and

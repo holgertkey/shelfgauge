@@ -92,9 +92,16 @@ async function dropAccount(p) {
 // Offline: the Service Worker keeps the app and the books read here. A new version
 // of the app (after the hub was upgraded) is switched to on the shelf page only,
 // which then reloads; an open book keeps the version it was opened with.
+// The worker's registration, or null (none in this browser, or it failed).
+const registered = "serviceWorker" in navigator
+  ? navigator.serviceWorker.register(`${base}/sw.js`, { scope: `${base}/` }).catch((e) => {
+    console.error(e);
+    return null;
+  })
+  : Promise.resolve(null);
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register(`${base}/sw.js`, { scope: `${base}/` }).then((registration) => {
-    if (route !== "/" || !navigator.serviceWorker.controller) {
+  registered.then((registration) => {
+    if (!registration || route !== "/" || !navigator.serviceWorker.controller) {
       return;
     }
     navigator.serviceWorker.addEventListener("controllerchange", () => location.reload(), { once: true });
@@ -837,7 +844,7 @@ async function devicePage() {
   const removeDownloads = el("button", { type: "button", class: "hub-device-remove" }, "Remove downloaded books");
   const localStatus = el("p", { class: "muted hub-device-local-status", role: "status" });
   removeDownloads.addEventListener("click", async () => {
-    if (!confirm("Remove the books downloaded to this device? They download again when you open them (with a connection). Books opened from book files stay.")) {
+    if (!confirm("Remove the books downloaded to this device? Books the hub still has download again when you open them (with a connection); a book the hub no longer has comes back only when your library sends it again. Books opened from book files stay.")) {
       return;
     }
     await store.removeDownloads();
@@ -1027,6 +1034,142 @@ function readerMessage(title, ...lines) {
   text.append(el("p", {}, el("a", { href: `${base}/` }, "Bookshelf")));
 }
 
+/** Resolves with `value` after `ms`. */
+function after(ms, value) {
+  return new Promise((resolve) => setTimeout(() => resolve(value), ms));
+}
+
+/**
+ * Whether the Service Worker controls this page (it keeps the blobs fetched): waits
+ * for a worker being installed (the first visit: it fetches the app's files first);
+ * false without one (none in this browser, its registration failed, or a reload that
+ * bypassed it).
+ */
+async function controlled() {
+  const registration = await registered;
+  if (!registration) {
+    return false;
+  }
+  const sw = navigator.serviceWorker;
+  if (sw.controller) {
+    return true;
+  }
+  if (!(await Promise.race([sw.ready.then(() => true, () => false), after(30000, false)]))) {
+    return false;
+  }
+  return Boolean(sw.controller) || Promise.race([
+    new Promise((resolve) => sw.addEventListener("controllerchange", () => resolve(true), { once: true })),
+    after(3000, false),
+  ]);
+}
+
+/** The message of a book whose copy on the hub is gone, with no copy here. */
+function goneFromHub() {
+  readerMessage("This book is no longer on the hub", "Its copy on the hub is gone: it was not opened for a long time, or the library deleted it. Ask the library to send it again.");
+}
+
+/**
+ * Puts the whole of `book` (a hub publication) on this device before it opens: every
+ * blob not in the cache yet, four at a time through the Service Worker, with a
+ * download view in place of the text (progress, Cancel, Try again). Blobs already
+ * kept stay, so an interrupted download goes on where it stopped.
+ *
+ * Resolves with true when the book is on this device as a whole (marked offline),
+ * false when it can only open from the network (no Service Worker controls this page:
+ * nothing is kept), and null when it does not open (a message is shown: gone from the
+ * hub, not enough space). Throws `store.Unpaired`.
+ */
+async function downloadBook(book) {
+  if (book.copy) {
+    return true;
+  }
+  if (!(await controlled())) {
+    return false;
+  }
+  const paths = book.paths();
+  const total = paths.length;
+  const text = document.querySelector("article.reader .text");
+  const title = book.summary.title || "Untitled";
+  let first = true;
+  for (;;) {
+    const todo = await store.missing(book.id, paths);
+    let done = total - todo.length;
+    if (!todo.length) {
+      await store.markOffline(book.p, book.id);
+      return true;
+    }
+    if (first) {
+      first = false;
+      // An evicted copy is a lost book until the library sends it again.
+      store.navigatorPersist();
+    }
+    const bar = el("progress", { max: String(total), value: String(done) });
+    const count = el("p", { class: "hub-download-count" }, `${done} of ${total}`);
+    text.replaceChildren(
+      el("div", { class: "hub-download" },
+        el("h1", {}, title),
+        el("p", { role: "status" }, "Downloading for offline reading"),
+        bar,
+        count,
+        el("p", {}, el("a", { class: "button", href: `${base}/` }, "Cancel"))),
+    );
+    let failure = null;
+    let next = 0;
+    const fetchSome = async () => {
+      while (!failure && next < todo.length) {
+        const path = todo[next++];
+        let sealed;
+        try {
+          sealed = await store.blob(book.p, book.id, path);
+        } catch (e) {
+          failure = failure || e;
+          return;
+        }
+        if (!sealed) {
+          failure = failure || "gone";
+        } else if (!(await store.cached(book.id, path))) {
+          // The worker serves what it could not keep: the storage is full.
+          failure = failure || "space";
+        } else {
+          done++;
+          bar.value = done;
+          count.textContent = `${done} of ${total}`;
+        }
+      }
+    };
+    await Promise.all([fetchSome(), fetchSome(), fetchSome(), fetchSome()]);
+    if (!failure) {
+      continue;
+    }
+    if (failure instanceof store.Unpaired) {
+      throw failure;
+    }
+    if (failure === "gone") {
+      goneFromHub();
+      return null;
+    }
+    if (failure === "space") {
+      text.replaceChildren(el("div", { class: "hub-download" },
+        el("h1", {}, "Not enough space on this device for this book"),
+        el("p", {}, `${title}: ${done} of ${total} downloaded. Make room on this device (My account → On this device shows how much is kept), then open the book again.`),
+        el("p", {}, el("a", { class: "button", href: `${base}/device` }, "My account"), " ", el("a", { href: `${base}/` }, "Bookshelf"))));
+      return null;
+    }
+    if (!unreachable(failure)) {
+      console.error(failure);
+    }
+    const again = el("button", { type: "button", class: "primary" }, "Try again");
+    text.replaceChildren(el("div", { class: "hub-download" },
+      el("h1", {}, title),
+      el("p", {}, unreachable(failure)
+        ? `The download stopped at ${done} of ${total}: the hub is out of reach.`
+        : `The download stopped at ${done} of ${total}: ${failure.message || failure}`),
+      el("p", {}, again, " ", el("a", { class: "button", href: `${base}/` }, "Cancel"))));
+    again.focus();
+    await new Promise((resolve) => again.addEventListener("click", resolve, { once: true }));
+  }
+}
+
 /** The opened publication: the WASM reader plus what it needs to fetch more. */
 class Book {
   constructor(p, id, key, reader, copy = null) {
@@ -1078,7 +1221,6 @@ class Book {
         }
         this.reader.loadText();
       })();
-      this.textReady.then(() => this.saveOffline()).catch((e) => console.error(e));
       this.textReady.catch(() => {
         this.textReady = null;
       });
@@ -1086,19 +1228,8 @@ class Book {
     return this.textReady;
   }
 
-  /**
-   * Makes the whole book readable offline: every blob once more through the Service
-   * Worker (which keeps them; fetches from before it took over this page were not
-   * kept), then the shelf can say "offline".
-   */
-  async saveOffline() {
-    if (this.copy || !("serviceWorker" in navigator)) {
-      return;
-    }
-    await navigator.serviceWorker.ready;
-    if (!navigator.serviceWorker.controller) {
-      await new Promise((resolve) => navigator.serviceWorker.addEventListener("controllerchange", resolve, { once: true }));
-    }
+  /** The paths of every blob of the book: the manifest, its parts and its images. */
+  paths() {
     const paths = ["manifest"];
     for (let n = 0; n < this.summary.parts.length; n++) {
       paths.push(`p/${n}`);
@@ -1106,18 +1237,7 @@ class Book {
     for (let n = 0; n < this.summary.images.length; n++) {
       paths.push(`i/${n}`);
     }
-    for (const path of paths) {
-      if (!(await store.blob(this.p, this.id, path))) {
-        return;
-      }
-    }
-    // A full storage keeps nothing (the worker serves anyway): only then "offline".
-    for (const path of paths) {
-      if (!(await store.cached(this.id, path))) {
-        return;
-      }
-    }
-    await store.markOffline(this.p, this.id);
+    return paths;
   }
 
   /** A `blob:` URL of image `imageId`, or null. */
@@ -1639,7 +1759,7 @@ async function readerPage(id) {
         readerMessage(`Open the book file of “${fileItem.title}”`, "This book is on your shelf as a book file: the hub has no copy. Open the file on this device with Open file at the top of the Bookshelf.");
         return;
       }
-      readerMessage("This book is no longer on the hub", "It was not opened for a long time, or the library deleted it. Ask the library to send it again.");
+      goneFromHub();
       return;
     }
     const opened = await bookKey(found.p, id, found.sealed);
@@ -1685,6 +1805,9 @@ async function readerPage(id) {
     if (book.summary.content_key !== item.content_key) {
       // Marks would be filed under another book.
       readerMessage("This book could not be opened", "Its shelf entry does not match the published book. Publish it again from your library.");
+      return;
+    }
+    if ((await downloadBook(book)) === null) {
       return;
     }
     const params = new URLSearchParams(location.search);

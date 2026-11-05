@@ -8,6 +8,23 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+Phones get these changes from a hub of this version (the hub serves the reader app);
+the hub's routes, the formats and the library do not change.
+
+### Changed
+
+- **Books are downloaded before they open, and kept while they are on the
+  Bookshelf.** Opening a book in the hub reader that is not on the device yet shows
+  its download first: the title, a progress bar and "`<n>` of `<total>`", with
+  **Cancel**; then the book opens at its position. An interrupted download says
+  where it stopped (the hub out of reach) and **Try again** fetches only what is
+  missing. A device without the space for the whole book says so and does not open
+  it (My account → On this device shows what is kept). The copy on the device now
+  stays when the hub's copy expires (`publication_expiry_days`): it goes only with
+  the book (removed from the Bookshelf on any device, **Delete for everyone** in the
+  library, **Remove downloaded books**, signing out) or at once on an operator's
+  takedown. A device without a copy still says the book is no longer on the hub.
+
 ## [0.23.0] - 2026-11-04
 
 Libraries and hubs of 0.22.0 and 0.23.0 work with each other in any order. Phones get

@@ -87,6 +87,25 @@
   color: var(--muted);
 }
 
+/* The download view in place of a book's text before its first opening (and where
+   it stopped): plain paragraphs, not the book's indented ones. */
+.text .hub-download p {
+  text-indent: 0;
+}
+
+.hub-download progress {
+  display: block;
+  width: 100%;
+  max-width: 24rem;
+  accent-color: var(--accent);
+}
+
+.hub-download .hub-download-count {
+  margin-top: 0.4rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
 /* The app's logo in the top bar: before the name, alone on a phone (base.html); in
    color (logo.html) with the books in the theme's profile colors, as the avatar. */
 .brand {

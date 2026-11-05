@@ -90,7 +90,8 @@ max_blob_bytes = 67108864
 # The most bytes the hub stores for all libraries together (0 = no limit); beyond it,
 # new books and marks are refused until space is freed.
 max_total_bytes = 0
-# A publication not opened for this many days is deleted (0 = never).
+# A publication not opened for this many days is deleted (0 = never); the devices
+# that have it keep their copies.
 publication_expiry_days = 0
 # API requests per minute and device token.
 requests_per_minute = 600

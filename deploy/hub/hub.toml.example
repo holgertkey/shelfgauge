@@ -38,5 +38,6 @@ max_devices = 5
 [limits]
 # CHANGE: about 80 % of the free disk (here 20 GiB); 0 = no limit.
 max_total_bytes = 21474836480
-# Books not opened for half a year are deleted (0 = never).
+# Books not opened for half a year are deleted here (0 = never); phones that have
+# them keep their copies.
 publication_expiry_days = 180

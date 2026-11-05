@@ -587,9 +587,11 @@ first. Any modern browser works; the hub must be reached over HTTPS (the browser
 encryption and offline storage need it). A book reads as in the library: the same
 text layout, contents, notes in a panel, focus mode with the status line, reading
 settings (kept on the phone), search in the book, bookmarks and quotes with notes; the
-reading position is saved and continues on whichever device you stopped. A book once
-opened is kept on the phone (encrypted) and opens without a connection, also when the
-hub is down; marks made meanwhile sync when it is back. A person in several libraries
+reading position is saved and continues on whichever device you stopped. A book is
+downloaded as a whole when it is first opened (with progress) and kept on the phone
+(encrypted) as long as it is on your Bookshelf: it opens without a connection, also
+when the hub is down or no longer has its copy; marks made meanwhile sync when it is
+back. A person in several libraries
 signs in to each (**Add a library** in My account); the shelf then has a library
 switcher and **All shelves**. A browser shared by two people should be signed out of
 all accounts before it changes hands.

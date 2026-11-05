@@ -764,6 +764,21 @@ export async function cached(id, path) {
   return Boolean(await (await caches.open(BLOBS)).match(`${location.origin}${base}/api/pub/${id}/${path}`));
 }
 
+/** The paths of `paths` whose blob of publication `id` is not in the cache, in order. */
+export async function missing(id, paths) {
+  if (!("caches" in self)) {
+    return [...paths];
+  }
+  const cache = await caches.open(BLOBS);
+  const out = [];
+  for (const path of paths) {
+    if (!(await cache.match(`${location.origin}${base}/api/pub/${id}/${path}`))) {
+      out.push(path);
+    }
+  }
+  return out;
+}
+
 /**
  * Deletes every downloaded hub publication (they download again when opened), for
  * every account held here. Book file copies stay.
@@ -812,7 +827,10 @@ export function markOffline(p, id) {
   return tx(p, ["state"], "readwrite", (t) => t.objectStore("state").put(true, `offline:${id}`));
 }
 
-/** Fetches blob `path` of publication `id` (raw ciphertext); null if it is gone. */
+/**
+ * Fetches blob `path` of publication `id` (raw ciphertext); null if it is gone (and
+ * not kept here: the Service Worker serves a kept copy instead of a `404`).
+ */
 export async function blob(p, id, path) {
   const response = await api(`pub/${id}/${path}`, {}, p.token);
   if (response.status === 404 || response.status === 410) {

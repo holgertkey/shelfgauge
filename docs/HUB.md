@@ -174,6 +174,13 @@ rsync -a /srv/shelfgauge-hub/blobs/ /backup/blobs/
 `"accepting": false` when `max_total_bytes` is reached), disk space, and
 `journalctl -u shelfgauge-hub`.
 
+**Expiry and takedowns**: `publication_expiry_days` frees the hub's disk by deleting
+its copy of a book nobody opened for that many days; the phones that have the book
+keep theirs and read it offline as long as it is on their Bookshelf (a phone without
+a copy says the book is no longer on the hub, until its library sends it again).
+`shelfgauge hub takedown <publication-id>` deletes the hub's copy too, and a phone that
+has one deletes it the next time it opens the book with a connection.
+
 **Updates**: replace the binary and `systemctl restart shelfgauge-hub`; the database
 migrates itself (from 0.18–0.20 see the README, "Upgrading from 0.18–0.20").
 

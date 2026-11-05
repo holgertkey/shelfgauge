@@ -8,14 +8,17 @@
 // - the app's files: precached per version, served from the cache;
 // - publication blobs: parts and images never change (a changed book is a new
 //   publication), so they are served from the cache once fetched; the manifest comes
-//   from the network when it answers in time (the hub counts its fetches as openings,
-//   and a gone publication must show as gone), else from the cache — also when a
-//   reverse proxy answers 5xx for a hub that is down;
+//   from the network when it answers in time (the hub counts its fetches as openings),
+//   else from the cache — also when a reverse proxy answers 5xx for a hub that is
+//   down, and when the hub no longer has it (`404`: expired or deleted there): a copy
+//   here stays as long as the book is on the shelf (the app drops the copies of books
+//   that left it); only a takedown (`410`) deletes it at once;
 // - the rest of the API: always the network;
 // - a book file shared to the installed app (`share_target`, `POST /share`): kept in
 //   the cache SHARED for the app to open, answered with `303` to `/open?shared=1`.
 // A full storage never breaks reading online: what cannot be cached is still served.
-// Only ciphertext is cached; the app deletes the copies of books that left the shelf.
+// Only ciphertext is cached; the app deletes the copies of books that left the shelf
+// (and of every book on Remove downloaded books).
 "use strict";
 
 const BASE = "{{ base }}";
@@ -143,8 +146,8 @@ async function blob(request, url, manifest) {
     await keep(cache, key, response.clone());
     return response;
   }
-  if (response && (response.status === 404 || response.status === 410)) {
-    // Gone from the hub (expired, removed, taken down): so are the copies here.
+  if (response && response.status === 410) {
+    // Taken down by the hub's operator: so are the copies here.
     const prefix = key.slice(0, key.lastIndexOf("/"));
     for (const old of await cache.keys()) {
       if (old.url.startsWith(`${prefix}/`)) {
@@ -154,8 +157,9 @@ async function blob(request, url, manifest) {
     return response;
   }
   // Out of reach, slow, the proxy says the hub is down (5xx) or answers with its own
-  // page: the copy, if any.
-  if (cached && (!response || response.status >= 500 || response.ok)) {
+  // page, or the hub's copy is gone (`404`: expired, or deleted by the library, whose
+  // removal from the shelf drops this copy at the next sync): the copy, if any.
+  if (cached && (!response || response.status >= 500 || response.status === 404 || response.ok)) {
     return cached;
   }
   return response || fetch(request);

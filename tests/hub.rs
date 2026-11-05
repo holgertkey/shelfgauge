@@ -1488,6 +1488,72 @@ async fn unopened_publications_expire() {
     assert_eq!(again.status, StatusCode::CREATED);
 }
 
+/// A copy on a device stays while its book is on the shelf (Phase 31.3): the hub
+/// answers `404` for a publication that expired or that its library deleted, and `410`
+/// only for an operator's takedown; the served Service Worker keeps (serves) its copy
+/// on a `404` and deletes it only on a `410` (the behaviour itself is checked in the
+/// browser, `.debug/TESTS/hub_smoke.mjs`).
+#[tokio::test]
+async fn only_a_takedown_deletes_the_copies_on_the_devices() {
+    let hub = TestHub::new(|c| c.limits.publication_expiry_days = 10);
+    let lib = hub.library("smiths").await;
+    let olga = hub.member(&lib, "olga", 1).await;
+    let (expired, deleted, taken) = (pub_id(1), pub_id(2), pub_id(3));
+    for id in [&expired, &deleted, &taken] {
+        hub.publish(&lib, id, 10).await;
+    }
+    let manifest = |id: &str| format!("/api/pub/{id}/manifest");
+    hub.advance(5 * 86_400);
+    for id in [&deleted, &taken] {
+        hub.get(&manifest(id), Some(&olga.token)).await;
+    }
+    hub.advance(5 * 86_400);
+    assert_eq!(hub.state.hub().expire(hub.now()).unwrap().0, 1);
+    let gone = hub.get(&manifest(&expired), Some(&olga.token)).await;
+    assert_eq!(gone.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        hub.delete(&format!("/api/pub/{deleted}"), &lib.token)
+            .await
+            .status,
+        StatusCode::NO_CONTENT
+    );
+    let gone = hub.get(&manifest(&deleted), Some(&olga.token)).await;
+    assert_eq!(gone.status, StatusCode::NOT_FOUND);
+    let parsed: PublicationId = taken.parse().unwrap();
+    assert!(hub.state.hub().takedown(&parsed, hub.now()).unwrap());
+    let gone = hub.get(&manifest(&taken), Some(&olga.token)).await;
+    assert_eq!(gone.status, StatusCode::GONE);
+
+    for (base, prefix) in [("/", ""), ("/hub", "/hub")] {
+        let hub = TestHub::new(|c| c.server.base_path = base.into());
+        let sw = String::from_utf8(hub.get(&format!("{prefix}/sw.js"), None).await.body).unwrap();
+        assert!(
+            sw.contains("if (response && response.status === 410) {"),
+            "{sw}"
+        );
+        assert!(
+            !sw.contains("response.status === 404 || response.status === 410"),
+            "{sw}"
+        );
+        assert!(
+            sw.contains("if (cached && (!response || response.status >= 500 || response.status === 404 || response.ok)) {"),
+            "{sw}"
+        );
+        // The blob cache keeps its name: a new one would drop every copy on every device.
+        assert!(sw.contains(r#"const BLOBS = "shelfgauge-blobs";"#), "{sw}");
+    }
+    // The reader puts the whole book on the device before it opens.
+    let reader = String::from_utf8(hub.get("/assets/hub.js", None).await.body).unwrap();
+    assert!(
+        reader.contains("await downloadBook(book)"),
+        "the download step"
+    );
+    assert!(
+        !reader.contains("saveOffline"),
+        "no second pass over the blobs"
+    );
+}
+
 #[tokio::test]
 async fn expiry_is_off_by_default() {
     let hub = TestHub::open();
