@@ -17,7 +17,9 @@ pub use shelfgauge_core::publication as format;
 use crate::annotations::text::BookText;
 use crate::cache::covers;
 use crate::config::ReaderConfig;
-use crate::format::model::{BookContent, Image};
+use std::collections::BTreeSet;
+
+use crate::format::model::{BlockKind, BookContent, Image, Inline};
 use crate::render::html::toc_entries;
 use crate::render::outline::{chapter_ticks, html_lang, part_progress, title_before};
 use crate::render::split::split;
@@ -125,10 +127,12 @@ pub struct Publication {
 /// Builds the publication of a book from its content, split by `reader`, with its
 /// cover (if any).
 ///
-/// Only raster images of the types the instance serves are included (an SVG could
-/// carry scripts); a reference to another image renders as an image that does not
-/// load, as on the instance. A cover that is one of the content's images is stored
-/// once.
+/// Only the images the text shows (block and inline images, table cells included) are
+/// included, and of them only raster images of the types the instance serves (an SVG
+/// could carry scripts); a reference to another image renders as an image that does
+/// not load, as on the instance. The cover is published only when it is one of these images (stored once):
+/// the hub reader shows no cover of its own, and a cover outside the text (most FB2
+/// books, Standard Ebooks) was often half the publication's size.
 pub fn build(
     info: &BookInfo,
     content: &BookContent,
@@ -141,9 +145,13 @@ pub fn build(
     let parts = split(content, reader);
     let text = BookText::new(content);
 
+    let shown = shown_images(content);
     let mut images = Vec::new();
     let mut infos = Vec::new();
     for (id, image) in content.images() {
+        if !shown.contains(id.as_str()) {
+            continue;
+        }
         if let Some(mime) = covers::known_mime(&image.mime) {
             infos.push(ImageInfo {
                 id: id.clone(),
@@ -157,15 +165,8 @@ pub fn build(
         let same = infos
             .iter()
             .zip(&images)
-            .position(|(info, data)| info.mime == mime && *data == cover.data);
-        Some(same.unwrap_or_else(|| {
-            infos.push(ImageInfo {
-                id: String::new(),
-                mime: mime.to_owned(),
-            });
-            images.push(cover.data.clone());
-            infos.len() - 1
-        }) as u32)
+            .position(|(info, data)| info.mime == mime && *data == cover.data)?;
+        Some(same as u32)
     });
 
     let manifest = Manifest {
@@ -197,6 +198,58 @@ pub fn build(
         parts: PartBlob::extract_all(content, &parts),
         images,
     })
+}
+
+/// The ids of the images the text of `content` shows: block images and inline images
+/// in any block, table cells included (what the renderer asks
+/// [`ReaderLinks::image`](crate::render::html::ReaderLinks::image) for).
+fn shown_images(content: &BookContent) -> BTreeSet<&str> {
+    fn inlines<'a>(list: &'a [Inline], out: &mut BTreeSet<&'a str>) {
+        for inline in list {
+            match inline {
+                Inline::Image(image) => {
+                    out.insert(&image.id);
+                }
+                Inline::Emphasis(children)
+                | Inline::Strong(children)
+                | Inline::Strikethrough(children)
+                | Inline::Subscript(children)
+                | Inline::Superscript(children)
+                | Inline::Code(children)
+                | Inline::Link { children, .. } => inlines(children, out),
+                Inline::Text(_) | Inline::LineBreak => {}
+            }
+        }
+    }
+
+    let mut out = BTreeSet::new();
+    content.for_each_block(|block| match &block.kind {
+        BlockKind::Image(image) => {
+            out.insert(image.id.as_str());
+        }
+        BlockKind::Paragraph(list)
+        | BlockKind::Subtitle(list)
+        | BlockKind::Verse(list)
+        | BlockKind::TextAuthor(list)
+        | BlockKind::Preformatted(list) => inlines(list, &mut out),
+        BlockKind::Table(table) => {
+            for cell in table.rows.iter().flat_map(|row| &row.cells) {
+                inlines(&cell.content, &mut out);
+            }
+        }
+        // Containers: their blocks come on their own.
+        BlockKind::EmptyLine
+        | BlockKind::Date(_)
+        | BlockKind::Epigraph(_)
+        | BlockKind::Cite(_)
+        | BlockKind::Annotation(_)
+        | BlockKind::Poem { .. }
+        | BlockKind::Stanza { .. }
+        | BlockKind::List { .. }
+        | BlockKind::ListItem(_)
+        | BlockKind::Rule => {}
+    });
+    out
 }
 
 impl Publication {

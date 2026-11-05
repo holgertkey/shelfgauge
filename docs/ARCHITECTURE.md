@@ -908,7 +908,10 @@ and sealing in the app (`src/publication/`).
   the previous part) and the resolved targets of its internal links (text ↔ notes).
   `PartBlob::render` gives exactly the server's `render_part` output; all parts
   together give the book again (`publication::assemble`, ids checked by
-  `BookContent::from_numbered`).
+  `BookContent::from_numbered`). Only the images the text shows are published
+  (`shown_images`: block and inline images, table cells included), and the cover only
+  when it is one of them: the hub reader shows no cover of its own (the Showcase has
+  its own thumbnails), and a cover outside the text was often half a book's size.
 - **Sealing**: raw deflate (`flate2`; `DecompressionStream("deflate-raw")` on the
   device) → padding (`[len u32 BE][data][zeros]` up to the bucket: 256 bytes, then
   each size plus an eighth) → AES-256-GCM with the book key (`aes-gcm`; WebCrypto on

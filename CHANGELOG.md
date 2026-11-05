@@ -42,6 +42,12 @@ member's request only from this version on.
   library, **Remove downloaded books**, signing out) or at once on an operator's
   takedown. When the library sends a book again (for another device), a device
   that has the earlier copy keeps reading it instead of downloading it once more.
+- **Smaller books on the hub.** A book sent to the hub, or saved as a book file, no
+  longer carries a cover that its text does not show (most FB2 books, Standard Ebooks
+  EPUBs), nor any other image its text does not show: the hub reader never showed
+  them, and such a cover was often half the book (Standard Ebooks' Pride and
+  Prejudice 777 → 364 KB). A cover that is also a picture in the text stays. Books
+  sent earlier keep theirs until sent again.
 
 ### Fixed
 

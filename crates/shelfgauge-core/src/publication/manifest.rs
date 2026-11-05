@@ -38,7 +38,8 @@ pub struct Manifest {
     pub chapters: Vec<ChapterTick>,
     /// The images: image `n` is the blob `i/<n>`.
     pub images: Vec<ImageInfo>,
-    /// The cover, an index into [`images`](Self::images).
+    /// The cover, an index into [`images`](Self::images) (only a cover that is also an
+    /// image of the text).
     pub cover: Option<u32>,
 }
 
@@ -73,7 +74,8 @@ impl PartInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImageInfo {
     /// The image's source id ([`ImageRef::id`](crate::format::model::ImageRef::id));
-    /// empty for a cover that the text does not show.
+    /// empty for a cover that the text does not show (earlier versions published such
+    /// covers; they are left out now).
     pub id: String,
     /// The MIME type, one of the raster types the instance serves.
     pub mime: String,

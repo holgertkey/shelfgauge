@@ -14,7 +14,10 @@ use shelfgauge::config::{ReaderConfig, SplitMode};
 use shelfgauge::format::epub::EpubParser;
 use shelfgauge::format::fb2::Fb2Parser;
 use shelfgauge::format::html::HtmlParser;
-use shelfgauge::format::model::{BlockId, BookContent, Image};
+use shelfgauge::format::model::{
+    Block, BlockId, BlockKind, Body, BookContent, Image, ImageRef, Inline, LinkTarget, Section,
+    Table, TableCell, TableRow,
+};
 use shelfgauge::format::txt::TxtParser;
 use shelfgauge::format::{BookParser, run_with_parser_stack};
 use shelfgauge::publication::format::{
@@ -41,6 +44,32 @@ impl ReaderLinks for Links {
     fn image(&self, id: &str) -> String {
         format!("/book/1/image/{id}")
     }
+}
+
+/// Links that note the ids of the images the renderer asks for.
+#[derive(Default)]
+struct Recording(std::cell::RefCell<std::collections::BTreeSet<String>>);
+
+impl ReaderLinks for Recording {
+    fn block(&self, _: usize, _: BlockId) -> String {
+        String::new()
+    }
+
+    fn image(&self, id: &str) -> String {
+        self.0.borrow_mut().insert(id.to_owned());
+        String::new()
+    }
+}
+
+/// The ids of the images the rendered text of `content` shows.
+fn rendered_images(content: &BookContent) -> std::collections::BTreeSet<String> {
+    let config = ReaderConfig::default();
+    let parts = split(content, &config);
+    let links = Recording::default();
+    for index in 0..parts.len() {
+        render_part(content, &parts, index, &links);
+    }
+    links.0.into_inner()
 }
 
 /// Every synthetic book and fixture, parsed (`html_saved_page` is not a book).
@@ -306,15 +335,164 @@ fn the_manifest_carries_the_book_and_its_images() {
     assert_eq!(manifest.language.as_deref(), Some("en-GB"));
     assert_eq!(manifest.content_key, vec![7; 16]);
     assert!(!manifest.toc.is_empty());
-    let cover = cover.as_ref().expect("the full fixture has a cover");
-    let index = manifest.cover.expect("cover published") as usize;
-    assert_eq!(images[index], cover.data);
-    // Every content image has an image blob.
+    // Every image the text shows has an image blob, and only these.
+    let shown = rendered_images(content);
+    assert!(!shown.is_empty(), "the full fixture shows images");
     for (id, image) in content.images() {
-        let n = manifest.image_index(id).expect("published image") as usize;
-        assert_eq!(images[n], image.data);
-        assert_eq!(manifest.images[n].mime, image.mime);
+        match manifest.image_index(id) {
+            Some(n) => {
+                assert!(shown.contains(id), "{id} is not shown but published");
+                assert_eq!(images[n as usize], image.data);
+                assert_eq!(manifest.images[n as usize].mime, image.mime);
+            }
+            None => assert!(!shown.contains(id), "{id} is shown but not published"),
+        }
     }
+    assert_eq!(manifest.images.len(), images.len());
+}
+
+#[test]
+fn every_book_publishes_exactly_the_images_its_text_shows() {
+    // `build` finds them by walking the model; the renderer is the reference.
+    for (name, content, cover) in books() {
+        let shown = rendered_images(&content);
+        let publication =
+            build(&info(), &content, cover.as_ref(), &ReaderConfig::default()).unwrap();
+        let published: std::collections::BTreeSet<String> = publication
+            .manifest
+            .images
+            .iter()
+            .map(|i| i.id.clone())
+            .collect();
+        let expected: std::collections::BTreeSet<String> = content
+            .images()
+            .iter()
+            .filter(|(id, image)| {
+                shown.contains(*id) && shelfgauge::cache::covers::known_mime(&image.mime).is_some()
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        assert_eq!(published, expected, "{name}");
+        assert_eq!(publication.images.len(), published.len(), "{name}");
+    }
+}
+
+#[test]
+fn a_cover_the_text_does_not_show_is_not_published() {
+    // A cover of its own (an FB2 coverpage, an EPUB cover outside the text).
+    let content = BookContent::new(vec![Body::main(paragraph_section("Text"))], BTreeMap::new());
+    let cover = Image {
+        mime: "image/png".into(),
+        data: common::PNG.to_vec(),
+    };
+    let publication = build(&info(), &content, Some(&cover), &ReaderConfig::default()).unwrap();
+    assert!(publication.images.is_empty());
+    assert!(publication.manifest.images.is_empty());
+    assert_eq!(publication.manifest.cover, None);
+
+    // A cover among the book's images that the text does not show (an EPUB's cover
+    // image behind an SVG cover page): left out too.
+    let mut images = BTreeMap::new();
+    images.insert(
+        "cover.png".to_owned(),
+        Image {
+            mime: "image/png".into(),
+            data: common::PNG.to_vec(),
+        },
+    );
+    let content = BookContent::new(vec![Body::main(paragraph_section("Text"))], images);
+    let cover = content.images()["cover.png"].clone();
+    let publication = build(&info(), &content, Some(&cover), &ReaderConfig::default()).unwrap();
+    assert!(publication.images.is_empty());
+    assert!(publication.manifest.images.is_empty());
+    assert_eq!(publication.manifest.cover, None);
+}
+
+/// A section with one paragraph of `text`.
+fn paragraph_section(text: &str) -> Section {
+    Section {
+        blocks: vec![Block::new(BlockKind::Paragraph(vec![Inline::Text(
+            text.into(),
+        )]))],
+        ..Section::default()
+    }
+}
+
+#[test]
+fn only_images_the_text_shows_are_published() {
+    let image_ref = |id: &str| ImageRef {
+        id: id.into(),
+        ..ImageRef::default()
+    };
+    let png = |n: u8| Image {
+        mime: "image/png".into(),
+        data: [common::PNG, &[n]].concat(),
+    };
+    let images: BTreeMap<String, Image> = ["block", "cell", "verse", "note", "unused"]
+        .iter()
+        .enumerate()
+        .map(|(n, id)| ((*id).to_owned(), png(n as u8)))
+        .collect();
+    let main = Section {
+        title: vec![Block::new(BlockKind::Paragraph(vec![Inline::Text(
+            "Title".into(),
+        )]))],
+        blocks: vec![
+            Block::new(BlockKind::Image(image_ref("block"))),
+            Block::new(BlockKind::Table(Table {
+                rows: vec![TableRow {
+                    cells: vec![TableCell {
+                        content: vec![Inline::Strong(vec![Inline::Image(image_ref("cell"))])],
+                        ..TableCell::default()
+                    }],
+                }],
+            })),
+            Block::new(BlockKind::Cite(vec![Block::new(BlockKind::Poem {
+                title: Vec::new(),
+                blocks: vec![Block::new(BlockKind::Stanza {
+                    title: Vec::new(),
+                    blocks: vec![Block::new(BlockKind::Verse(vec![Inline::Link {
+                        target: LinkTarget::Url("https://example.org".into()),
+                        note: false,
+                        children: vec![Inline::Image(image_ref("verse"))],
+                    }]))],
+                })],
+            })])),
+        ],
+        ..Section::default()
+    };
+    let notes = Section {
+        blocks: vec![Block::new(BlockKind::Paragraph(vec![Inline::Image(
+            image_ref("note"),
+        )]))],
+        ..Section::default()
+    };
+    let content = BookContent::new(vec![Body::main(main), Body::notes(notes)], images);
+    let cover = png(4);
+    let publication = build(&info(), &content, Some(&cover), &ReaderConfig::default()).unwrap();
+    let published: Vec<&str> = publication
+        .manifest
+        .images
+        .iter()
+        .map(|i| i.id.as_str())
+        .collect();
+    assert_eq!(published, ["block", "cell", "note", "verse"]);
+    assert_eq!(
+        rendered_images(&content),
+        published.iter().map(|id| (*id).to_owned()).collect()
+    );
+    assert_eq!(publication.images.len(), 4);
+    assert_eq!(
+        publication.manifest.cover, None,
+        "the unused image as the cover"
+    );
+
+    // The cover as an image the text shows: published once, as that image.
+    let cover = png(2);
+    let publication = build(&info(), &content, Some(&cover), &ReaderConfig::default()).unwrap();
+    assert_eq!(publication.images.len(), 4);
+    assert_eq!(publication.manifest.image_index("verse"), Some(3));
+    assert_eq!(publication.manifest.cover, Some(3));
 }
 
 #[test]
@@ -353,8 +531,15 @@ fn only_raster_images_are_published() {
 }
 
 #[test]
-fn a_cover_that_is_also_a_content_image_is_stored_once() {
-    let content = BookContent::new(Vec::new(), {
+fn a_cover_that_is_also_an_image_of_the_text_is_stored_once() {
+    let section = Section {
+        blocks: vec![Block::new(BlockKind::Image(ImageRef {
+            id: "cover.png".into(),
+            ..ImageRef::default()
+        }))],
+        ..Section::default()
+    };
+    let content = BookContent::new(vec![Body::main(section)], {
         let mut images = BTreeMap::new();
         images.insert(
             "cover.png".into(),
@@ -369,10 +554,7 @@ fn a_cover_that_is_also_a_content_image_is_stored_once() {
     let publication = build(&info(), &content, Some(&cover), &ReaderConfig::default()).unwrap();
     assert_eq!(publication.images.len(), 1);
     assert_eq!(publication.manifest.cover, Some(0));
-    assert!(
-        publication.manifest.parts.is_empty(),
-        "a book without text has no parts"
-    );
+    assert_eq!(publication.manifest.images[0].id, "cover.png");
 }
 
 #[test]
@@ -1340,23 +1522,9 @@ fn report_recompress(
 #[test]
 #[ignore = "needs real books in SHELFGAUGE_PUBLICATION_SAMPLES"]
 fn image_size_report() {
-    use std::cell::RefCell;
     use std::collections::BTreeSet;
     use std::io::Write as _;
     use std::time::Instant;
-
-    struct Recording(RefCell<BTreeSet<String>>);
-
-    impl ReaderLinks for Recording {
-        fn block(&self, _: usize, _: BlockId) -> String {
-            String::new()
-        }
-
-        fn image(&self, id: &str) -> String {
-            self.0.borrow_mut().insert(id.to_owned());
-            String::new()
-        }
-    }
 
     let Ok(dir) = std::env::var("SHELFGAUGE_PUBLICATION_SAMPLES") else {
         eprintln!("SHELFGAUGE_PUBLICATION_SAMPLES is not set");
@@ -1431,12 +1599,7 @@ fn image_size_report() {
             }
 
             // Images no part refers to and that are not the cover.
-            let links = Recording(RefCell::new(BTreeSet::new()));
-            let parts = split(&content, &config);
-            for index in 0..parts.len() {
-                render_part(&content, &parts, index, &links);
-            }
-            let referenced = links.0.into_inner();
+            let referenced = rendered_images(&content);
             let cover = publication.manifest.cover.map(|n| n as usize);
             let used = |n: usize| {
                 Some(n) == cover || referenced.contains(&publication.manifest.images[n].id)
