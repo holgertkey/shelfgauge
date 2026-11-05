@@ -32,7 +32,11 @@ pub(super) const MAX_DEPTH: u32 = 512;
 pub(super) const MAX_NODES: usize = 1_000_000;
 
 /// Bytes of text handed to the parser at a time.
-const CHUNK: usize = 64 * 1024;
+///
+/// The limits are checked only between chunks, so a chunk must be small: one chunk of
+/// `<div>` alone nests about `CHUNK / 5` levels past [`MAX_DEPTH`], and the tree
+/// builder's time grows with the square of the depth (64 KiB took seconds).
+const CHUNK: usize = 4 * 1024;
 
 /// Why a page was not parsed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -501,7 +505,8 @@ mod tests {
             Dom::parse(&"<b><i>".repeat(10_000)).err(),
             Some(TooBig::Deep)
         );
-        assert!(start.elapsed().as_secs() < 20, "{:?}", start.elapsed());
+        // Both stop within the first chunks (far under a second even in debug builds).
+        assert!(start.elapsed().as_secs() < 5, "{:?}", start.elapsed());
         let dom = Dom::parse(&"<div>".repeat(MAX_DEPTH as usize - 5)).unwrap();
         assert!(dom.descendants(DOCUMENT).count() > MAX_DEPTH as usize - 5);
     }
