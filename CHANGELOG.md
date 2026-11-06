@@ -8,6 +8,8 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-11-06
+
 Phones get these changes from a hub of this version (the hub serves the reader app);
 the hub's routes and the formats do not change. A library sends a book again on a
 member's request only from this version on.
