@@ -366,6 +366,9 @@ ways, `BACKUP` in `setup.env`:
   (the endpoint is on the Buckets page), the key as `AWS_ACCESS_KEY_ID` and
   `AWS_SECRET_ACCESS_KEY`, and `AWS_DEFAULT_REGION=<region>`.
 
+With another `BACKUP` than `pull`, `setup.sh` removes the pull backup's key line from
+root's `authorized_keys` (keeping a copy) and `shelfgauge-hub-backup-send`.
+
 Keep the backups at another provider than the server: a provider's own backup lives
 in the same data centre and ends with the account.
 

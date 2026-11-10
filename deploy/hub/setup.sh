@@ -472,6 +472,29 @@ EOF
     ;;
   none) ;;
 esac
+# Another BACKUP than pull: the pull backup's key and its forced command go (a key line
+# whose command is shelfgauge-hub-backup-send could still fetch every backup).
+if [ "$BACKUP" != pull ]; then
+  send=/usr/local/sbin/shelfgauge-hub-backup-send
+  keys=/root/.ssh/authorized_keys
+  if [ -f "$keys" ] && grep -qF "command=\"$send\"" "$keys"; then
+    changed+=("$keys: the pull backup's key removed")
+    if [ "$check" = 1 ]; then
+      echo "would change: $keys (remove the line with command=\"$send\")"
+    else
+      cp -a "$keys" "$keys.bak-$(date +%F-%H%M%S)"
+      tmp=$(mktemp)
+      grep -vF "command=\"$send\"" "$keys" >"$tmp" || true
+      install -m 0600 -o root -g root "$tmp" "$keys"
+      rm -f "$tmp"
+      echo "changed: $keys (the pull backup's key removed)"
+    fi
+  fi
+  if [ -e "$send" ]; then
+    x rm -f "$send"
+    changed+=("$send removed")
+  fi
+fi
 
 # --- the site check --------------------------------------------------------------------
 say "site check"
