@@ -350,7 +350,21 @@ ways, `BACKUP` in `setup.env`:
   another provider (an SFTP storage box, S3, Backblaze B2), with its settings and the
   provider's credentials in `/etc/shelfgauge-hub/backup.env` and the password in
   `/etc/shelfgauge-hub/restic-password` (keep a copy off the server; without it the
-  backups cannot be read).
+  backups cannot be read). Give the server a key that cannot delete, so whoever takes
+  it over cannot wipe the backups. With Backblaze B2 (10 GB free) through its
+  S3-compatible API:
+
+  ```sh
+  b2 account authorize                      # the master application key, on your computer
+  b2 bucket create --lifecycle-rule '{"daysFromHidingToDeleting": 30, "daysFromUploadingToHiding": null, "fileNamePrefix": ""}' your-bucket allPrivate
+  b2 key create --bucket your-bucket shelfgauge-hub-server listBuckets,listFiles,readFiles,writeFiles
+  ```
+
+  restic then only hides files it no longer needs, and B2 deletes a hidden version
+  30 days later: 30 days to notice. `backup.env` gets
+  `RESTIC_REPOSITORY=s3:https://s3.<region>.backblazeb2.com/your-bucket/shelfgauge-hub`
+  (the endpoint is on the Buckets page), the key as `AWS_ACCESS_KEY_ID` and
+  `AWS_SECRET_ACCESS_KEY`, and `AWS_DEFAULT_REGION=<region>`.
 
 Keep the backups at another provider than the server: a provider's own backup lives
 in the same data centre and ends with the account.

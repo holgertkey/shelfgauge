@@ -9,6 +9,9 @@
 # Healthchecks.io (start, success, or the exit code with the log).
 # Settings: /etc/shelfgauge-hub/backup.env (0600): RESTIC_REPOSITORY,
 # RESTIC_PASSWORD_FILE, the provider's credentials restic reads (AWS_*, B2_*, ...), HC_URL.
+# The key should not be able to delete (Backblaze B2: no deleteFiles; restic then hides
+# files, and the bucket keeps hidden versions for some days), so whoever takes over this
+# server cannot wipe the backups with it; `forget --prune` still works by hiding.
 # The staging hub is not backed up (its data is throwaway).
 set -uo pipefail
 umask 077

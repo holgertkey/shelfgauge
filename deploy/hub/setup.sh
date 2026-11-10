@@ -448,9 +448,15 @@ case "$BACKUP" in
         echo "NOTE: a new restic password in /etc/shelfgauge-hub/restic-password: keep a copy off the server" >&2
       fi
       put /etc/shelfgauge-hub/backup.env 600 <<EOF || true
-# Written once by setup.sh; add the provider's credentials restic needs (AWS_*, B2_*, ...).
+# Written once by setup.sh; add the provider's credentials (docs/HUB.md, "Backups").
+# Backblaze B2 through its S3-compatible API: a key for the bucket only, without
+# deleteFiles (restic then only hides files, and the bucket keeps hidden versions for
+# 30 days), and the region of the bucket's endpoint.
 RESTIC_REPOSITORY=$RESTIC_REPOSITORY
 RESTIC_PASSWORD_FILE=/etc/shelfgauge-hub/restic-password
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_DEFAULT_REGION=
 HC_URL=$BACKUP_HC_URL
 EOF
     fi
