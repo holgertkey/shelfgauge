@@ -327,6 +327,11 @@ Setting it up:
 Without `DEPLOY_HOST` the workflow skips (a fork, or no server yet). The automatic
 start uses `deploy.yml` from the default branch.
 
+[`attest-check.yml`](../.github/workflows/attest-check.yml) tries the attestation
+steps on two small files and verifies the bundle as `update.sh` does, on a push to
+`main` that changes `release.yml`, itself or `update.sh` (or by hand): a problem with
+the attestation shows up with CI, before a tag is pushed.
+
 ## Backups
 
 The database and the books' blobs are the hub (all encrypted on the phones' side; the

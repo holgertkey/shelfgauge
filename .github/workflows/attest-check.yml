@@ -1,0 +1,73 @@
+name: Attest check
+
+# Tries the attestation steps of release.yml's job `attest` on two small files, without
+# a tag or a release, and verifies the bundle the way deploy/hub/update.sh does (no
+# token, the bundle from disk; a changed file must be refused). It runs with CI on a
+# push to main that changes one of these files, so an attestation problem shows up
+# before the tag (docs/HUB.md, "Deploying from CI"); keep its steps the same as
+# release.yml's and its verification the same as update.sh's.
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/release.yml
+      - .github/workflows/attest-check.yml
+      - deploy/hub/update.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  attest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Files like a release's
+        run: |
+          mkdir dist
+          echo "first archive" > dist/shelfgauge-vtest-x86_64-unknown-linux-gnu.tar.gz
+          echo "second archive" > dist/shelfgauge-vtest-aarch64-apple-darwin.tar.gz
+          (cd dist && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
+      - name: Attest the files
+        id: attest
+        uses: actions/attest@v4
+        with:
+          subject-checksums: dist/SHA256SUMS
+      - name: Keep the bundle
+        run: |
+          echo "bundle-path: ${{ steps.attest.outputs.bundle-path }}"
+          cp "${{ steps.attest.outputs.bundle-path }}" bundle.sigstore.json
+      - name: Verify as update.sh does
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          verify() {
+            env -u GH_TOKEN -u GITHUB_TOKEN GH_CONFIG_DIR="$(mktemp -d)" GH_NO_UPDATE_NOTIFIER=1 \
+              gh attestation verify "$1" --bundle bundle.sigstore.json \
+              --repo "$REPO" \
+              --signer-workflow "$REPO/.github/workflows/attest-check.yml" \
+              --source-ref "$GITHUB_REF" \
+              --deny-self-hosted-runners
+          }
+          gh --version | head -1
+          for f in dist/shelfgauge-vtest-*; do
+            verify "$f"
+            echo "verified: $f"
+          done
+          echo "changed" >> dist/shelfgauge-vtest-x86_64-unknown-linux-gnu.tar.gz
+          if verify dist/shelfgauge-vtest-x86_64-unknown-linux-gnu.tar.gz; then
+            echo "::error::a changed file passed the verification"
+            exit 1
+          fi
+          echo "a changed file is refused"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: attest-check
+          path: |
+            bundle.sigstore.json
+            dist/SHA256SUMS
+          retention-days: 3
