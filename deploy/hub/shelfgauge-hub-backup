@@ -28,7 +28,26 @@ hc() { # hc <suffix> [log file]
   fi
 }
 
+# systemd's EnvironmentFile= takes a value literally: a `;`, quotes or a space at the
+# end, harmless when the file is sourced by a shell, become part of the key or the URL
+# (B2 then answers Access Denied, Healthchecks 400).
+check_settings() {
+  local name value
+  for name in RESTIC_REPOSITORY RESTIC_PASSWORD_FILE AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY \
+    AWS_DEFAULT_REGION B2_ACCOUNT_ID B2_ACCOUNT_KEY HC_URL; do
+    value=${!name:-}
+    case "$value" in
+      *\;* | *\"* | *\'* | *" " | " "*)
+        echo "$name in /etc/shelfgauge-hub/backup.env has a ; quote or space: write the bare value"
+        return 78
+        ;;
+    esac
+  done
+  [ -n "${RESTIC_REPOSITORY:-}" ] || { echo "RESTIC_REPOSITORY is not set"; return 78; }
+}
+
 run() {
+  check_settings || return
   install -d -m 0700 -o shelfgauge -g shelfgauge "$spool"
   rm -f "$spool/hub.sqlite"
   runuser -u shelfgauge -- sqlite3 "$data/hub.sqlite" ".backup '$spool/hub.sqlite'" || return

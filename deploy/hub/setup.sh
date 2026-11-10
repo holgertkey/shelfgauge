@@ -451,7 +451,8 @@ case "$BACKUP" in
 # Written once by setup.sh; add the provider's credentials (docs/HUB.md, "Backups").
 # Backblaze B2 through its S3-compatible API: a key for the bucket only, without
 # deleteFiles (restic then only hides files, and the bucket keeps hidden versions for
-# 30 days), and the region of the bucket's endpoint.
+# 30 days), and the region of the bucket's endpoint. Bare values: no quotes, no ; at
+# the end (systemd reads them literally).
 RESTIC_REPOSITORY=$RESTIC_REPOSITORY
 RESTIC_PASSWORD_FILE=/etc/shelfgauge-hub/restic-password
 AWS_ACCESS_KEY_ID=
