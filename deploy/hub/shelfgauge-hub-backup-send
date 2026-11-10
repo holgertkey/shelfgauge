@@ -1,11 +1,11 @@
 #!/bin/bash
 # Installed on the server as /usr/local/sbin/shelfgauge-hub-backup-send (root, 0755) by
 # setup.sh with BACKUP=pull. The forced command of the backup key in
-# /root/.ssh/authorized_keys: whatever the
-# client asks for, it writes one tar stream of the hub's data to stdout and nothing
-# else. The archive root holds hub.sqlite (an online .backup snapshot, taken first),
-# hub.toml, terms.txt if there is one, and blobs/ (after the database, as docs/HUB.md
-# says: a blob without a row is harmless, a row without its blob is a broken book).
+# /root/.ssh/authorized_keys: whatever the client asks for, it writes one tar stream of
+# the hub's data to stdout and nothing else. The archive root holds hub.sqlite (an
+# online .backup snapshot, taken first), hub.toml, terms.txt if there is one, and blobs/
+# (after the database, as docs/HUB.md says: a blob without a row is harmless, a row
+# without its blob is a broken book).
 set -euo pipefail
 umask 077
 data=/srv/shelfgauge-hub
