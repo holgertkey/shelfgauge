@@ -13,7 +13,9 @@
 #   3. a damaged archive: refused before anything changes;
 #   4. a binary that does not start (a newer fake version): installed, restarted, rolled
 #      back to the old link and database;
-#   5. an older version: refused without --downgrade.
+#   5. an older version: refused without --downgrade;
+#   6. an update of a hub that does not answer at the start (stopped): installed and
+#      started (update.sh once ended silently when /api/info did not answer).
 # The attestation itself is checked by the first real deploy of a release that has one.
 set -uo pipefail
 
@@ -129,6 +131,16 @@ if ! run_update "$work/old-release" v0.0.1 >"$work/5.log" 2>&1 && grep -q "is ol
   pass "refused without --downgrade"
 else
   fail "downgrade"; cat "$work/5.log"
+fi
+
+echo "== 6. a hub that does not answer at the start"
+ln -sfn "$lib/dev-test-update/shelfgauge" "$link"
+systemctl stop shelfgauge-hub-staging
+if run_update "$work/good" "$tag" >"$work/6.log" 2>&1 && grep -q "running: not answering" "$work/6.log" &&
+  [ "$(readlink -f "$link")" = "$lib/$version/shelfgauge" ] && [ "$(answer)" = "$version" ]; then
+  pass "installed and started"
+else
+  fail "a stopped hub"; cat "$work/6.log"
 fi
 
 [ "$failed" = 0 ] && echo "== all trials passed" || echo "== some trials FAILED"

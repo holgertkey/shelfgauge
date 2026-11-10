@@ -107,9 +107,11 @@ grep -q "^ExecStart=$link " "/etc/systemd/system/$unit.service" 2>/dev/null ||
 exec 9>/run/shelfgauge-hub-update.lock
 flock -n 9 || die "another update is running"
 
-# The version the hub answers with (empty when it does not answer).
+# The version the hub answers with (empty when it does not answer). Never fails: under
+# `set -e` and `pipefail` a failing `x=$(running_version)` would end the script
+# silently, e.g. while the hub restarts, before the check and the rollback.
 running_version() {
-  curl -fsS -m 5 -H "Host: $domain" "http://127.0.0.1:$port/api/info" 2>/dev/null |
+  { curl -fsS -m 5 -H "Host: $domain" "http://127.0.0.1:$port/api/info" 2>/dev/null || true; } |
     sed -n 's/.*"version":"\([^"]*\)".*/\1/p'
 }
 
