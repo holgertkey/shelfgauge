@@ -1,0 +1,35 @@
+# The staging hub's hub.toml (copy to /srv/shelfgauge-hub-staging/hub.toml); see
+# docs/HUB.md. Staging takes intermediate builds and each release before production;
+# its data is throwaway. Lines marked CHANGE need your values.
+
+[server]
+bind = "127.0.0.1"
+# Production uses 8743; Caddyfile.staging proxies to this port.
+port = 8744
+# CHANGE: the staging name (Caddyfile.staging's domain).
+allowed_hosts = ["staging.example.org"]
+trusted_proxies = ["127.0.0.1", "::1"]
+
+[libraries]
+registration = "invite"
+max_libraries = 10
+new_libraries_per_address_per_day = 3
+expiry_days = 90
+
+[operator]
+# CHANGE: the same as production's.
+name = ""
+contact = ""
+terms_file = "terms.txt"
+
+[quotas]
+max_bytes = 1073741824
+max_publications = 300
+max_devices = 5
+
+[limits]
+# Staging shares the disk with production: a small share of it.
+max_total_bytes = 5368709120
+# A mailbox: books stay only a few days, which also tries the book requests of a
+# library whose copies are gone.
+publication_expiry_days = 3

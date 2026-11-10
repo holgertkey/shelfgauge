@@ -1,0 +1,12 @@
+# Installed by setup.sh with BACKUP=restic; see shelfgauge-hub-backup.
+[Unit]
+Description=Back up the shelfgauge hub to its restic repository
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/shelfgauge-hub/backup.env
+ExecStart=/usr/local/sbin/shelfgauge-hub-backup
+Nice=10
+IOSchedulingClass=idle

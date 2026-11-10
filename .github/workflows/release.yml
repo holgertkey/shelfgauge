@@ -3,6 +3,11 @@ name: Release
 # Pushing a version tag (`v1.2.3`, matching `MAJOR.MINOR.PATCH` in Cargo.toml) builds
 # the binaries, creates the GitHub release and publishes both crates to crates.io
 # (`shelfgauge-core` first, then `shelfgauge`, which depends on it).
+# The release carries `SHA256SUMS` of the archives and a build provenance attestation
+# of them (`shelfgauge-vX.Y.Z.sigstore.json`, also stored on GitHub), which a server
+# checks before it installs a version (deploy/hub/update.sh):
+#   gh attestation verify <archive> --bundle shelfgauge-vX.Y.Z.sigstore.json \
+#     --repo holgertkey/shelfgauge --source-ref refs/tags/vX.Y.Z
 # Publishing needs the repository secret CARGO_REGISTRY_TOKEN (a crates.io API token
 # with the publish-update scope for both crates; publish-new for a crate's first
 # version).
@@ -92,6 +97,11 @@ jobs:
           path: dist
           pattern: release-*
           merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -103,11 +113,53 @@ jobs:
 
           Binaries: Linux (x86_64), Windows (x86_64), macOS (Apple Silicon).
           From crates.io: \`cargo install shelfgauge\`.
+
+          \`SHA256SUMS\` lists the archives' checksums (\`sha256sum -c SHA256SUMS --ignore-missing\`).
+          Each archive has a build provenance attestation:
+          \`gh attestation verify ARCHIVE --repo ${GH_REPO}\`
+          (or offline with \`--bundle shelfgauge-${GITHUB_REF_NAME}.sigstore.json\`).
           EOF
           gh release create "$GITHUB_REF_NAME" dist/* \
             --verify-tag \
             --title "shelfgauge ${GITHUB_REF_NAME}" \
             --notes-file notes.md
+
+  # Its own job after the release: a failure here blocks only the deploys to a hub
+  # (update.sh needs the bundle), never the release or crates.io, and can be rerun.
+  attest:
+    name: attestation
+    needs: github-release
+    runs-on: ubuntu-latest
+    # The attestation is signed with a short-lived certificate for this workflow run
+    # (id-token) and stored on GitHub (attestations); the bundle goes to the release
+    # (contents).
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download the release's archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mkdir dist
+          gh release download "$GITHUB_REF_NAME" --dir dist --pattern 'shelfgauge-*' --pattern SHA256SUMS
+          rm -f dist/*.sigstore.json
+          (cd dist && sha256sum -c SHA256SUMS)
+      - name: Attest the archives
+        id: attest
+        uses: actions/attest@v4
+        with:
+          subject-checksums: dist/SHA256SUMS
+      - name: Add the attestation to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          bundle="shelfgauge-${GITHUB_REF_NAME}.sigstore.json"
+          cp "${{ steps.attest.outputs.bundle-path }}" "$bundle"
+          gh release upload "$GITHUB_REF_NAME" "$bundle" --clobber
 
   crates-io:
     name: publish to crates.io

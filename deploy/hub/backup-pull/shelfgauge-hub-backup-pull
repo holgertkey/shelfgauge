@@ -1,0 +1,59 @@
+#!/bin/bash
+# The other side of BACKUP=pull (setup.sh): runs on the operator's own computer, not on
+# the server. Installed as ~/bin/shelfgauge-hub-backup-pull, run daily by the systemd user
+# timer shelfgauge-hub-backup-pull.timer (copy both units to ~/.config/systemd/user/). Pulls the hub's data through the backup key (its
+# forced command on the server sends a tar stream) into a local restic repository,
+# keeps 7 daily, 4 weekly and 6 monthly snapshots, checks the repository on Sundays,
+# and reports start, success or failure (with the log) to Healthchecks.io.
+# Settings: ~/.config/shelfgauge-hub-backup/env (RESTIC_REPOSITORY, RESTIC_PASSWORD_FILE,
+# SSH_KEY, HUB_HOST, HUB_DOMAIN, HC_URL; see env.example). ssh -F /dev/null: ~/.ssh/config pins the admin key for this
+# host, and only the backup key (forced command) may be used here.
+set -uo pipefail
+conf="${XDG_CONFIG_HOME:-$HOME/.config}/shelfgauge-hub-backup"
+# shellcheck source=/dev/null
+. "$conf/env"
+export RESTIC_REPOSITORY RESTIC_PASSWORD_FILE
+host=${HUB_DOMAIN:?HUB_DOMAIN is not set}
+
+hc() { # hc <suffix> [log file]
+  [ -n "${HC_URL:-}" ] || return 0
+  if [ -n "${2:-}" ]; then
+    curl -fsS -m 15 --retry 3 -o /dev/null --data-binary @"$2" "$HC_URL$1" || true
+  else
+    curl -fsS -m 15 --retry 3 -o /dev/null "$HC_URL$1" || true
+  fi
+}
+
+run() {
+  # After boot or resume the timer fires before the network is up (network-online.target
+  # does not exist for user units): wait up to 5 minutes for the server's SSH port.
+  local i
+  for i in $(seq 60); do
+    timeout 5 bash -c "exec 3<>/dev/tcp/$HUB_HOST/22" 2>/dev/null && break
+    [ "$i" = 60 ] && { echo "the server is not reachable" >&2; return 75; }
+    sleep 5
+  done
+  restic backup --host "$host" --tag hub --stdin-filename hub.tar --stdin-from-command -- \
+    ssh -F /dev/null -i "$SSH_KEY" -o BatchMode=yes -o IdentitiesOnly=yes -o ServerAliveInterval=30 \
+    -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+    "root@$HUB_HOST" || return
+  restic forget --host "$host" --tag hub --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune || return
+  if [ "$(date +%u)" = 7 ]; then
+    restic check --read-data-subset=10% || return
+  fi
+}
+
+log="$(mktemp)"
+trap 'rm -f "$log"' EXIT
+hc /start
+if run >"$log" 2>&1; then
+  tail -n 20 "$log" > "$log.tail" && mv "$log.tail" "$log"
+  hc "" "$log"
+  cat "$log"
+else
+  rc=$?
+  hc "/$rc" "$log"
+  cat "$log" >&2
+  command -v notify-send >/dev/null && notify-send -u critical "Hub backup failed" "exit $rc; journalctl --user -u shelfgauge-hub-backup"
+  exit "$rc"
+fi

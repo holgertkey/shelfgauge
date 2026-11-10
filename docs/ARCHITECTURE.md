@@ -1052,6 +1052,23 @@ Built in Phase 24 (0.18.0); the reader app (Phase 26) and the instance side (Pha
   served and a tampered hub) and `tests/logging.rs`
   (`hub_secrets_and_publication_ids_are_never_logged`).
 
+### Deployment of the public hub
+
+The hub serves the reader app that decrypts the books on every phone, so a deploy
+changes code all its readers run. Only tagged releases reach the project's hub, each
+after the maintainer's approval: `release.yml` publishes `SHA256SUMS` and a build
+provenance attestation of the archives; `deploy.yml` updates a staging hub (same
+server, own name, port and data) and then, behind a GitHub Environment with a
+required reviewer, production. The job's SSH keys are forced commands of
+`deploy/hub/update.sh`, one per hub, which take only a version, check the sum and the
+attestation on the server (`gh attestation verify` against the release's bundle,
+signer `release.yml`, ref `refs/tags/vX.Y.Z`), copy the database (migrations go
+forward only), switch a per-hub binary link and roll back when the hub does not
+answer the new version. Development builds go to staging by hand
+(`push-staging.sh`), never to production. `deploy/hub/setup.sh` builds the whole
+server (key-only SSH, firewall, unattended security updates with a nightly reboot,
+Caddy, the units, backups, a site check) and can be rerun; details in `docs/HUB.md`.
+
 ### Reader app (0.18.0)
 
 Phase 26: `assets/hub/` (`hub.js` pages, `store.js` IndexedDB and API calls,

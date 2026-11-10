@@ -1,0 +1,57 @@
+#!/bin/bash
+# Installed on the server as /usr/local/sbin/shelfgauge-hub-backup by setup.sh with
+# BACKUP=restic, run nightly by shelfgauge-hub-backup.timer as root. Pushes the
+# production hub's data to a restic repository at another provider (an SFTP storage
+# box, S3, Backblaze B2, ...; encrypted by restic): an online `.backup` snapshot of
+# hub.sqlite (taken first: a blob without a row is harmless, a row without its blob is
+# a broken book), hub.toml, terms.txt and blobs/. Keeps 7 daily, 4 weekly and 6 monthly
+# snapshots, reads 10 % of the data back on the first day of the month, and pings
+# Healthchecks.io (start, success, or the exit code with the log).
+# Settings: /etc/shelfgauge-hub/backup.env (0600): RESTIC_REPOSITORY,
+# RESTIC_PASSWORD_FILE, the provider's credentials restic reads (AWS_*, B2_*, ...), HC_URL.
+# The staging hub is not backed up (its data is throwaway).
+set -uo pipefail
+umask 077
+data=/srv/shelfgauge-hub
+spool=/var/backups/shelfgauge-hub
+export RESTIC_CACHE_DIR=/var/cache/restic
+
+hc() { # hc <suffix> [log file]
+  [ -n "${HC_URL:-}" ] || return 0
+  if [ -n "${2:-}" ]; then
+    curl -fsS -m 15 --retry 3 -o /dev/null --data-binary @"$2" "$HC_URL$1" || true
+  else
+    curl -fsS -m 15 --retry 3 -o /dev/null "$HC_URL$1" || true
+  fi
+}
+
+run() {
+  install -d -m 0700 -o shelfgauge -g shelfgauge "$spool"
+  rm -f "$spool/hub.sqlite"
+  runuser -u shelfgauge -- sqlite3 "$data/hub.sqlite" ".backup '$spool/hub.sqlite'" || return
+  [ "$(runuser -u shelfgauge -- sqlite3 "$spool/hub.sqlite" 'PRAGMA quick_check;')" = ok ] ||
+    { echo "the database snapshot failed its check"; return 2; }
+  cp "$data/hub.toml" "$spool/hub.toml" || return
+  rm -f "$spool/terms.txt"
+  [ -f "$data/terms.txt" ] && { cp "$data/terms.txt" "$spool/terms.txt" || return; }
+  restic snapshots --latest 1 >/dev/null 2>&1 || restic init || return
+  restic backup --host "$(hostname -f)" --tag hub --exclude '.tmp*' "$spool" "$data/blobs" || return
+  restic forget --tag hub --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune || return
+  if [ "$(date +%d)" = 01 ]; then
+    restic check --read-data-subset=10% || return
+  fi
+}
+
+log=$(mktemp)
+trap 'rm -f "$log"' EXIT
+hc /start
+if run >"$log" 2>&1; then
+  tail -n 20 "$log" >"$log.tail" && mv "$log.tail" "$log"
+  hc "" "$log"
+  cat "$log"
+else
+  rc=$?
+  hc "/$rc" "$log"
+  cat "$log" >&2
+  exit "$rc"
+fi

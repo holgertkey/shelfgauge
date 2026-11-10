@@ -8,6 +8,28 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+### Added
+
+- Each release carries `SHA256SUMS` of its archives and a build provenance
+  attestation of them (`gh attestation verify ARCHIVE --repo holgertkey/shelfgauge`;
+  the bundle `shelfgauge-vX.Y.Z.sigstore.json` comes with the release for an offline
+  check).
+- Hub deployment kit (`deploy/hub/`, `docs/HUB.md`): `setup.sh` sets up a Debian 13
+  server in one idempotent script (`--check` shows what it would change);
+  `update.sh` installs a release after checking its sum and attestation, with a copy
+  of the database and a rollback when the hub does not come up; a staging hub next to
+  production, and `push-staging.sh` for a build of your own on it; backups (pulled by
+  a computer of yours, or pushed with restic) and a site check every 5 minutes.
+- `deploy.yml`: a release goes to the staging hub, then, after a reviewer's
+  approval, to production, through keys that can only install an attested release on
+  their own hub.
+
+### Changed
+
+- `deploy/hub/shelfgauge-hub.service` starts `/usr/local/bin/shelfgauge-hub` (a link
+  to the installed version, or the binary itself) instead of
+  `/usr/local/bin/shelfgauge`.
+
 ## [0.24.0] - 2026-11-06
 
 Phones get these changes from a hub of this version (the hub serves the reader app);

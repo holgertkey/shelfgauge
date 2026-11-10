@@ -1,0 +1,9 @@
+# The staging hub's site, appended to the Caddyfile on a server that runs one; see
+# docs/HUB.md. Its own name, so the staging reader app has its own origin (its own
+# Service Worker, storage and sign-ins on a phone) and never mixes with production's.
+# The name comes from SHELFGAUGE_STAGING_DOMAIN in Caddy's environment, or replace the
+# placeholder with it. The same name goes into the staging hub's `allowed_hosts`.
+
+{$SHELFGAUGE_STAGING_DOMAIN} {
+	reverse_proxy 127.0.0.1:8744
+}

@@ -1,0 +1,23 @@
+# systemd unit of a staging hub next to the production one; see docs/HUB.md.
+# Its own port (8744, in hub-staging.toml), data directory and binary link, so it can
+# run another version than production and its data can be thrown away at any time.
+# Install as /etc/systemd/system/shelfgauge-hub-staging.service, then
+#   systemctl daemon-reload && systemctl enable --now shelfgauge-hub-staging
+
+[Unit]
+Description=shelfgauge hub (staging)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=shelfgauge
+ExecStart=/usr/local/bin/shelfgauge-hub-staging hub --data /srv/shelfgauge-hub-staging --log-format json
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/srv/shelfgauge-hub-staging
+
+[Install]
+WantedBy=multi-user.target

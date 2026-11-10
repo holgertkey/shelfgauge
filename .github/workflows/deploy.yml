@@ -1,0 +1,116 @@
+name: Deploy
+
+# Puts an official release on the project's hub server: staging first, then production
+# after a reviewer approves the `public-hub` Environment (docs/HUB.md, "Deploying from
+# CI"). Starts by itself when the Release workflow succeeds for a tag, or by hand with a
+# version. The server installs the release only after checking its SHA256SUMS and
+# attestation (update.sh); the job can name a version and nothing else.
+#
+# Settings (repository → Settings):
+#   variables  DEPLOY_HOST         the server's address
+#              DEPLOY_KNOWN_HOSTS  its host key lines (ssh-keyscan, checked by hand)
+#   Environment public-hub-staging (no reviewer), secret DEPLOY_SSH_KEY: the staging key
+#   Environment public-hub (required reviewer), secret DEPLOY_SSH_KEY: the production key
+# Without DEPLOY_HOST every job is skipped (no server yet, or a fork).
+#
+# workflow_run takes this file from the default branch: a change here takes effect
+# once it is on main.
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release to deploy (vX.Y.Z)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-hub
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: version
+    if: >-
+      vars.DEPLOY_HOST != '' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push'))
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - id: tag
+        env:
+          # A tag push's Release run has the tag as its head branch.
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.event.workflow_run.head_branch }}
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::not a release version: $TAG"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Deploying $TAG" >> "$GITHUB_STEP_SUMMARY"
+
+  staging:
+    name: staging
+    needs: version
+    runs-on: ubuntu-latest
+    environment:
+      name: public-hub-staging
+    steps:
+      - name: Update the staging hub
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          HOST: ${{ vars.DEPLOY_HOST }}
+          KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          [ -n "$KEY" ] || { echo "::error::no DEPLOY_SSH_KEY in this Environment"; exit 1; }
+          [ -n "$KNOWN_HOSTS" ] || { echo "::error::no DEPLOY_KNOWN_HOSTS variable"; exit 1; }
+          umask 077
+          dir=$(mktemp -d)
+          trap 'rm -rf "$dir"' EXIT
+          printf '%s\n' "$KEY" > "$dir/key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$dir/known_hosts"
+          # The key's forced command on the server fixes the hub it updates; only the
+          # version is sent.
+          ssh -F /dev/null -i "$dir/key" -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$dir/known_hosts" \
+            -o ServerAliveInterval=30 -o ConnectTimeout=30 \
+            "deploy@$HOST" "$TAG"
+
+  production:
+    name: production
+    needs: [version, staging]
+    runs-on: ubuntu-latest
+    environment:
+      name: public-hub
+      url: https://hub.shelfgauge.org
+    steps:
+      - name: Update the production hub
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          HOST: ${{ vars.DEPLOY_HOST }}
+          KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          [ -n "$KEY" ] || { echo "::error::no DEPLOY_SSH_KEY in this Environment"; exit 1; }
+          [ -n "$KNOWN_HOSTS" ] || { echo "::error::no DEPLOY_KNOWN_HOSTS variable"; exit 1; }
+          umask 077
+          dir=$(mktemp -d)
+          trap 'rm -rf "$dir"' EXIT
+          printf '%s\n' "$KEY" > "$dir/key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$dir/known_hosts"
+          # The key's forced command on the server fixes the hub it updates; only the
+          # version is sent.
+          ssh -F /dev/null -i "$dir/key" -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$dir/known_hosts" \
+            -o ServerAliveInterval=30 -o ConnectTimeout=30 \
+            "deploy@$HOST" "$TAG"
+

@@ -1,0 +1,8 @@
+[Unit]
+Description=Back up the shelfgauge hub into the local restic repository
+
+[Service]
+Type=oneshot
+ExecStart=%h/bin/shelfgauge-hub-backup-pull
+Nice=10
+IOSchedulingClass=idle

@@ -4,12 +4,19 @@ A hub (`shelfgauge hub`) keeps encrypted copies of books and reading data for th
 phones of one or more libraries; what it does and how libraries use it is in the
 README, "Running a hub". This guide is about putting one on the internet: first on
 your own computer through ngrok, to read on a real phone, then on a server with
-Caddy. The files it uses are in [`deploy/hub/`](../deploy/hub/):
+Caddy, by hand or with one script ("Automatic setup"). The files it uses are in
+[`deploy/hub/`](../deploy/hub/):
 
 - [`Caddyfile`](../deploy/hub/Caddyfile): Caddy in front of the hub, with HTTPS;
 - [`shelfgauge-hub.service`](../deploy/hub/shelfgauge-hub.service): the systemd unit;
 - [`hub.toml.example`](../deploy/hub/hub.toml.example): the settings of a hub on the
-  internet.
+  internet;
+- [`setup.sh`](../deploy/hub/setup.sh) with
+  [`setup.env.example`](../deploy/hub/setup.env.example): the whole server in one
+  script; [`update.sh`](../deploy/hub/update.sh): installing a release;
+  [`push-staging.sh`](../deploy/hub/push-staging.sh): a build of your own on a staging
+  hub; the staging hub's unit, Caddy site and settings (`*staging*`); the site check
+  and the backups (`shelfgauge-hub-watch*`, `shelfgauge-hub-backup*`, `backup-pull/`).
 
 The hub listens on `127.0.0.1:8743` and has no TLS of its own. Phones need HTTPS (the
 reader's encryption and offline storage work only there), so something in front of
@@ -106,6 +113,8 @@ A small VPS with local SSD and traffic included is enough (a plain-text book is
 0.1–1.5 MB encrypted, an illustrated one tens of MB). The commands are for Debian or
 Ubuntu, as root.
 
+These are the steps by hand; "Automatic setup" below does them with one script.
+
 1. **DNS**: an `A` (and `AAAA`, if the server has IPv6) record of your name, e.g.
    `hub.example.org`, pointing to the server.
 
@@ -114,7 +123,8 @@ Ubuntu, as root.
 
 3. **The program and its user**: copy the `shelfgauge` binary of a
    [release](https://github.com/holgertkey/shelfgauge/releases) to
-   `/usr/local/bin/`, then
+   `/usr/local/bin/shelfgauge-hub` (the unit starts that name) and link the usual name
+   to it (`ln -s shelfgauge-hub /usr/local/bin/shelfgauge`), then
 
    ```sh
    useradd --system --home-dir /srv/shelfgauge-hub --shell /usr/sbin/nologin shelfgauge
@@ -192,7 +202,172 @@ computer is on again. The reader shows the number of days (from `/api/info`). Th
 default, 0, keeps books until their library deletes them.
 
 **Updates**: replace the binary and `systemctl restart shelfgauge-hub`; the database
-migrates itself (from 0.18–0.20 see the README, "Upgrading from 0.18–0.20").
+migrates itself (from 0.18–0.20 see the README, "Upgrading from 0.18–0.20"). The
+migrations go forward only: copy the database first
+(`sqlite3 hub.sqlite ".backup hub-before.sqlite"`), so an older version can be put
+back. `update.sh` (below) does all of it.
+
+## Automatic setup
+
+[`setup.sh`](../deploy/hub/setup.sh) sets up a fresh Debian 13 server (a plain image,
+no control panel: it would take ports 80 and 443) with everything of "On a server",
+and can be run again at any time: a second run changes nothing, and it never
+overwrites a hub's `hub.toml` or data. Debian 13, since the release binary needs
+glibc 2.39 or close (Debian 12 has 2.36).
+
+```sh
+tar -C deploy/hub -c . | ssh root@server 'mkdir -p shelfgauge-setup && tar -C shelfgauge-setup -x'
+ssh root@server 'cd shelfgauge-setup && cp setup.env.example setup.env && nano setup.env'
+ssh root@server shelfgauge-setup/setup.sh --check              # what it would change
+ssh root@server shelfgauge-setup/setup.sh --version v0.24.0    # set up, install a release
+```
+
+`setup.env` holds your values: the hub's name and the staging hub's
+(`STAGING_DOMAIN`, empty for none), the operator, the admin login and its key, the
+deploy keys, the backup and the check. What the script does:
+
+- packages, with Caddy and `gh` from their own apt repositories (their signing keys
+  checked against fingerprints in the script); key-only SSH
+  (`PermitRootLogin prohibit-password` for a root admin, `forced-commands-only` with
+  an admin user);
+  `ufw` with 22, 80 and 443;
+- `unattended-upgrades` for Debian's security updates, Caddy and `gh`, with a reboot at
+  `REBOOT_TIME` (04:00) when an update needs one. shelfgauge itself never updates by
+  itself;
+- the user `shelfgauge`, `/srv/shelfgauge-hub` (and `-staging`) with a first
+  `hub.toml` (the production one with about 70 % of the free disk as
+  `max_total_bytes`: check it), the units and the Caddy sites;
+- `update.sh` as `/usr/local/sbin/shelfgauge-hub-update`, and the user `deploy` for
+  CI (below);
+- the backup and the site check (below).
+
+It installs no binary of its own: `--version` (or the first deploy) runs
+`shelfgauge-hub-update`. A server set up by hand (a plain `/usr/local/bin/shelfgauge`)
+is moved to the layout below with the same binary, and production restarts once.
+
+**Binaries**: each version in `/usr/local/lib/shelfgauge/<version>/shelfgauge`; the
+units start a link per hub, `/usr/local/bin/shelfgauge-hub` and `-staging`, so the two
+hubs can run different versions; `/usr/local/bin/shelfgauge` follows production (for
+`hub invite` and the other commands).
+
+## Staging
+
+A second hub on the same server for trying a version before your users get it: its
+own name (`staging.example.org`, its own origin on the phones, so its reader app,
+storage and sign-ins never mix with production's), port 8744, data directory
+`/srv/shelfgauge-hub-staging` (throwaway: not backed up), and a short
+`publication_expiry_days` ([`hub-staging.toml.example`](../deploy/hub/hub-staging.toml.example)).
+Use it from a test library only; a library of real people stays on production.
+
+A build of your own reaches staging by hand, never production:
+
+```sh
+cargo build --release
+deploy/hub/push-staging.sh root@server staging.example.org
+```
+
+It copies the binary to `/usr/local/lib/shelfgauge/dev-<version>-<sha>/` (a build
+needing a newer glibc than the server's is refused), copies the staging database,
+switches the staging link, restarts the staging hub, waits until the new process
+answers and runs `hub check`; on a failure the old binary and database come back.
+
+Hub commands for the staging hub use its own binary, which may be newer than
+production's (and may have migrated its database):
+`sudo -u shelfgauge /usr/local/bin/shelfgauge-hub-staging hub invite --data /srv/shelfgauge-hub-staging`.
+
+## Installing a release
+
+```sh
+shelfgauge-hub-update [--dry-run] [--downgrade] vX.Y.Z [production|staging]
+```
+
+downloads the Linux archive of that GitHub release with its `SHA256SUMS` and
+attestation bundle, checks the sum and the attestation with `gh attestation verify`
+(made by `release.yml` for exactly that tag, on GitHub's runners; no token needed),
+refuses a version older than the running one (unless `--downgrade`), copies the
+database (`/var/lib/shelfgauge-hub-update/<hub>/hub-before-<version>.sqlite`, the last
+three kept), switches the hub's link, restarts it, waits for `/api/info` to answer the
+new version and runs `hub check`. If the hub does not come up, the old link and the
+database copy come back and the command fails. `--dry-run` stops after the checks.
+
+Update the hub before the libraries: a new hub accepts what the previous release's
+libraries send, and the phones get the new reader app from the hub by themselves.
+[`test-update.sh`](../deploy/hub/test-update.sh) tries a good update, a damaged
+archive, a binary that does not start and a downgrade on the staging hub.
+
+## Deploying from CI
+
+[`deploy.yml`](../.github/workflows/deploy.yml) puts each release on the server: when
+the Release workflow succeeds for a tag (or by hand, with a version) it updates
+staging, then waits for a reviewer before production. It connects as the user
+`deploy`, whose keys can run nothing but `shelfgauge-hub-update`, each for one hub:
+
+```
+command="/usr/local/sbin/shelfgauge-hub-update production",restrict ssh-ed25519 AAAA... shelfgauge-deploy-production
+command="/usr/local/sbin/shelfgauge-hub-update staging",restrict ssh-ed25519 AAAA... shelfgauge-deploy-staging
+```
+
+The job sends only the version; the script takes nothing else (no options) and runs
+itself as root through one `sudoers` line that allows exactly those arguments. A
+leaked key can install an official, attested release on its own hub, nothing more.
+
+Setting it up:
+
+1. two keys (`ssh-keygen -t ed25519 -N '' -C shelfgauge-deploy-production -f production`,
+   the same for staging); the public halves into `setup.env` (`DEPLOY_SSH_KEY`,
+   `DEPLOY_STAGING_SSH_KEY`), then `setup.sh`;
+2. in the repository's Settings → Environments: `public-hub-staging` (no reviewer)
+   and `public-hub` (you as required reviewer), both limited to the branch `main` (the
+   workflow runs from it, also when a tag started the release), each with the secret
+   `DEPLOY_SSH_KEY` holding its private key;
+3. repository variables `DEPLOY_HOST` (the server's address) and
+   `DEPLOY_KNOWN_HOSTS` (its host key lines, from `ssh-keyscan`, compared with the
+   fingerprint on the provider's console): the job never accepts an unknown host key.
+
+Without `DEPLOY_HOST` the workflow skips (a fork, or no server yet). The automatic
+start uses `deploy.yml` from the default branch.
+
+## Backups
+
+The database and the books' blobs are the hub (all encrypted on the phones' side; the
+database also holds account password hashes and wrapped keys). `setup.sh` offers two
+ways, `BACKUP` in `setup.env`:
+
+- **`pull`**: a computer of yours fetches the backup. Its key (`BACKUP_SSH_KEY`) has a
+  forced command in root's `authorized_keys`,
+  [`shelfgauge-hub-backup-send`](../deploy/hub/shelfgauge-hub-backup-send), which
+  writes one tar stream (an online `.backup` snapshot of the database first, `hub.toml`,
+  `terms.txt`, `blobs/`) whatever the client asks. On that computer,
+  [`backup-pull/`](../deploy/hub/backup-pull/) stores it in a
+  [restic](https://restic.net/) repository daily (a systemd user timer; 7 daily,
+  4 weekly, 6 monthly snapshots; a check on Sundays; Healthchecks.io pings).
+- **`restic`**: the server pushes the same data nightly to a restic repository at
+  another provider (an SFTP storage box, S3, Backblaze B2), with its settings and the
+  provider's credentials in `/etc/shelfgauge-hub/backup.env` and the password in
+  `/etc/shelfgauge-hub/restic-password` (keep a copy off the server; without it the
+  backups cannot be read).
+
+Keep the backups at another provider than the server: a provider's own backup lives
+in the same data centre and ends with the account.
+
+**Restoring** (try it once, into the staging hub): stop the hub, put `hub.sqlite`,
+`hub.toml`, `terms.txt` and `blobs/` into the data directory (owned by `shelfgauge`;
+no `hub.sqlite-wal` or `-shm` next to it), start it. For staging, keep its own
+`hub.toml` (port 8744, its name). From a pull backup:
+
+```sh
+restic dump latest /hub.tar | tar -x -C restored/
+sqlite3 restored/hub.sqlite 'PRAGMA integrity_check;'
+```
+
+## Checks
+
+[`shelfgauge-hub-watch`](../deploy/hub/shelfgauge-hub-watch) (every 5 minutes, as an
+unprivileged user) fetches `https://<hub>/api/info` over each address in DNS (IPv4 and
+IPv6), checks `accepting`, the certificate's days left (Caddy renews 30 days before)
+and the disk, and pings a Healthchecks.io check (`WATCH_HC_URL`); a problem pings
+`/fail` with the list, and no ping at all (the server down or suspended) is noticed by
+Healthchecks itself.
 
 ## Other proxies
 

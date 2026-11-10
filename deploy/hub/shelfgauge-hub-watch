@@ -1,0 +1,53 @@
+#!/bin/bash
+# Installed on the server as /usr/local/sbin/shelfgauge-hub-watch (setup.sh), run every
+# 5 minutes by shelfgauge-hub-watch.timer as the system user shelfgauge-watch (no root;
+# DynamicUser breaks resolvectl over D-Bus). Settings in /etc/shelfgauge-hub-watch.env:
+# HUB_DOMAIN and HC_URL (a Healthchecks.io ping URL). Checks the hub the way
+# the world sees it: https://HUB_DOMAIN/api/info over IPv4 and IPv6 (DNS, Caddy,
+# the certificate, the hub), that the hub accepts new books, the certificate's days left
+# (Caddy renews 30 days before), and free space on /. Pings Healthchecks.io: success, or
+# /fail with the list of problems. No ping at all (server down or suspended, no network)
+# is noticed by Healthchecks itself after the grace time.
+set -uo pipefail
+host=${HUB_DOMAIN:?HUB_DOMAIN is not set}
+: "${HC_URL:?HC_URL is not set}"
+problems=()
+ip4=
+# /etc/hosts maps the hub's name to 127.0.1.1 (the server's own name): take the
+# addresses from DNS, past /etc/hosts, and connect to exactly those.
+for v in 4 6; do
+  [ "$v" = 4 ] && type=A || type=AAAA
+  ip=$(resolvectl query --legend=no --synthesize=no -t "$type" "$host" 2>&1 |
+    awk -v t="$type" '$3 == t { print $4; exit }')
+  if [ -z "$ip" ]; then
+    problems+=("IPv$v: no $type record for $host in DNS")
+    continue
+  fi
+  if [ "$v" = 6 ]; then
+    pin="[$ip]"
+  else
+    pin="$ip"
+    ip4="$ip"
+  fi
+  if ! body=$(curl -fsS -m 20 --resolve "$host:443:$pin" "https://$host/api/info" 2>&1); then
+    problems+=("IPv$v ($ip): $body")
+  elif ! grep -q '"service":"shelfgauge-hub"' <<<"$body"; then
+    problems+=("IPv$v: not the hub's answer: ${body:0:200}")
+  elif ! grep -q '"accepting":true' <<<"$body"; then
+    problems+=("IPv$v: the hub does not accept new books (max_total_bytes?)")
+  fi
+done
+if ! openssl s_client -connect "${ip4:-$host}:443" -servername "$host" </dev/null 2>/dev/null |
+    openssl x509 -noout -checkend $((20 * 86400)) >/dev/null 2>&1; then
+  problems+=("the certificate expires within 20 days (or could not be read): Caddy did not renew it")
+fi
+used=$(df --output=pcent / | tail -1 | tr -dc 0-9)
+[ "$used" -lt 90 ] || problems+=("disk / is ${used}% full")
+
+if [ ${#problems[@]} -eq 0 ]; then
+  curl -fsS -m 15 --retry 3 -o /dev/null --data-raw "ok, disk ${used}%" "$HC_URL" || true
+else
+  printf '%s\n' "${problems[@]}" >&2
+  printf '%s\n' "${problems[@]}" | curl -fsS -m 15 --retry 3 -o /dev/null --data-binary @- "$HC_URL/fail" || true
+  exit 1
+fi

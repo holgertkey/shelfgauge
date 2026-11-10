@@ -2,6 +2,8 @@
 # Install as /etc/systemd/system/shelfgauge-hub.service, then
 #   systemctl daemon-reload && systemctl enable --now shelfgauge-hub
 # The user `shelfgauge` (useradd --system shelfgauge) owns /srv/shelfgauge-hub.
+# /usr/local/bin/shelfgauge-hub is the binary, or (setup.sh, update.sh) a link to the
+# installed version, so production and a staging hub can run different versions.
 
 [Unit]
 Description=shelfgauge hub
@@ -10,7 +12,7 @@ Wants=network-online.target
 
 [Service]
 User=shelfgauge
-ExecStart=/usr/local/bin/shelfgauge hub --data /srv/shelfgauge-hub --log-format json
+ExecStart=/usr/local/bin/shelfgauge-hub hub --data /srv/shelfgauge-hub --log-format json
 Restart=on-failure
 NoNewPrivileges=yes
 ProtectSystem=strict

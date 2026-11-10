@@ -1,0 +1,11 @@
+# Installed by setup.sh with BACKUP=restic.
+[Unit]
+Description=Nightly backup of the shelfgauge hub
+
+[Timer]
+OnCalendar=*-*-* 02:30
+Persistent=true
+RandomizedDelaySec=20min
+
+[Install]
+WantedBy=timers.target

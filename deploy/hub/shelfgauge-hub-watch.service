@@ -1,0 +1,16 @@
+# Installed by setup.sh; see shelfgauge-hub-watch.
+[Unit]
+Description=Check the shelfgauge hub from outside and report to Healthchecks.io
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/shelfgauge-hub-watch
+EnvironmentFile=/etc/shelfgauge-hub-watch.env
+User=shelfgauge-watch
+Group=shelfgauge-watch
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
