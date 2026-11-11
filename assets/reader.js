@@ -15,6 +15,8 @@
   // footnote or another chapter do not move the position).
   const DWELL_MS = 6000;
   const BLOCK_ID = /^b[1-9][0-9]*$/;
+  // Activity extends the screen's wake lock at most this often (setupWakeLock).
+  const WAKE_STEP_MS = 5000;
   // Until this time a scroll is a page turn, not the reader's: focus mode keeps the
   // top bar hidden.
   let pageTurnUntil = 0;
@@ -2769,6 +2771,114 @@
     render();
   }
 
+  // ---------- Keeping the screen on ----------
+
+  // While the reader reads (turns pages, scrolls, taps, presses keys), the screen
+  // stays on through the Screen Wake Lock API, until the minutes of the `awake` reader
+  // setting (10 by default) pass without any of that; then the system's own screen
+  // timeout applies again. The browser releases the lock itself while the page is
+  // hidden; it is taken again when the page is shown. The API exists only in a secure
+  // context (HTTPS or localhost): elsewhere the setting is shown disabled.
+  function setupWakeLock() {
+    const root = document.documentElement;
+    const panel = document.getElementById("reader-settings");
+    const field = panel && panel.querySelector(".setting.awake");
+    if (!("wakeLock" in navigator)) {
+      if (field) {
+        field.disabled = true;
+        const note = field.querySelector(".setting-note");
+        if (note) {
+          note.hidden = false;
+        }
+      }
+      return;
+    }
+    let lock = null;
+    let pending = false;
+    // Set while the lock is wanted: it releases the lock once the reader is idle.
+    let idle = null;
+    let lastActive = 0;
+
+    function minutes() {
+      const value = root.dataset.rawake || "10";
+      return value === "off" ? 0 : Number(value) || 0;
+    }
+
+    function release() {
+      clearTimeout(idle);
+      idle = null;
+      if (lock) {
+        const sentinel = lock;
+        lock = null;
+        sentinel.release().catch(() => {});
+      }
+    }
+
+    function acquire() {
+      if (lock || pending || document.visibilityState !== "visible") {
+        return;
+      }
+      pending = true;
+      navigator.wakeLock.request("screen").then(
+        (sentinel) => {
+          pending = false;
+          if (idle === null || document.visibilityState !== "visible") {
+            // Idle, switched off or hidden in the meantime.
+            sentinel.release().catch(() => {});
+            return;
+          }
+          lock = sentinel;
+          sentinel.addEventListener("release", () => {
+            if (lock === sentinel) {
+              lock = null;
+            }
+          });
+        },
+        () => {
+          // Refused (a battery saver, say): tried again on the next activity.
+          pending = false;
+        },
+      );
+    }
+
+    // The reader is active: the idle time starts over (at most every few seconds, as
+    // scrolling fires often), and the lock is taken unless it is held.
+    function active(now) {
+      const time = Date.now();
+      if (!now && time - lastActive < WAKE_STEP_MS) {
+        return;
+      }
+      lastActive = time;
+      const m = minutes();
+      if (!m) {
+        release();
+        return;
+      }
+      clearTimeout(idle);
+      idle = setTimeout(release, m * 60000);
+      acquire();
+    }
+
+    const onActivity = () => active(false);
+    window.addEventListener("scroll", onActivity, { passive: true });
+    window.addEventListener("pointerdown", onActivity, { passive: true });
+    window.addEventListener("keydown", onActivity);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        active(true);
+      } else {
+        release();
+      }
+    });
+    // Another value in the panel, or its Defaults.
+    new MutationObserver(() => active(true)).observe(root, {
+      attributes: true,
+      attributeFilter: ["data-rawake"],
+    });
+    // Opening the book counts as activity.
+    active(true);
+  }
+
   setupStatus();
   setupSettings();
   setupSidebar();
@@ -2781,6 +2891,7 @@
   setupPaging();
   setupCut();
   setupNotes();
+  setupWakeLock();
   highlight();
   // The hub's reader app has new lists (marks synced from another device).
   document.addEventListener("shelfgauge:lists", () => {

@@ -312,6 +312,28 @@ async fn settings_are_stored_cleaned_and_rendered_on_html() {
 }
 
 #[tokio::test]
+async fn keep_screen_on_is_stored_and_rendered_on_html() {
+    let lib = Lib::new();
+    for (value, attr) in [
+        ("30", Some("30")),
+        ("off", Some("off")),
+        ("10", None),
+        ("15", None),
+    ] {
+        let body = format!(r#"{{"awake":"{value}"}}"#);
+        let reply = lib.json("/profile/settings", None, &body).await;
+        assert_eq!(reply.status, StatusCode::NO_CONTENT, "{}", reply.body);
+        let home = lib.get("/", None).await.body;
+        let tag = html_tag(&home);
+        match attr {
+            Some(attr) => assert!(tag.contains(&format!(r#"data-rawake="{attr}""#)), "{tag}"),
+            // The default (10 minutes) and unknown values: no attribute.
+            None => assert!(!tag.contains("data-rawake"), "{value}: {tag}"),
+        }
+    }
+}
+
+#[tokio::test]
 async fn the_second_profile_keeps_the_admin_signed_in() {
     let lib = Lib::new();
     let (anna, reply) = lib.add(None, "name=Anna&color=2&role=reader").await;

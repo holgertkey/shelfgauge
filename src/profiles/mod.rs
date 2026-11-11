@@ -191,6 +191,7 @@ pub const SETTINGS: &[(&str, &[&str])] = &[
     ("width", &["medium", "narrow", "wide", "full"]),
     ("align", &["left", "justify"]),
     ("status", &["on", "off"]),
+    ("awake", &["10", "off", "5", "30"]),
 ];
 
 /// A profile's theme and reader settings: only known names with allowed values that
@@ -278,6 +279,17 @@ mod tests {
         assert!(ProfileSettings::parse(r#"["theme"]"#).is_empty());
         assert!(ProfileSettings::parse(r#"{"theme":5}"#).is_empty());
         assert_eq!(ProfileSettings::parse(&s.to_json()), s);
+    }
+
+    #[test]
+    fn keep_screen_on_minutes() {
+        // 10 minutes is the default; only the panel's values are kept.
+        assert!(ProfileSettings::parse(r#"{"awake":"10"}"#).is_empty());
+        assert!(ProfileSettings::parse(r#"{"awake":"15"}"#).is_empty());
+        for value in ["off", "5", "30"] {
+            let s = ProfileSettings::parse(&format!(r#"{{"awake":"{value}"}}"#));
+            assert_eq!(s.get("awake"), Some(value));
+        }
     }
 
     /// The whitelist equals the shared fixture, and the fixture equals `theme.js`'s

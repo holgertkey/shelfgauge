@@ -701,6 +701,13 @@ async fn reader_settings_panel_is_on_read_pages_only() {
         }
     }
     assert!(read.body.contains("name=\"status\" value=\"on\""));
+    // Keep screen on, with the note shown where the browser cannot.
+    for value in ["off", "5", "10", "30"] {
+        let radio = format!("name=\"awake\" value=\"{value}\"");
+        assert!(read.body.contains(&radio), "{radio} missing");
+    }
+    assert!(read.body.contains("<fieldset class=\"setting awake\">"));
+    assert!(read.body.contains("<p class=\"setting-note\" hidden>"));
     for theme in THEMES {
         let radio = format!("name=\"theme\" value=\"{theme}\"");
         assert!(read.body.contains(&radio), "{radio} missing");
@@ -759,6 +766,19 @@ async fn reader_settings_assets_agree_on_the_values() {
     assert!(theme_js.contains("status: [\"on\", \"off\"],"));
     assert!(theme_js.contains("status: \"rstatus\","));
     assert!(reader_css.contains(":root[data-rstatus=\"off\"] {"));
+    // Keep screen on: 10 minutes by default, read by reader.js (no CSS preset).
+    assert!(theme_js.contains("awake: [\"10\", \"off\", \"5\", \"30\"],"));
+    assert!(theme_js.contains("awake: \"rawake\","));
+    let reader_js = server.ok("/assets/reader.js").await.body;
+    for part in [
+        "navigator.wakeLock.request(\"screen\")",
+        "root.dataset.rawake || \"10\"",
+        "attributeFilter: [\"data-rawake\"]",
+        "document.addEventListener(\"visibilitychange\"",
+        "setupWakeLock();",
+    ] {
+        assert!(reader_js.contains(part), "{part} missing in reader.js");
+    }
     // Sizes: 8 steps, 3 (18px, the old size) is the default.
     assert!(theme_js.contains("size: [\"3\", \"0\", \"1\", \"2\", \"4\", \"5\", \"6\", \"7\"],"));
     for step in ["0", "1", "2", "4", "5", "6", "7"] {

@@ -942,6 +942,24 @@ mark.sg-find.current {
   filter: brightness(0.92);
 }
 
+/* Keep screen on: shown disabled where the browser has no Screen Wake Lock API (a
+   page over plain HTTP, say), with a note why. */
+.settings-form .setting-note {
+  flex-basis: 100%;
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.settings-form .setting:disabled label span {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.settings-form .setting:disabled label span:hover {
+  background: var(--sidebar-bg);
+}
+
 .settings-foot {
   display: flex;
   align-items: center;

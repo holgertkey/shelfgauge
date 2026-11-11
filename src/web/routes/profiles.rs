@@ -498,6 +498,11 @@ fn reader_summary(settings: &ProfileSettings) -> String {
                 .to_owned(),
             ),
             "status" => Some(format!("status line {value}")),
+            "awake" => Some(if value == "off" {
+                "screen not kept on".to_owned()
+            } else {
+                format!("screen kept on for {value} min")
+            }),
             _ => None,
         })
         .collect();

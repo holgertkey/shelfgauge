@@ -30,6 +30,8 @@ const shelfgaugeReader = (() => {
     align: ["left", "justify"],
     // Focus mode's running head and status line.
     status: ["on", "off"],
+    // Minutes the screen stays on after the last page turn (reader.js).
+    awake: ["10", "off", "5", "30"],
   };
   const THEMES = ["", "light", "dark", "sepia", "navy", "black"];
   const ATTRS = {
@@ -39,6 +41,7 @@ const shelfgaugeReader = (() => {
     width: "rwidth",
     align: "ralign",
     status: "rstatus",
+    awake: "rawake",
   };
   const root = document.documentElement;
   const SAVE_DELAY = 400;

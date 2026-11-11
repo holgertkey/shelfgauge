@@ -402,7 +402,10 @@ in the core crate), `src/web/routes/annotations.rs`, `assets/reader.js`/`reader.
     303 for the card), `/book/{id}/position` (JSON); request bodies are limited by
     `web::write_body_limit` (derived from `max_note_length`).
 - Reader settings (font family from system stacks, size, line height, column width,
-  alignment; the background is the color theme) and a focus mode (no sidebar, top bar
+  alignment, how long the screen stays on: the Screen Wake Lock API holds it for
+  5/10/30 minutes, 10 by default, after the last page turn, scroll, tap or key, and is
+  taken again when the page is shown; without the API, over plain HTTP, the setting
+  is shown disabled; the background is the color theme) and a focus mode (no sidebar, top bar
   shown on scroll up, a running head with the current chapter, and a status line of
   constant length with the progress and a track over the whole book with chapter and
   bookmark ticks that jumps on click; while the top bar is shown, page numbers

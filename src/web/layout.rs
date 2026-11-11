@@ -118,6 +118,7 @@ const READER_ATTRS: &[(&str, &str)] = &[
     ("width", "rwidth"),
     ("align", "ralign"),
     ("status", "rstatus"),
+    ("awake", "rawake"),
 ];
 
 /// The profile as the layout shows it: the attributes of `<html>` and the avatar menu.

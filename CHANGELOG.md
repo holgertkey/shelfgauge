@@ -10,6 +10,12 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ### Added
 
+- Keep screen on: while you read, the screen of a phone or tablet does not go dark;
+  10 minutes after the last page turn (5 or 30 in the reading settings, or Off) the
+  device's own screen timeout applies again. In both readers, the library's and the
+  hub's; it needs HTTPS (or `localhost`), so a library opened over plain HTTP shows
+  the setting disabled.
+
 - Each release carries `SHA256SUMS` of its archives and a build provenance
   attestation of them (`gh attestation verify ARCHIVE --repo holgertkey/shelfgauge`;
   the bundle `shelfgauge-vX.Y.Z.sigstore.json` comes with the release for an offline
