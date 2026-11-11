@@ -2,8 +2,8 @@
   "theme": ["", "light", "sepia", "mist", "stone", "dusk", "dark", "navy", "black"],
   "font": ["sans", "serif", "literata", "pt-serif", "merriweather", "lora", "inter", "jetbrains-mono"],
   "size": ["3", "0", "1", "2", "4", "5", "6", "7"],
-  "leading": ["normal", "tight", "loose"],
-  "width": ["medium", "narrow", "wide", "full"],
+  "leading": ["4", "0", "1", "2", "3", "5", "6", "7"],
+  "width": ["3", "0", "1", "2", "4", "5", "6", "7"],
   "align": ["left", "justify"],
   "status": ["on", "off"],
   "awake": ["10", "off", "5", "30"]

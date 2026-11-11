@@ -204,11 +204,23 @@ pub const SETTINGS: &[(&str, &[&str])] = &[
         ],
     ),
     ("size", &["3", "0", "1", "2", "4", "5", "6", "7"]),
-    ("leading", &["normal", "tight", "loose"]),
-    ("width", &["medium", "narrow", "wide", "full"]),
+    ("leading", &["4", "0", "1", "2", "3", "5", "6", "7"]),
+    ("width", &["3", "0", "1", "2", "4", "5", "6", "7"]),
     ("align", &["left", "justify"]),
     ("status", &["on", "off"]),
     ("awake", &["10", "off", "5", "30"]),
+];
+
+/// The values of earlier versions that a setting with steps replaced: name,
+/// old value, its step. Stored settings may still hold them; they are read as their step.
+pub const RENAMED_VALUES: &[(&str, &str, &str)] = &[
+    ("leading", "tight", "2"),
+    ("leading", "normal", "4"),
+    ("leading", "loose", "6"),
+    ("width", "narrow", "1"),
+    ("width", "medium", "3"),
+    ("width", "wide", "5"),
+    ("width", "full", "7"),
 ];
 
 /// A profile's theme and reader settings: only known names with allowed values that
@@ -218,7 +230,8 @@ pub struct ProfileSettings(BTreeMap<&'static str, &'static str>);
 
 impl ProfileSettings {
     /// The settings in a JSON object, keeping only known names with allowed values
-    /// (anything else, such as old or broken data, is dropped).
+    /// (anything else, such as broken data, is dropped; a value of an earlier version
+    /// is read as its step, see [`RENAMED_VALUES`]).
     ///
     /// # Examples
     ///
@@ -238,6 +251,10 @@ impl ProfileSettings {
                 let Some(value) = object.get(*name).and_then(|v| v.as_str()) else {
                     continue;
                 };
+                let value = RENAMED_VALUES
+                    .iter()
+                    .find(|(n, old, _)| n == name && *old == value)
+                    .map_or(value, |(_, _, step)| step);
                 if let Some(v) = allowed.iter().skip(1).find(|a| **a == value) {
                     settings.insert(*name, *v);
                 }
@@ -306,6 +323,35 @@ mod tests {
         for value in ["off", "5", "30"] {
             let s = ProfileSettings::parse(&format!(r#"{{"awake":"{value}"}}"#));
             assert_eq!(s.get("awake"), Some(value));
+        }
+    }
+
+    /// Settings saved by earlier versions keep their line spacing and width: each old
+    /// value is read as the step with the same CSS value.
+    #[test]
+    fn old_line_spacing_and_width_values_become_their_steps() {
+        let s = ProfileSettings::parse(r#"{"leading":"tight","width":"narrow"}"#);
+        assert_eq!(s.to_json(), r#"{"leading":"2","width":"1"}"#);
+        let s = ProfileSettings::parse(r#"{"leading":"loose","width":"wide"}"#);
+        assert_eq!(s.to_json(), r#"{"leading":"6","width":"5"}"#);
+        let s = ProfileSettings::parse(r#"{"width":"full"}"#);
+        assert_eq!(s.get("width"), Some("7"));
+        // The old defaults are the new defaults.
+        let s = ProfileSettings::parse(r#"{"leading":"normal","width":"medium"}"#);
+        assert!(s.is_empty());
+        // Each renamed value maps to an allowed step of its setting.
+        for (name, _, step) in RENAMED_VALUES {
+            let (_, allowed) = SETTINGS.iter().find(|(n, _)| n == name).unwrap();
+            assert!(allowed.contains(step), "{name} {step}");
+        }
+        // theme.js reads them the same way.
+        let js = include_str!("../../assets/theme.js");
+        for (name, old, step) in RENAMED_VALUES {
+            let line = js
+                .lines()
+                .find(|l| l.trim_start().starts_with(&format!("{name}: {{ ")))
+                .unwrap_or_else(|| panic!("{name} in RENAMED of theme.js"));
+            assert!(line.contains(&format!("{old}: \"{step}\"")), "{line}");
         }
     }
 

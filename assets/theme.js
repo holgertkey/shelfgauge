@@ -25,8 +25,8 @@ const shelfgaugeReader = (() => {
   const OPTIONS = {
     font: ["sans", "serif", "literata", "pt-serif", "merriweather", "lora", "inter", "jetbrains-mono"],
     size: ["3", "0", "1", "2", "4", "5", "6", "7"],
-    leading: ["normal", "tight", "loose"],
-    width: ["medium", "narrow", "wide", "full"],
+    leading: ["4", "0", "1", "2", "3", "5", "6", "7"],
+    width: ["3", "0", "1", "2", "4", "5", "6", "7"],
     align: ["left", "justify"],
     // Focus mode's running head and status line.
     status: ["on", "off"],
@@ -47,12 +47,21 @@ const shelfgaugeReader = (() => {
   const SAVE_DELAY = 400;
   let timer = null;
 
-  // Only known keys with allowed values; anything else (old or broken data) is dropped.
+  // The values of earlier versions that a setting with steps replaced; the
+  // same as `RENAMED_VALUES` in src/profiles/mod.rs.
+  const RENAMED = {
+    leading: { tight: "2", normal: "4", loose: "6" },
+    width: { narrow: "1", medium: "3", wide: "5", full: "7" },
+  };
+
+  // Only known keys with allowed values (a value of an earlier version as its step);
+  // anything else (broken data) is dropped.
   function clean(value) {
     const settings = {};
     if (value && typeof value === "object") {
       for (const name of Object.keys(OPTIONS)) {
-        const v = String(value[name]);
+        let v = String(value[name]);
+        v = (RENAMED[name] && RENAMED[name][v]) || v;
         if (OPTIONS[name].includes(v) && v !== OPTIONS[name][0]) {
           settings[name] = v;
         }

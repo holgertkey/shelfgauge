@@ -682,10 +682,17 @@ const READER_SETTINGS: [(&str, &[&str], &str); 4] = [
         ],
         "rfont",
     ),
-    ("leading", &["normal", "tight", "loose"], "rleading"),
-    ("width", &["medium", "narrow", "wide", "full"], "rwidth"),
+    (
+        "leading",
+        &["4", "0", "1", "2", "3", "5", "6", "7"],
+        "rleading",
+    ),
+    ("width", &["3", "0", "1", "2", "4", "5", "6", "7"], "rwidth"),
     ("align", &["left", "justify"], "ralign"),
 ];
+
+/// The reader settings set with − and + in the panel (besides the size).
+const STEPPED: [&str; 2] = ["leading", "width"];
 
 const THEMES: [&str; 9] = [
     "", "light", "sepia", "mist", "stone", "dusk", "dark", "navy", "black",
@@ -710,11 +717,29 @@ async fn reader_settings_panel_is_on_read_pages_only() {
         assert!(read.body.contains(part), "{part} missing");
     }
     for (name, values, _) in READER_SETTINGS {
+        if STEPPED.contains(&name) {
+            continue;
+        }
         for value in values {
             let radio = format!("name=\"{name}\" value=\"{value}\"");
             assert!(read.body.contains(&radio), "{radio} missing");
         }
     }
+    // Size, line spacing and width: − and + around the value, no radios.
+    for name in ["size", "leading", "width"] {
+        let fieldset = format!(
+            "class=\"setting stepper{}\" data-name=\"{name}\">",
+            if name == "size" { " size" } else { "" }
+        );
+        assert!(read.body.contains(&fieldset), "{fieldset} missing");
+        assert!(
+            !read
+                .body
+                .contains(&format!("type=\"radio\" name=\"{name}\"")),
+            "{name} radios"
+        );
+    }
+    assert_eq!(read.body.matches("<output class=\"step-value").count(), 3);
     assert!(read.body.contains("name=\"status\" value=\"on\""));
     // Keep screen on, with the note shown where the browser cannot.
     for value in ["off", "5", "10", "30"] {

@@ -41,6 +41,10 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ### Changed
 
+- Line spacing and Width in the reading settings are set with − and + like the text
+  size, showing the value, with eight steps each: line spacing 1.2, 1.3, 1.4, 1.5,
+  1.65, 1.75, 1.9, 2; width 448 to 960 pixels, then Full. The line spacing and width
+  you had chosen stay as they were.
 - The Showcase is called **Explore**: the reader's tab and its messages, the folder
   checkbox **Show in Explore** (sidebar and folder page) and the README. Links and
   settings stay as they are (`/showcase`, `[hub] show_online`).

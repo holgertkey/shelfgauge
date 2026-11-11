@@ -496,6 +496,22 @@ fn font_label(value: &str) -> &str {
     }
 }
 
+/// The line spacing of each step of the `leading` setting (reader.css).
+const LEADINGS: [&str; 8] = ["1.2", "1.3", "1.4", "1.5", "1.65", "1.75", "1.9", "2"];
+
+/// The column width of each step of the `width` setting (reader.css: rem × 16).
+const WIDTHS: [&str; 8] = [
+    "448px", "512px", "576px", "640px", "736px", "832px", "960px", "full",
+];
+
+/// The label of step `value` (`"0"`–`"7"`) of a setting with steps.
+fn step_label(value: &str, labels: &[&'static str; 8]) -> Option<&'static str> {
+    value
+        .parse::<usize>()
+        .ok()
+        .and_then(|i| labels.get(i).copied())
+}
+
 /// The reader settings that differ from the defaults, e.g. "serif font, text size 5".
 fn reader_summary(settings: &ProfileSettings) -> String {
     let parts: Vec<String> = settings
@@ -503,8 +519,14 @@ fn reader_summary(settings: &ProfileSettings) -> String {
         .filter_map(|(name, value)| match name {
             "font" => Some(format!("{} font", font_label(value))),
             "size" => Some(format!("text size {value}")),
-            "leading" => Some(format!("{value} line spacing")),
-            "width" => Some(format!("{value} text width")),
+            "leading" => step_label(value, &LEADINGS).map(|l| format!("line spacing {l}")),
+            "width" => step_label(value, &WIDTHS).map(|w| {
+                if w == "full" {
+                    "full text width".to_owned()
+                } else {
+                    format!("text width {w}")
+                }
+            }),
             "align" => Some(
                 if value == "justify" {
                     "justified"
@@ -1578,5 +1600,16 @@ mod tests {
         assert_eq!(reader_summary(&settings), "PT Serif font, text size 5");
         let settings = ProfileSettings::parse(r#"{"font":"serif"}"#);
         assert_eq!(reader_summary(&settings), "serif font");
+    }
+
+    #[test]
+    fn the_summary_shows_the_steps_values() {
+        let settings = ProfileSettings::parse(r#"{"leading":"0","width":"5"}"#);
+        assert_eq!(
+            reader_summary(&settings),
+            "line spacing 1.2, text width 832px"
+        );
+        let settings = ProfileSettings::parse(r#"{"leading":"7","width":"7"}"#);
+        assert_eq!(reader_summary(&settings), "line spacing 2, full text width");
     }
 }

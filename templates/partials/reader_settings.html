@@ -23,24 +23,23 @@
     <label><input type="radio" name="font" value="inter"><span class="font-inter">Inter</span></label>
     <label><input type="radio" name="font" value="jetbrains-mono"><span class="font-jetbrains-mono">JetBrains Mono</span></label>
   </fieldset>
-  <fieldset class="setting size">
+  <fieldset class="setting stepper size" data-name="size">
     <legend>Size</legend>
     <button type="button" data-step="-1" title="Smaller (-)" aria-label="Smaller">A−</button>
-    <output class="size-value" aria-live="polite"></output>
+    <output class="step-value size-value" aria-live="polite"></output>
     <button type="button" data-step="1" title="Larger (+)" aria-label="Larger">A+</button>
   </fieldset>
-  <fieldset class="setting">
+  <fieldset class="setting stepper" data-name="leading">
     <legend>Line spacing</legend>
-    <label><input type="radio" name="leading" value="tight"><span>Tight</span></label>
-    <label><input type="radio" name="leading" value="normal"><span>Normal</span></label>
-    <label><input type="radio" name="leading" value="loose"><span>Loose</span></label>
+    <button type="button" data-step="-1" title="Tighter" aria-label="Tighter">−</button>
+    <output class="step-value" aria-live="polite"></output>
+    <button type="button" data-step="1" title="Looser" aria-label="Looser">+</button>
   </fieldset>
-  <fieldset class="setting">
+  <fieldset class="setting stepper" data-name="width">
     <legend>Width</legend>
-    <label><input type="radio" name="width" value="narrow"><span>Narrow</span></label>
-    <label><input type="radio" name="width" value="medium"><span>Medium</span></label>
-    <label><input type="radio" name="width" value="wide"><span>Wide</span></label>
-    <label><input type="radio" name="width" value="full"><span>Full</span></label>
+    <button type="button" data-step="-1" title="Narrower" aria-label="Narrower">−</button>
+    <output class="step-value" aria-live="polite"></output>
+    <button type="button" data-step="1" title="Wider" aria-label="Wider">+</button>
   </fieldset>
   <fieldset class="setting">
     <legend>Alignment</legend>

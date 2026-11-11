@@ -628,23 +628,61 @@ mark.sg-find.current {
   --reader-size: 1.75rem;
 }
 
-:root[data-rleading="tight"] {
+/* Line spacing: 1.2, 1.3, 1.4, 1.5, 1.65 (default), 1.75, 1.9, 2. */
+:root[data-rleading="0"] {
+  --reader-leading: 1.2;
+}
+
+:root[data-rleading="1"] {
+  --reader-leading: 1.3;
+}
+
+:root[data-rleading="2"] {
   --reader-leading: 1.4;
 }
 
-:root[data-rleading="loose"] {
+:root[data-rleading="3"] {
+  --reader-leading: 1.5;
+}
+
+:root[data-rleading="5"] {
+  --reader-leading: 1.75;
+}
+
+:root[data-rleading="6"] {
   --reader-leading: 1.9;
 }
 
-:root[data-rwidth="narrow"] {
+:root[data-rleading="7"] {
+  --reader-leading: 2;
+}
+
+/* Column width: 28, 32, 36, 40 (default), 46, 52, 60rem, the whole main area. */
+:root[data-rwidth="0"] {
+  --reader-width: 28rem;
+}
+
+:root[data-rwidth="1"] {
   --reader-width: 32rem;
 }
 
-:root[data-rwidth="wide"] {
+:root[data-rwidth="2"] {
+  --reader-width: 36rem;
+}
+
+:root[data-rwidth="4"] {
+  --reader-width: 46rem;
+}
+
+:root[data-rwidth="5"] {
   --reader-width: 52rem;
 }
 
-:root[data-rwidth="full"] {
+:root[data-rwidth="6"] {
+  --reader-width: 60rem;
+}
+
+:root[data-rwidth="7"] {
   --reader-width: none;
 }
 
@@ -1141,14 +1179,14 @@ mark.sg-find.current {
   white-space: nowrap;
 }
 
-.settings-form .size button {
+.settings-form .stepper button {
   flex: 1;
   padding: 0.25rem 0.5rem;
   font-size: 0.9rem;
   cursor: pointer;
 }
 
-.settings-form .size-value {
+.settings-form .step-value {
   flex: 1;
   text-align: center;
   font-variant-numeric: tabular-nums;
@@ -1286,7 +1324,7 @@ mark.sg-find.current {
 
 @media (pointer: coarse) {
   .settings-form .setting label span,
-  .settings-form .size button {
+  .settings-form .stepper button {
     display: flex;
     align-items: center;
     justify-content: center;

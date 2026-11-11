@@ -2173,8 +2173,12 @@
     const form = panel && panel.querySelector("form");
     const settingsButton = document.querySelector(".settings-button");
     const focusButton = document.querySelector(".focus-button");
-    const sizes = settings.OPTIONS.size.map(Number).sort((a, b) => a - b);
-    const defaultSize = Number(settings.OPTIONS.size[0]);
+    // The settings with steps (the panel's − and + buttons): their values in order.
+    const steps = {};
+    for (const name of ["size", "leading", "width"]) {
+      steps[name] = [...settings.OPTIONS[name]].sort((a, b) => Number(a) - Number(b));
+    }
+    const defaultSize = settings.OPTIONS.size[0];
     let closedAt = 0;
     let peekByMouse = false;
     // Counts font choices (see the form's `change`).
@@ -2204,11 +2208,21 @@
         }
       }
       form.elements.focus.checked = focused();
-      const size = Number(current.size);
-      form.querySelector('[data-step="-1"]').disabled = size === sizes[0];
-      form.querySelector('[data-step="1"]').disabled = size === sizes[sizes.length - 1];
-      form.querySelector(".size-value").textContent =
-        `${Math.round(parseFloat(getComputedStyle(text).fontSize))}px`;
+      const style = getComputedStyle(text);
+      const fontSize = parseFloat(style.fontSize);
+      const width = getComputedStyle(article).maxWidth;
+      const shown = {
+        size: `${Math.round(fontSize)}px`,
+        leading: String(Math.round((parseFloat(style.lineHeight) / fontSize) * 100) / 100),
+        width: width === "none" ? "Full" : `${Math.round(parseFloat(width))}px`,
+      };
+      for (const fieldset of form.querySelectorAll(".stepper")) {
+        const name = fieldset.dataset.name;
+        const list = steps[name];
+        fieldset.querySelector('[data-step="-1"]').disabled = current[name] === list[0];
+        fieldset.querySelector('[data-step="1"]').disabled = current[name] === list[list.length - 1];
+        fieldset.querySelector(".step-value").textContent = shown[name];
+      }
     }
 
     function update(name, value) {
@@ -2221,10 +2235,12 @@
       updateStatus();
     }
 
-    function stepSize(delta) {
-      const index = sizes.indexOf(Number(settings.current().size)) + delta;
-      if (index >= 0 && index < sizes.length) {
-        update("size", String(sizes[index]));
+    // The next (`delta` 1) or previous (-1) step of setting `name`.
+    function step(name, delta) {
+      const list = steps[name];
+      const index = list.indexOf(settings.current()[name]) + delta;
+      if (index >= 0 && index < list.length) {
+        update(name, list[index]);
       }
     }
 
@@ -2317,9 +2333,9 @@
         }
       });
       form.addEventListener("click", (event) => {
-        const step = event.target.closest("[data-step]");
-        if (step) {
-          stepSize(Number(step.dataset.step));
+        const button = event.target.closest("[data-step]");
+        if (button) {
+          step(button.closest(".stepper").dataset.name, Number(button.dataset.step));
         } else if (event.target.closest(".settings-reset")) {
           fontChoice += 1;
           keepPlace(() => settings.save({}));
@@ -2451,16 +2467,16 @@
           break;
         case "-":
           event.preventDefault();
-          stepSize(-1);
+          step("size", -1);
           break;
         case "=":
         case "+":
           event.preventDefault();
-          stepSize(1);
+          step("size", 1);
           break;
         case "0":
           event.preventDefault();
-          update("size", String(defaultSize));
+          update("size", defaultSize);
           break;
         default:
       }
