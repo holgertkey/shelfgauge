@@ -929,6 +929,18 @@ async fn the_cut_line_is_found_across_the_column() {
     ] {
         assert!(setup_cut.contains(part), "{part} missing in setupCut");
     }
+    // Less than a page before the end of a part the turn moves less than a page, and
+    // the browser may settle the scroll later: the light sits in the document, on the
+    // kept line, wherever the scroll ends.
+    assert!(reader_js.contains(
+        "const at = window.scrollY + delta;\n      window.scrollBy({ top: delta, behavior: \"instant\" });\n      lightLine(band[0] + at, band[1] + at);"
+    ));
+    let reader_css = server
+        .ok("/assets/reader.css")
+        .await
+        .body
+        .replace("\r\n", "\n");
+    assert!(reader_css.contains(".turn-line {\n  position: absolute;"));
     // A text replaced since (the hub's reader app) builds the leaf list again.
     assert!(reader_js.contains("!leafCache[0].isConnected"));
 }

@@ -1083,7 +1083,8 @@
     }
   }
 
-  // Lights up the band from `top` to `bottom` of the window over the text column.
+  // Lights up the band from `top` to `bottom` of the document (not the window) over
+  // the text column: it stays on its line wherever the scroll ends.
   function lightLine(top, bottom) {
     const rect = text.getBoundingClientRect();
     const mark = document.createElement("div");
@@ -1091,7 +1092,7 @@
     mark.setAttribute("aria-hidden", "true");
     // CSSOM, not a style attribute: allowed by the CSP.
     mark.style.top = `${top}px`;
-    mark.style.left = `${rect.left}px`;
+    mark.style.left = `${rect.left + window.scrollX}px`;
     mark.style.width = `${rect.width}px`;
     mark.style.height = `${Math.max(bottom - top, 0)}px`;
     document.body.append(mark);
@@ -1142,8 +1143,14 @@
     }
     const scroll = () => {
       pageTurnUntil = Date.now() + 400;
+      // The band in the document, from where it is before the scroll: less than a page
+      // before the end of the part (or after its start) the page moves only as far as
+      // it can, and the browser may settle the scroll only later (by a few pixels on a
+      // phone), so the light goes on the kept line itself, not where a whole turn would
+      // have put it.
+      const at = window.scrollY + delta;
       window.scrollBy({ top: delta, behavior: "instant" });
-      lightLine(band[0], band[1]);
+      lightLine(band[0] + at, band[1] + at);
       coverCut();
     };
     if (reducedMotion.matches || typeof text.animate !== "function") {

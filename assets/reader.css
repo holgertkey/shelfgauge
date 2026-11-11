@@ -1084,9 +1084,10 @@ mark.sg-find.current {
 }
 
 /* The line that stays in view on a page turn (reader.js), lit up for a moment: the
-   place to read on from. Below the bars. */
+   place to read on from. In the document, on the line itself (also when the turn moves
+   less than a page at the end of a part). Below the bars. */
 .turn-line {
-  position: fixed;
+  position: absolute;
   z-index: 5;
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   border-radius: 2px;

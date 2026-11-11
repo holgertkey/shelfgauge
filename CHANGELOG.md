@@ -45,6 +45,9 @@ Build numbers (`+NNN`) do not get their own sections.
   of dialogue or a space at a line break no longer hides it), the page turn uses the
   same line, and the cover is placed again once the page is at rest after any scroll,
   after the finger lifts, and when fonts, images or the status line change the layout.
+- A page turn with less than a page left to the end of a part (or to its start,
+  turning back) lit a line further on instead of the kept line, the place you read up
+  to.
 
 ## [0.24.0] - 2026-11-06
 
