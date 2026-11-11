@@ -36,6 +36,16 @@ Build numbers (`+NNN`) do not get their own sections.
   to the installed version, or the binary itself) instead of
   `/usr/local/bin/shelfgauge`.
 
+### Fixed
+
+- The cover over the line cut by the bottom edge in focus mode sometimes did not
+  appear, and a line faded by the fade above the status line stayed uncovered though
+  it read poorly: such a line is covered too (it starts the next page), and the line is
+  now found from the text across the whole column (a short line
+  of dialogue or a space at a line break no longer hides it), the page turn uses the
+  same line, and the cover is placed again once the page is at rest after any scroll,
+  after the finger lifts, and when fonts, images or the status line change the layout.
+
 ## [0.24.0] - 2026-11-06
 
 Phones get these changes from a hub of this version (the hub serves the reader app);

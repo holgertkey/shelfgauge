@@ -75,6 +75,10 @@
   // blocks. Only ids inside `.text` count (the page has other ids).
   let leafCache = null;
   function leaves() {
+    // Built again if the text was replaced since (the hub's reader app).
+    if (leafCache && leafCache.length > 0 && !leafCache[0].isConnected) {
+      leafCache = null;
+    }
     leafCache =
       leafCache ||
       Array.from(text.querySelectorAll("[id]")).filter(
@@ -951,9 +955,95 @@
     return article.querySelector(`.reader-nav a[rel="${rel}"]`);
   }
 
-  // The box of the text line at height `y` of the window: the character there, or
-  // null between paragraphs, in an image or without the caret APIs.
+  // The box of the text line at height `y` of the window (within LINE_SLOP), or null
+  // between paragraphs, in an image or a table, or where there is no text. Found from
+  // the boxes of the text itself across the whole width of the column, not from one
+  // probe point: a probe in the middle misses a short line (a line of dialogue, the
+  // end of a paragraph), a space at a line break or whitespace between inline
+  // elements. Where no leaf block reaches `y`, the caret at the middle decides.
+  const LINE_SLOP = 2;
   function lineAt(y) {
+    const all = leaves();
+    // Blocks are in document order, so their bottoms grow: the first one reaching y.
+    let lo = 0;
+    let hi = all.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (all[mid].getBoundingClientRect().bottom >= y - LINE_SLOP) {
+        hi = mid;
+      } else {
+        lo = mid + 1;
+      }
+    }
+    const rects = [];
+    let reached = false;
+    const range = document.createRange();
+    for (let i = lo; i < all.length; i++) {
+      const leaf = all[i];
+      const box = leaf.getBoundingClientRect();
+      if (box.top > y + LINE_SLOP) {
+        break;
+      }
+      if (box.height === 0 || box.bottom < y - LINE_SLOP) {
+        continue;
+      }
+      reached = true;
+      if (leaf.closest("table")) {
+        return null;
+      }
+      for (const media of leaf.querySelectorAll("img, svg, video, picture, object, iframe")) {
+        const r = media.getBoundingClientRect();
+        if (r.height > 0 && r.top < y && r.bottom > y) {
+          return null;
+        }
+      }
+      const walker = document.createTreeWalker(leaf, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (!node.data.trim()) {
+          continue;
+        }
+        range.selectNodeContents(node);
+        for (const r of range.getClientRects()) {
+          // Collapsed whitespace and the space at a line break have no width.
+          if (r.width > 0 && r.height > 0 && r.top - LINE_SLOP <= y && r.bottom + LINE_SLOP >= y) {
+            rects.push(r);
+          }
+        }
+      }
+    }
+    if (!reached) {
+      return caretLineAt(y);
+    }
+    if (rects.length === 0) {
+      return null;
+    }
+    // With tight line spacing the boxes of two lines may both be near y: the line that
+    // contains y wins, then the nearest one.
+    const distance = (r) =>
+      (r.top <= y && r.bottom >= y ? 0 : 1000) + Math.abs((r.top + r.bottom) / 2 - y);
+    let best = rects[0];
+    for (const r of rects) {
+      if (distance(r) < distance(best)) {
+        best = r;
+      }
+    }
+    // The other boxes of that line (inline elements, another font, a superscript):
+    // those overlapping it by more than half of the smaller height.
+    let top = best.top;
+    let bottom = best.bottom;
+    for (const r of rects) {
+      const overlap = Math.min(r.bottom, best.bottom) - Math.max(r.top, best.top);
+      if (overlap > Math.min(r.height, best.height) / 2) {
+        top = Math.min(top, r.top);
+        bottom = Math.max(bottom, r.bottom);
+      }
+    }
+    return { top, bottom };
+  }
+
+  // The box of the text line at height `y` from the caret at the middle of the text
+  // column, or null between paragraphs, in an image or without the caret APIs.
+  function caretLineAt(y) {
     const rect = text.getBoundingClientRect();
     const x = rect.left + rect.width / 2;
     let node = null;
@@ -977,7 +1067,7 @@
     range.setStart(node, start);
     range.setEnd(node, Math.min(start + 1, length));
     const box = Array.from(range.getClientRects()).find(
-      (r) => r.height > 0 && r.top - 2 <= y && r.bottom + 2 >= y,
+      (r) => r.height > 0 && r.top - LINE_SLOP <= y && r.bottom + LINE_SLOP >= y,
     );
     return box ? { top: box.top, bottom: box.bottom } : null;
   }
@@ -1040,7 +1130,7 @@
     // Forward: the line at the bottom edge goes to the top. Back: the line at the top
     // edge goes to the bottom. Else (no text line there, or a turn that would hardly
     // move) a page less one line.
-    const line = lineAt(forward ? bottom - 2 : top + 2);
+    const line = forward ? cutLine() || lineAt(bottom - 1) : lineAt(top + 1);
     let delta = forward ? height - lineHeight : -(height - lineHeight);
     let band = forward ? [top, top + lineHeight] : [bottom - lineHeight, bottom];
     if (line) {
@@ -1082,12 +1172,44 @@
   // ---------- Whole lines at the bottom ----------
 
   // In focus mode a page at rest (after a turn, once scrolling has stopped) shows whole
-  // lines only: the text line cut by the bottom edge is covered with the background
+  // lines only: the text line cut by the bottom edge, or faded by the fade above the
+  // status line so far that it reads poorly, is covered with the background
   // (`.page-cut`, placed in the document down to the screen bottom, so it stays on that
   // line if a browser toolbar still moves the screen); after a turn that line opens the
   // next page. Not while scrolling, and not for an image or a table at the edge.
   const CUT_IDLE_MS = 150;
+  // How deep a line may reach into the status line's fade and still count as whole:
+  // a share of the fade's height (the glyph box ends below the baseline, so only the
+  // descenders fade that far).
+  const FADE_SLACK = 0.25;
   let cutCover = null;
+
+  // The height of the fade above the status line, over the bottom of the text (0
+  // without the status line).
+  function fadeHeight() {
+    const status = document.querySelector(".status-line");
+    if (!status || getComputedStyle(status).display === "none") {
+      return 0;
+    }
+    return parseFloat(getComputedStyle(status, "::before").height) || 0;
+  }
+
+  // The line that the bottom of the page cuts or fades, or null: the first line that
+  // reaches into the fade above the status line deeper than FADE_SLACK of it, or past
+  // the edge itself, and still shows above the edge. Not a line taller than the page.
+  function cutLine() {
+    const bottom = bottomLimit();
+    const fade = fadeHeight();
+    const readable = bottom - fade * (1 - FADE_SLACK);
+    let line = lineAt(bottom - fade - 1);
+    if (!line || line.bottom <= readable + 1) {
+      line = lineAt(bottom - 1);
+    }
+    if (!line || line.bottom <= Math.min(readable, bottom) + 1 || line.top >= bottom - 1) {
+      return null;
+    }
+    return line.top <= topLimit() ? null : line;
+  }
 
   function hideCut() {
     if (cutCover) {
@@ -1100,9 +1222,9 @@
       hideCut();
       return;
     }
-    const bottom = bottomLimit();
-    const line = lineAt(bottom - 2);
-    if (!line || line.bottom <= bottom + 1 || line.top <= topLimit()) {
+    // The line the next turn starts with.
+    const line = cutLine();
+    if (!line) {
       hideCut();
       return;
     }
@@ -1125,10 +1247,18 @@
 
   function setupCut() {
     let timer = 0;
+    // A finger on the screen: the page is not at rest, even while it holds still.
+    let touching = false;
     const atRest = () => {
       clearTimeout(timer);
       timer = 0;
-      coverCut();
+      if (!touching) {
+        coverCut();
+      }
+    };
+    const later = () => {
+      clearTimeout(timer);
+      timer = setTimeout(atRest, CUT_IDLE_MS);
     };
     window.addEventListener("scroll", () => {
       // A page turn covers the cut itself.
@@ -1136,19 +1266,37 @@
         return;
       }
       hideCut();
-      if (!("onscrollend" in window)) {
-        clearTimeout(timer);
-        timer = setTimeout(atRest, CUT_IDLE_MS);
-      }
+      // Always armed: `scrollend` only comes sooner, and not after every scroll (one
+      // made by a script, or where the browser lacks it).
+      later();
     }, { passive: true });
     window.addEventListener("scrollend", atRest);
+    window.addEventListener("touchstart", (event) => {
+      touching = event.touches.length > 0;
+    }, { passive: true });
+    for (const type of ["touchend", "touchcancel"]) {
+      window.addEventListener(type, (event) => {
+        touching = event.touches.length > 0;
+        // Covered once the page is at rest (a drag without momentum has no scrollend
+        // after the lift).
+        if (!touching) {
+          later();
+        }
+      }, { passive: true });
+    }
     // Another window height (also a browser toolbar sliding in or out) moves the edge.
-    const resized = () => {
-      clearTimeout(timer);
-      timer = setTimeout(atRest, CUT_IDLE_MS);
-    };
-    window.addEventListener("resize", resized);
-    window.visualViewport?.addEventListener("resize", resized);
+    window.addEventListener("resize", later);
+    window.visualViewport?.addEventListener("resize", later);
+    // The text or the status line changes without a scroll: fonts or images arrive,
+    // the status line shows page numbers instead of the track.
+    if ("ResizeObserver" in window) {
+      const observer = new ResizeObserver(later);
+      observer.observe(text);
+      const status = document.querySelector(".status-line");
+      if (status) {
+        observer.observe(status);
+      }
+    }
     coverCut();
   }
 

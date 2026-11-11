@@ -850,6 +850,89 @@ async fn a_phone_is_always_in_focus_mode() {
     );
 }
 
+/// The line cut by the bottom edge is found from the boxes of the text across the whole
+/// column, not from one caret probe in the middle (which missed short lines, spaces at
+/// a line break and whitespace between inline elements); the cover and the page turn
+/// use the same search (a line deep in the fade above the status line counts as cut),
+/// and the cover is placed again at rest after any scroll (also
+/// without `scrollend`), after a finger lifts and when the text or status line resizes.
+#[tokio::test]
+async fn the_cut_line_is_found_across_the_column() {
+    let lib = TestLibrary::new();
+    let server = lib.server("/", whole());
+    let reader_js = server
+        .ok("/assets/reader.js")
+        .await
+        .body
+        .replace("\r\n", "\n");
+    let line_at = reader_js
+        .split("function lineAt(y) {")
+        .nth(1)
+        .and_then(|rest| rest.split("\n  }\n").next())
+        .expect("lineAt in reader.js");
+    for part in [
+        "const all = leaves();",
+        "document.createTreeWalker(leaf, NodeFilter.SHOW_TEXT)",
+        "range.selectNodeContents(node);",
+        "r.width > 0 && r.height > 0",
+        "leaf.closest(\"table\")",
+        "return caretLineAt(y);",
+    ] {
+        assert!(line_at.contains(part), "{part} missing in lineAt");
+    }
+    assert!(
+        !line_at.contains("caretPositionFromPoint"),
+        "lineAt probes the caret"
+    );
+    // The cover and a forward turn take the same line: cut by the edge, or faded by the
+    // fade above the status line deeper than FADE_SLACK of it.
+    assert!(
+        reader_js
+            .contains("const line = forward ? cutLine() || lineAt(bottom - 1) : lineAt(top + 1);")
+    );
+    let cut_line = reader_js
+        .split("function cutLine() {")
+        .nth(1)
+        .and_then(|rest| rest.split("\n  }\n").next())
+        .expect("cutLine in reader.js");
+    for part in [
+        "const readable = bottom - fade * (1 - FADE_SLACK);",
+        "let line = lineAt(bottom - fade - 1);",
+        "line = lineAt(bottom - 1);",
+    ] {
+        assert!(cut_line.contains(part), "{part} missing in cutLine");
+    }
+    assert!(reader_js.contains("const FADE_SLACK = 0.25;"));
+    assert!(reader_js.contains("getComputedStyle(status, \"::before\").height"));
+    let cover_cut = reader_js
+        .split("function coverCut() {")
+        .nth(1)
+        .and_then(|rest| rest.split("\n  }\n").next())
+        .expect("coverCut in reader.js");
+    assert!(cover_cut.contains("const line = cutLine();"));
+    let setup_cut = reader_js
+        .split("function setupCut() {")
+        .nth(1)
+        .and_then(|rest| rest.split("\n  }\n").next())
+        .expect("setupCut in reader.js");
+    assert!(
+        !setup_cut.contains("onscrollend"),
+        "the idle timer depends on scrollend"
+    );
+    for part in [
+        "hideCut();\n      // Always armed",
+        "window.addEventListener(\"scrollend\", atRest);",
+        "\"touchend\", \"touchcancel\"",
+        "if (!touching) {\n        coverCut();",
+        "new ResizeObserver(later)",
+        "observer.observe(text);",
+    ] {
+        assert!(setup_cut.contains(part), "{part} missing in setupCut");
+    }
+    // A text replaced since (the hub's reader app) builds the leaf list again.
+    assert!(reader_js.contains("!leafCache[0].isConnected"));
+}
+
 /// Firefox on Android reports a bottom safe-area inset while its toolbar is shown,
 /// though the page never reaches under the navigation bar: the status line grew and
 /// jumped up. Gecko gets no inset; the status line and the note panel use the variable.
