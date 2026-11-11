@@ -474,8 +474,11 @@ pub(crate) struct ThemeChoice {
 const THEMES: &[(&str, &str)] = &[
     ("", "Auto"),
     ("light", "Light"),
-    ("dark", "Dark"),
     ("sepia", "Sepia"),
+    ("mist", "Mist"),
+    ("stone", "Stone"),
+    ("dusk", "Dusk"),
+    ("dark", "Dark"),
     ("navy", "Navy"),
     ("black", "Black"),
 ];

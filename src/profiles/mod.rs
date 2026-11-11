@@ -184,7 +184,12 @@ pub fn initials(name: &str) -> String {
 /// The reader settings mirror `OPTIONS` in `assets/theme.js`, and the themes the theme
 /// menu; `tests/fixtures/profiles/settings.json` keeps the three lists equal.
 pub const SETTINGS: &[(&str, &[&str])] = &[
-    ("theme", &["", "light", "dark", "sepia", "navy", "black"]),
+    (
+        "theme",
+        &[
+            "", "light", "sepia", "mist", "stone", "dusk", "dark", "navy", "black",
+        ],
+    ),
     ("font", &["sans", "serif"]),
     ("size", &["3", "0", "1", "2", "4", "5", "6", "7"]),
     ("leading", &["normal", "tight", "loose"]),

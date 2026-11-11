@@ -674,7 +674,9 @@ const READER_SETTINGS: [(&str, &[&str], &str); 4] = [
     ("align", &["left", "justify"], "ralign"),
 ];
 
-const THEMES: [&str; 6] = ["", "light", "sepia", "dark", "navy", "black"];
+const THEMES: [&str; 9] = [
+    "", "light", "sepia", "mist", "stone", "dusk", "dark", "navy", "black",
+];
 
 #[tokio::test]
 async fn reader_settings_panel_is_on_read_pages_only() {

@@ -266,6 +266,7 @@ mark.sg-find.current {
   }
 }
 
+:root[data-theme="dusk"],
 :root[data-theme="dark"],
 :root[data-theme="navy"],
 :root[data-theme="black"] {
@@ -924,6 +925,18 @@ mark.sg-find.current {
 
 .settings-form .swatches .swatch-sepia input + span {
   background: #f6efe2;
+}
+
+.settings-form .swatches .swatch-mist input + span {
+  background: #e6e7e3;
+}
+
+.settings-form .swatches .swatch-stone input + span {
+  background: #cdcfca;
+}
+
+.settings-form .swatches .swatch-dusk input + span {
+  background: #4a4f57;
 }
 
 .settings-form .swatches .swatch-dark input + span {

@@ -33,7 +33,7 @@ const shelfgaugeReader = (() => {
     // Minutes the screen stays on after the last page turn (reader.js).
     awake: ["10", "off", "5", "30"],
   };
-  const THEMES = ["", "light", "dark", "sepia", "navy", "black"];
+  const THEMES = ["", "light", "sepia", "mist", "stone", "dusk", "dark", "navy", "black"];
   const ATTRS = {
     font: "rfont",
     size: "rsize",

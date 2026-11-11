@@ -10,6 +10,10 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ### Added
 
+- Three themes between light and dark: Mist (light gray), Stone (gray, still with
+  dark text) and Dusk (graphite, softer than Dark). The theme menu and the theme
+  circles in the reading settings go from light to dark: Auto, Light, Sepia, Mist,
+  Stone, Dusk, Dark, Navy, Black (`t` cycles in this order).
 - Keep screen on: while you read, the screen of a phone or tablet does not go dark;
   10 minutes after the last page turn (5 or 30 in the reading settings, or Off) the
   device's own screen timeout applies again. In both readers, the library's and the

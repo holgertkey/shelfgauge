@@ -143,6 +143,105 @@
   color-scheme: light;
 }
 
+:root[data-theme="mist"] {
+  --bg: #e6e7e3;
+  --fg: #23262a;
+  --muted: #555b62;
+  --border: #c4c7c1;
+  --sidebar-bg: #dddfda;
+  --hover: #d3d6d0;
+  --active-bg: #c9d9ec;
+  --accent: #0a5cb8;
+  --banner-bg: #cfdcea;
+  --error: #b42318;
+  --warning-bg: #efe2a6;
+  --input-bg: #f1f2ef;
+  --cover-bg: #d3d5d0;
+  --pcolor-0: #0a5cb8;
+  --on-pcolor-0: #ffffff;
+  --pcolor-1: #1a6e30;
+  --on-pcolor-1: #ffffff;
+  --pcolor-2: #7140c8;
+  --on-pcolor-2: #ffffff;
+  --pcolor-3: #a14100;
+  --on-pcolor-3: #ffffff;
+  --pcolor-4: #b42318;
+  --on-pcolor-4: #ffffff;
+  --pcolor-5: #0a6473;
+  --on-pcolor-5: #ffffff;
+  --pcolor-6: #a8307a;
+  --on-pcolor-6: #ffffff;
+  --pcolor-7: #7a4f25;
+  --on-pcolor-7: #ffffff;
+  color-scheme: light;
+}
+
+:root[data-theme="stone"] {
+  --bg: #cdcfca;
+  --fg: #1b1e21;
+  --muted: #464b51;
+  --border: #aeb1ab;
+  --sidebar-bg: #c3c6c0;
+  --hover: #b8bbb5;
+  --active-bg: #aec3da;
+  --accent: #084c99;
+  --banner-bg: #b4c6d8;
+  --error: #962018;
+  --warning-bg: #dccd8c;
+  --input-bg: #dcdeda;
+  --cover-bg: #b9bcb6;
+  --pcolor-0: #084c99;
+  --on-pcolor-0: #ffffff;
+  --pcolor-1: #155a27;
+  --on-pcolor-1: #ffffff;
+  --pcolor-2: #5e32a8;
+  --on-pcolor-2: #ffffff;
+  --pcolor-3: #853500;
+  --on-pcolor-3: #ffffff;
+  --pcolor-4: #962018;
+  --on-pcolor-4: #ffffff;
+  --pcolor-5: #075461;
+  --on-pcolor-5: #ffffff;
+  --pcolor-6: #8a2766;
+  --on-pcolor-6: #ffffff;
+  --pcolor-7: #643f1c;
+  --on-pcolor-7: #ffffff;
+  color-scheme: light;
+}
+
+:root[data-theme="dusk"] {
+  --bg: #4a4f57;
+  --fg: #eef0f2;
+  --muted: #c3c8ce;
+  --border: #646a73;
+  --sidebar-bg: #42474f;
+  --hover: #565c65;
+  --active-bg: #2f4f78;
+  --accent: #a8cfff;
+  --banner-bg: #34506f;
+  --error: #ffaaa3;
+  --warning-bg: #5c4d1a;
+  --input-bg: #3f444b;
+  --cover-bg: #5a6069;
+  --pcolor-0: #a8cfff;
+  --on-pcolor-0: #000000;
+  --pcolor-1: #8ee39a;
+  --on-pcolor-1: #000000;
+  --pcolor-2: #d0b8ff;
+  --on-pcolor-2: #000000;
+  --pcolor-3: #ffb77a;
+  --on-pcolor-3: #000000;
+  --pcolor-4: #ffaaa3;
+  --on-pcolor-4: #000000;
+  --pcolor-5: #7fdde4;
+  --on-pcolor-5: #000000;
+  --pcolor-6: #ffaed6;
+  --on-pcolor-6: #000000;
+  --pcolor-7: #e2c59d;
+  --on-pcolor-7: #000000;
+  color-scheme: dark;
+}
+
 :root[data-theme="navy"] {
   --bg: #161f30;
   --fg: #d6deeb;
