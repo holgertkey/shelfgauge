@@ -6,6 +6,12 @@
 #   cargo build --release
 #   deploy/hub/push-staging.sh <ssh-host> <staging-domain> [binary]
 #
+# or, for a quick check between releases, a debug build with its symbols stripped
+# (its version shows the +BUILD number):
+#
+#   cargo build && strip -o /tmp/shelfgauge target/debug/shelfgauge
+#   deploy/hub/push-staging.sh <ssh-host> <staging-domain> /tmp/shelfgauge
+#
 # e.g. `deploy/hub/push-staging.sh root@hub.example.org staging.example.org`. Copies the
 # binary (default target/release/shelfgauge) to
 # /usr/local/lib/shelfgauge/dev-<version>-<sha>/ on the server, copies the staging
@@ -23,7 +29,7 @@ set -euo pipefail
 host=$1
 domain=$2
 bin=${3:-target/release/shelfgauge}
-[ -x "$bin" ] || { echo "no binary at $bin (cargo build --release)" >&2; exit 1; }
+[ -x "$bin" ] || { echo "no binary at $bin (cargo build --release, or pass a binary)" >&2; exit 1; }
 [[ "$domain" =~ ^[A-Za-z0-9.-]+(:[0-9]+)?$ ]] || { echo "not a domain: $domain" >&2; exit 1; }
 
 # Debian 13 has glibc 2.41; a build on a newer system may need more.

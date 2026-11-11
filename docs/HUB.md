@@ -266,6 +266,16 @@ cargo build --release
 deploy/hub/push-staging.sh root@server staging.example.org
 ```
 
+For quick checks between releases a debug build does too: it is made in seconds and
+its version shows the build number (`0.24.0+007`). Strip its debug symbols first (the
+binary shrinks to about a third; the version stays) and pass it as the third argument:
+
+```sh
+cargo build
+strip -o /tmp/shelfgauge target/debug/shelfgauge
+deploy/hub/push-staging.sh root@server staging.example.org /tmp/shelfgauge
+```
+
 It copies the binary to `/usr/local/lib/shelfgauge/dev-<version>-<sha>/` (a build
 needing a newer glibc than the server's is refused), copies the staging database,
 switches the staging link, restarts the staging hub, waits until the new process
