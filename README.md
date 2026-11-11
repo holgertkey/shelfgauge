@@ -22,9 +22,8 @@ is in the library, the state of the index and duplicates. See [docs/ARCHITECTURE
 code opens the book on your phone and signs the phone in. **Invite someone** (Settings → Profiles) gives
 a link that works from anywhere; the person picks an address like `grandma@smiths` and a
 password, reads every book the library sends, offline too, and their bookmarks and
-notes sync with the library. With the library's **Showcase** they also browse and
-search the books of the folders you open for it on the phone, and get any of them
-with one tap.
+notes sync with the library. In **Explore** they also browse and search the books of
+the folders you show there, on the phone, and get any of them with one tap.
 
 ## Installation
 
@@ -358,7 +357,7 @@ as it is now. When changes take effect:
 | `hub.url` | `""` | The [hub](#running-a-hub) for reading on phones, e.g. `"https://hub.example.org"`; empty = none. HTTPS is required (`http://` only for `127.0.0.1`, `::1` or `localhost`); certificates are checked against the computer's trust store. It is used when the library is put on the hub; it cannot change while the library is there. |
 | `hub.instance_name` | `""` | The name of this library on your other devices; empty = the library folder's name. |
 | `hub.sync_interval_minutes` | `5` | Minutes between syncs with the hub; `1`–`1440`. |
-| `hub.show_online` | `true` | Whether the library's members see in the reader's Showcase when this computer is online. |
+| `hub.show_online` | `true` | Whether the library's members see in the reader's Explore when this computer is online. |
 
 ## Remote access
 
@@ -622,27 +621,27 @@ never exported. Each download is a new copy; files downloaded earlier keep openi
 (files made before 0.21.0 do not). Removing the book from the shelf removes the copy
 from the phone; opening the file again puts the book back.
 
-**Your library on the phone** (the **Showcase**): the members of a library browse and
-search a catalog of its books in the reader (the **Showcase** tab), at home and
+**Your library on the phone** (**Explore**): the members of a library browse and
+search a catalog of its books in the reader (the **Explore** tab), at home and
 away, also offline, and get any of them with **Get this book**. Only the books of the
-folders you open for it are there; every folder is closed until you open it. In the
-library's sidebar, in **Folders**, admins of a library on a hub have a checkbox next to
-every folder and zip archive (also on the folder's page, with **Save**): a checked
-folder is open with everything in it, also folders added to it later; folders inside
-an open one show checked and greyed ("open through its parent"). A folder that is
-renamed or moved closes, and the library's root folder page names the marks whose
-folder is gone (**Forget**). The library uploads the catalog, encrypted under the
+folders you show there are in it; no folder is shown until you check it. In the
+library's sidebar, in **Folders**, admins of a library on a hub have a checkbox **Show in
+Explore** next to every folder and zip archive (also on the folder's page, with
+**Save**): a checked folder is shown with everything in it, also folders added to it
+later; folders inside a shown one show checked and greyed ("shown through its parent").
+A folder that is renamed or moved is no longer shown, and the library's root folder
+page names the marks whose folder is gone (**Forget**). The library uploads the catalog, encrypted under the
 library key, after a change (soon after a click, a scan or a book sent with **Read on
 phone**, and at every sync round); the marks are kept when the library leaves the hub.
-In the reader the Showcase lists recent books, authors, series, genres and all books,
+In the reader Explore lists recent books, authors, series, genres and all books,
 and searches titles, authors, series and genres (case and accents ignored, as in the
 library). **Get this book** asks the library: while its computer is on, the book comes
 to the person's shelf within about half a minute (the library checks the hub every
 30 s); while it is off, the card says it waits and the book comes when the computer
-is on again. The Showcase says when it was last updated and whether the library's
+is on again. Explore says when it was last updated and whether the library's
 computer is online now (or when it last was); **Settings → Server and hub → Show the
 library's members when this computer is online** (`[hub] show_online`) turns that
-off. The library sends a book only if it is on the Showcase at that moment
+off. The library sends a book only if it is shown in Explore at that moment
 (a member's catalog may be older), and never a book protected by DRM; a refusal says
 why. A book's card shows its cover (a small thumbnail the library makes when someone
 looks at the card) and, once the book is on the hub, **Open** and **Download book

@@ -1414,10 +1414,13 @@ A publication in one file (decisions in `.debug/docs/sg-v2devplan.md`, Phase 27)
   `303` to `/?shared=lost` without reading the body. `.sgb` is accepted on opening;
   files are always written as `.sgbook`.
 
-### The library's catalog: the Showcase (0.22.0)
+### The library's catalog: Explore, the Showcase (0.22.0)
 
 Members browse and search a catalog of their library's books on the phone and get
 any of them with one tap (decisions in `.debug/docs/sg-v2devplan.md`, Phase 31). The
+users see it as **Explore** (the reader's tab, the folder checkbox Show in Explore;
+called the Showcase until 0.24.0); the code, the routes and this section keep the name
+Showcase (`showcase`). The
 LAN storefront planned before went to "After V2": one catalog on the hub serves home
 and away, and the circles of libraries later.
 
@@ -1488,7 +1491,7 @@ and away, and the circles of libraries later.
   `cover_request` gets JPEG thumbnails 120 px wide (the `image` crate, decoding
   limits, only covers of books on the Showcase), deleted with their book's leaving.
 - **Reader** (`assets/hub/showcase.js`, `/showcase`; the shelf and the Showcase share
-  the page tabs Bookshelf | Showcase, `pageTabs` in `hub.js`, the library's `.modes`
+  the page tabs Bookshelf | Explore, `pageTabs` in `hub.js`, the library's `.modes`
   switch, with only Bookshelf on all shelves at once): the catalog kept per account in
   IndexedDB (account database v2, store `catalog`), only changed chunks fetched, the
   WASM `LibraryCatalog` checks and searches; a chunk that does not match its index

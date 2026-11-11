@@ -32,6 +32,9 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ### Changed
 
+- The Showcase is called **Explore**: the reader's tab and its messages, the folder
+  checkbox **Show in Explore** (sidebar and folder page) and the README. Links and
+  settings stay as they are (`/showcase`, `[hub] show_online`).
 - `deploy/hub/shelfgauge-hub.service` starts `/usr/local/bin/shelfgauge-hub` (a link
   to the installed version, or the binary itself) instead of
   `/usr/local/bin/shelfgauge`.

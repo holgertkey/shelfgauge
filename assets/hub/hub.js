@@ -316,11 +316,11 @@ function switcher(all, p, showingAll) {
  * "shelf" or "showcase"; without `showcase` (all shelves at once: the Showcase is a
  * library's) only Bookshelf. `title` null leaves the title out (a page with its own).
  */
-function pageTabs(current, { showcase = true, title = current === "shelf" ? "Bookshelf" : "Showcase" } = {}) {
+function pageTabs(current, { showcase = true, title = current === "shelf" ? "Bookshelf" : "Explore" } = {}) {
   const nav = el("nav", { class: "modes hub-tabs", "aria-label": "Pages" });
   const tabs = [["shelf", "Bookshelf", `${base}/`]];
   if (showcase) {
-    tabs.push(["showcase", "Showcase", `${base}/showcase`]);
+    tabs.push(["showcase", "Explore", `${base}/showcase`]);
   }
   for (const [name, text, href] of tabs) {
     const a = el("a", { href }, text);

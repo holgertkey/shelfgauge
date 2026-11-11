@@ -405,14 +405,14 @@ function decorateShowcase(sidebar) {
       box = document.createElement("input");
       box.type = "checkbox";
       const name = node.querySelector(":scope > a");
-      box.setAttribute("aria-label", `On the Showcase: ${name ? name.textContent : ""}`);
+      box.setAttribute("aria-label", `Show in Explore: ${name ? name.textContent : ""}`);
       label.append(box);
       node.insertBefore(label, node.querySelector(":scope > .children"));
     }
     const state = markState(folderOfNode(node));
     box.checked = state !== "closed";
     box.disabled = state === "parent";
-    box.title = state === "parent" ? "Open through its parent folder" : "On the Showcase";
+    box.title = state === "parent" ? "Shown through its parent folder" : "Show in Explore";
   }
 }
 
@@ -436,11 +436,11 @@ async function saveShowcase(sidebar, box) {
     }
     showcase.marks = (await response.json()).marks;
     showNotice(box.checked
-      ? "On the Showcase. The hub’s catalog changes at the next sync."
-      : "Off the Showcase. The hub’s catalog changes at the next sync.");
+      ? "Shown in Explore. The hub’s catalog changes at the next sync."
+      : "No longer in Explore. The hub’s catalog changes at the next sync.");
   } catch (e) {
     console.error(e);
-    showNotice("The Showcase could not be saved.");
+    showNotice("Show in Explore could not be saved.");
   }
   decorateShowcase(sidebar);
 }

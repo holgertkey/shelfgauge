@@ -113,17 +113,17 @@ async function hubCatalog(account, lowest) {
   try {
     header = c.catalogHeader(blob);
   } catch (e) {
-    return { message: /newer shelfgauge/.test(e.message) ? "This Showcase needs a newer shelfgauge reader." : "The hub sent a broken Showcase." };
+    return { message: /newer shelfgauge/.test(e.message) ? "This library's catalog needs a newer shelfgauge reader." : "The hub sent a broken catalog." };
   }
   if (header.library !== account.library) {
-    return { message: "The hub sent another library's Showcase." };
+    return { message: "The hub sent another library's catalog." };
   }
   if (header.key_scope !== c.LIBRARY_SCOPE) {
-    return { message: "This Showcase needs a newer shelfgauge reader." };
+    return { message: "This library's catalog needs a newer shelfgauge reader." };
   }
   const libraryKey = store.libraryKey(account, header.key_id);
   if (!libraryKey) {
-    return { message: "This Showcase needs a newer library key: connect to the internet and open it again." };
+    return { message: "This catalog needs a newer library key: connect to the internet and open it again." };
   }
   const key = await c.catalogKeyFromHeader(header, libraryKey);
   const libraryId = c.unhex(account.library);
@@ -183,9 +183,9 @@ async function refreshCatalog() {
     } else if (got.none) {
       status = shown ? "" : "none";
     } else if (got.older) {
-      status = "The hub sent an older Showcase than this device has: showing the one kept here.";
+      status = "The hub sent an older catalog than this device has: showing the one kept here.";
     } else if (got.changing) {
-      status = `${ui.libraryName(p)} is updating its Showcase: showing the one kept here.`;
+      status = `${ui.libraryName(p)} is updating its catalog: showing the one kept here.`;
     } else {
       status = got.message;
     }
@@ -196,7 +196,7 @@ async function refreshCatalog() {
     if (!ui.unreachable(e)) {
       console.error(e);
     }
-    status = shown ? "Offline: showing the Showcase as of the last update." : "offline";
+    status = shown ? "Offline: showing the catalog as of the last update." : "offline";
   }
 }
 
@@ -335,7 +335,7 @@ function refusal(reason) {
 export function refusalText(name, reason) {
   switch (reason) {
     case "closed":
-      return "This book is not on the Showcase any more.";
+      return "This book is not in Explore any more.";
     case "drm":
       return "This book is protected by DRM and never leaves the library.";
     case "missing":
@@ -495,7 +495,7 @@ function actions(entry) {
 function bookCard(id) {
   const json = shown.cat.get(id);
   if (!json) {
-    return [ui.el("p", { class: "empty" }, "This book is not on the Showcase (any more)."), ui.el("p", {}, link("Back to the Showcase", {}))];
+    return [ui.el("p", { class: "empty" }, "This book is not in Explore (any more)."), ui.el("p", {}, link("Back to Explore", {}))];
   }
   const entry = JSON.parse(json);
   const info = ui.el("div", { class: "info" }, ui.el("h1", {}, entry.title || "Untitled"));
@@ -607,10 +607,10 @@ function authorKey(name) {
 
 function emptyShowcase() {
   const name = ui.libraryName(p);
-  const nodes = [ui.el("p", { class: "empty" }, `${name} hasn't put any books on its Showcase yet.`)];
+  const nodes = [ui.el("p", { class: "empty" }, `${name} hasn't shown any books in Explore yet.`)];
   nodes.push(ui.el("p", { class: "hint" }, p.role === "owner"
-    ? "On the library's computer, open folders for the Showcase with the checkbox next to each folder in the sidebar (Folders)."
-    : `Ask ${name}'s admin to open folders for the Showcase.`));
+    ? "On the library's computer, show folders in Explore with the checkbox next to each folder in the sidebar (Folders)."
+    : `Ask ${name}'s admin to show folders in Explore.`));
   return nodes;
 }
 
@@ -642,7 +642,7 @@ function heading() {
 }
 
 function searchForm(query) {
-  const input = ui.el("input", { type: "search", name: "q", placeholder: "Title, author, series, genre", "aria-label": "Search the Showcase", autocomplete: "off" });
+  const input = ui.el("input", { type: "search", name: "q", placeholder: "Title, author, series, genre", "aria-label": "Search the catalog", autocomplete: "off" });
   input.value = query;
   const form = ui.el("form", { class: "inline-form hub-showcase-search", role: "search" }, input, ui.el("button", { type: "submit" }, "Search"));
   form.addEventListener("submit", (event) => {
@@ -653,7 +653,7 @@ function searchForm(query) {
 }
 
 function tabs(current) {
-  const nav = ui.el("nav", { class: "hub-showcase-tabs", "aria-label": "Showcase" });
+  const nav = ui.el("nav", { class: "hub-showcase-tabs", "aria-label": "Explore" });
   for (const [view, text] of [["recent", "Recent"], ["authors", "Authors"], ["series", "Series"], ["genres", "Genres"], ["all", "All books"]]) {
     const a = link(text, view === "recent" ? {} : { view });
     if (view === current) {
@@ -671,9 +671,9 @@ function render() {
   if (!shown) {
     const nodes = heading();
     if (status === "none") {
-      nodes.push(ui.el("p", { class: "empty" }, `${ui.libraryName(p)} has not sent its Showcase to the hub yet. It does when its computer is on.`));
+      nodes.push(ui.el("p", { class: "empty" }, `${ui.libraryName(p)} has not sent its catalog to the hub yet. It does when its computer is on.`));
     } else if (status === "offline") {
-      nodes.push(ui.el("p", { class: "empty" }, "Offline: the Showcase opens once this device has downloaded it with a connection."));
+      nodes.push(ui.el("p", { class: "empty" }, "Offline: Explore opens once this device has downloaded the catalog with a connection."));
     } else if (status) {
       nodes.push(ui.el("p", { class: "error" }, status));
     }
@@ -682,7 +682,7 @@ function render() {
   }
   if (q.has("book")) {
     // The card has its own title (the book's).
-    const back = ui.el("p", { class: "hub-back" }, link("‹ Showcase", {}));
+    const back = ui.el("p", { class: "hub-back" }, link("‹ Explore", {}));
     ui.show(...showcaseTabs(null), back, ...bookCard(q.get("book")));
     return;
   }

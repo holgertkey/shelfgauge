@@ -458,9 +458,19 @@ async fn the_controls_need_an_admin_and_a_hub() {
     let page = lib.get("/folder?path=sf&showcase=saved", None).await;
     assert!(page.body.contains("Saved."));
     assert!(page.body.contains(r#"name="open" value="1" checked>"#));
-    // A sub-folder shows open through its parent, without a form.
+    // A sub-folder shows shown through its parent, without a form; the section and the
+    // box speak of Explore, the reader's name for the catalog.
     let page = lib.get("/folder?path=sf%2Flem", None).await;
-    assert!(page.body.contains("Open through its parent"));
+    assert!(page.body.contains("Shown through its parent"));
+    assert!(
+        page.body
+            .contains(r#"<h2 id="showcase-title">Explore</h2>"#)
+    );
+    assert!(
+        page.body
+            .contains("checked disabled> Show in Explore</label>")
+    );
+    assert!(!page.body.contains("Showcase"));
     assert!(page.body.contains("checked disabled"));
     assert!(!page.body.contains(r#"name="open""#));
     // Unchecked: the box is absent from the form, the mark goes.
