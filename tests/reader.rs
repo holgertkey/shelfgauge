@@ -941,6 +941,10 @@ async fn the_cut_line_is_found_across_the_column() {
         .body
         .replace("\r\n", "\n");
     assert!(reader_css.contains(".turn-line {\n  position: absolute;"));
+    // No cover after a turn back, until a scroll of the reader's own or a turn forward.
+    assert!(reader_js.contains("cutPaused = !forward;\n      coverCut();"));
+    assert!(reader_js.contains("if (cutPaused || !document.documentElement.classList"));
+    assert!(setup_cut.contains("cutPaused = false;\n      hideCut();"));
     // A text replaced since (the hub's reader app) builds the leaf list again.
     assert!(reader_js.contains("!leafCache[0].isConnected"));
 }

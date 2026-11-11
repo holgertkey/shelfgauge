@@ -1151,6 +1151,8 @@
       const at = window.scrollY + delta;
       window.scrollBy({ top: delta, behavior: "instant" });
       lightLine(band[0] + at, band[1] + at);
+      // Turning back, the kept line ends the page: no cover until the reader moves on.
+      cutPaused = !forward;
       coverCut();
     };
     if (reducedMotion.matches || typeof text.animate !== "function") {
@@ -1183,13 +1185,17 @@
   // status line so far that it reads poorly, is covered with the background
   // (`.page-cut`, placed in the document down to the screen bottom, so it stays on that
   // line if a browser toolbar still moves the screen); after a turn that line opens the
-  // next page. Not while scrolling, and not for an image or a table at the edge.
+  // next page. Not while scrolling, not after a turn back (until the reader scrolls or
+  // turns forward), and not for an image or a table at the edge.
   const CUT_IDLE_MS = 150;
   // How deep a line may reach into the status line's fade and still count as whole:
   // a share of the fade's height (the glyph box ends below the baseline, so only the
   // descenders fade that far).
   const FADE_SLACK = 0.25;
   let cutCover = null;
+  // Set by a page turn back, cleared by a turn forward or a scroll of the reader's own:
+  // reading back, a cover only gets in the way.
+  let cutPaused = false;
 
   // The height of the fade above the status line, over the bottom of the text (0
   // without the status line).
@@ -1225,7 +1231,7 @@
   }
 
   function coverCut() {
-    if (!document.documentElement.classList.contains("reading-focus")) {
+    if (cutPaused || !document.documentElement.classList.contains("reading-focus")) {
       hideCut();
       return;
     }
@@ -1272,6 +1278,7 @@
       if (Date.now() < pageTurnUntil) {
         return;
       }
+      cutPaused = false;
       hideCut();
       // Always armed: `scrollend` only comes sooner, and not after every scroll (one
       // made by a script, or where the browser lacks it).
