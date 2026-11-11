@@ -2378,6 +2378,8 @@ async fn the_reader_shell_tells_nothing_about_publications() {
         "{csp}"
     );
     assert!(csp.contains("img-src 'self' blob:"), "{csp}");
+    // The reading fonts come from the hub itself.
+    assert!(csp.contains("font-src 'self'"), "{csp}");
     assert!(!csp.contains("unsafe-inline"), "{csp}");
     assert_eq!(existing.headers[header::REFERRER_POLICY], "no-referrer");
     assert_eq!(existing.headers[header::X_FRAME_OPTIONS], "DENY");
@@ -2572,6 +2574,36 @@ async fn the_service_worker_and_manifest_make_the_reader_installable() {
         assert!(urls.len() > 10, "{urls:?}");
         for url in &urls {
             assert_eq!(hub.get(url, None).await.status, StatusCode::OK, "{url}");
+        }
+
+        // The reading fonts are no part of the shell (installing the app would download
+        // them all): the worker keeps each once drawn, under its current version.
+        assert!(!files.contains("fonts/"), "{files}");
+        let css = String::from_utf8(
+            hub.get(&format!("{prefix}/assets/reader.css"), None)
+                .await
+                .body,
+        )
+        .unwrap();
+        let fonts: Vec<&str> = css
+            .split("src: url(\"")
+            .skip(1)
+            .map(|rest| rest.split('"').next().unwrap())
+            .collect();
+        assert_eq!(fonts.len(), 24, "{fonts:?}");
+        for font in fonts {
+            let file = hub.get(&format!("{prefix}/assets/{font}"), None).await;
+            assert_eq!(file.status, StatusCode::OK, "{font}");
+            let kind = file.headers[header::CONTENT_TYPE].to_str().unwrap();
+            assert!(kind.starts_with("font/"), "{font}: {kind}");
+            let etag = file.headers[header::ETAG]
+                .to_str()
+                .unwrap()
+                .trim_matches('"');
+            assert!(
+                script.contains(&format!("[`${{BASE}}/assets/{font}`, \"{etag}\"],")),
+                "{font} in FONT_VERSIONS"
+            );
         }
 
         let manifest = hub

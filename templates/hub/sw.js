@@ -6,6 +6,10 @@
 //   cache (every /r/<id> is the same page), so pages and files are of one version; a
 //   new version takes over only when the shelf page asks (no open book switches);
 // - the app's files: precached per version, served from the cache;
+// - the reading fonts (`/assets/fonts/`): not precached (installing the app would
+//   download them all); a font file is kept in FONTS once the reader draws it, and
+//   served from there, across app versions; a copy of a version this worker does not
+//   list is dropped when it takes over;
 // - publication blobs: parts and images never change (a changed book is a new
 //   publication), so they are served from the cache once fetched; the manifest comes
 //   from the network when it answers in time (the hub counts its fetches as openings),
@@ -27,6 +31,13 @@ const SHELL = `shelfgauge-shell-${VERSION}`;
 const BLOBS = "shelfgauge-blobs";
 // A book file shared to the app, until the page takes it (hub.js).
 const SHARED = "shelfgauge-shared";
+// The reading fonts drawn so far, each under its path and version.
+const FONTS = "shelfgauge-fonts";
+const FONT_VERSIONS = new Map([
+{%- for (file, version) in fonts %}
+  [`${BASE}/assets/{{ file }}`, "{{ version }}"],
+{%- endfor %}
+]);
 // The reading view is the same page for every publication: cached once, under this.
 const READER = `${BASE}/r/00000000000000000000000000000000`;
 const HOME = `${BASE}/`;
@@ -58,6 +69,13 @@ self.addEventListener("activate", (event) => {
         await caches.delete(name);
       }
     }
+    const fonts = await caches.open(FONTS);
+    for (const old of await fonts.keys()) {
+      const url = new URL(old.url);
+      if (FONT_VERSIONS.get(url.pathname) !== url.searchParams.get("v")) {
+        await fonts.delete(old);
+      }
+    }
     await self.clients.claim();
   })());
 });
@@ -84,6 +102,8 @@ self.addEventListener("fetch", (event) => {
       const shell = path.startsWith("/r/") ? READER : HOME;
       event.respondWith((async () => (await caches.match(shell, { cacheName: SHELL })) || fetch(request))());
     }
+  } else if (path.startsWith("/assets/fonts/") && FONT_VERSIONS.has(url.pathname)) {
+    event.respondWith(font(request, url));
   } else if (path.startsWith("/assets/")) {
     event.respondWith((async () => (await caches.match(url.pathname, { cacheName: SHELL })) || fetch(request))());
   } else if (BLOB.test(path)) {
@@ -98,6 +118,21 @@ async function keep(cache, key, response) {
   } catch (e) {
     // Not kept.
   }
+}
+
+/** A reading font: the kept copy of this version, else the network's (then kept). */
+async function font(request, url) {
+  const cache = await caches.open(FONTS);
+  const key = `${url.pathname}?v=${FONT_VERSIONS.get(url.pathname)}`;
+  const cached = await cache.match(key);
+  if (cached) {
+    return cached;
+  }
+  const response = await fetch(request);
+  if (response.ok && (response.headers.get("Content-Type") || "").startsWith("font/")) {
+    await keep(cache, key, response.clone());
+  }
+  return response;
 }
 
 /** The network's answer, or null after `ms` or on a network error. */

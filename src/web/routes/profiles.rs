@@ -483,12 +483,25 @@ const THEMES: &[(&str, &str)] = &[
     ("black", "Black"),
 ];
 
+/// The name of a reader font (a value of the `font` setting) as the panel shows it.
+fn font_label(value: &str) -> &str {
+    match value {
+        "literata" => "Literata",
+        "pt-serif" => "PT Serif",
+        "merriweather" => "Merriweather",
+        "lora" => "Lora",
+        "inter" => "Inter",
+        "jetbrains-mono" => "JetBrains Mono",
+        _ => value,
+    }
+}
+
 /// The reader settings that differ from the defaults, e.g. "serif font, text size 5".
 fn reader_summary(settings: &ProfileSettings) -> String {
     let parts: Vec<String> = settings
         .iter()
         .filter_map(|(name, value)| match name {
-            "font" => Some(format!("{value} font")),
+            "font" => Some(format!("{} font", font_label(value))),
             "size" => Some(format!("text size {value}")),
             "leading" => Some(format!("{value} line spacing")),
             "width" => Some(format!("{value} text width")),
@@ -1553,4 +1566,17 @@ pub(crate) async fn confirm_delete(
         exported: query.exported,
         mismatch: query.mismatch.is_some(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_summary_names_fonts_as_the_panel_does() {
+        let settings = ProfileSettings::parse(r#"{"font":"pt-serif","size":"5"}"#);
+        assert_eq!(reader_summary(&settings), "PT Serif font, text size 5");
+        let settings = ProfileSettings::parse(r#"{"font":"serif"}"#);
+        assert_eq!(reader_summary(&settings), "serif font");
+    }
 }

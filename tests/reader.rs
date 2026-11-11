@@ -668,7 +668,20 @@ async fn long_parts_are_limited() {
 /// The reader settings: name, allowed values (default first) and the `data-` attribute
 /// that theme.js sets on `<html>`.
 const READER_SETTINGS: [(&str, &[&str], &str); 4] = [
-    ("font", &["sans", "serif"], "rfont"),
+    (
+        "font",
+        &[
+            "sans",
+            "serif",
+            "literata",
+            "pt-serif",
+            "merriweather",
+            "lora",
+            "inter",
+            "jetbrains-mono",
+        ],
+        "rfont",
+    ),
     ("leading", &["normal", "tight", "loose"], "rleading"),
     ("width", &["medium", "narrow", "wide", "full"], "rwidth"),
     ("align", &["left", "justify"], "ralign"),
@@ -1259,4 +1272,78 @@ async fn epub_books_are_read_and_protected_ones_say_why_not() {
         .get(&format!("/book/{locked}/image/OEBPS%2Fimg%2Fpic.png"))
         .await;
     assert_eq!(reply.status, StatusCode::FORBIDDEN);
+}
+
+/// The `url()`s of the bundled reading fonts in reader.css (relative to `/assets/`).
+fn font_urls(reader_css: &str) -> Vec<String> {
+    reader_css
+        .split("src: url(\"")
+        .skip(1)
+        .map(|rest| rest.split('"').next().unwrap().to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn reading_fonts_are_served_with_their_licenses() {
+    let lib = TestLibrary::new();
+    let server = lib.server("/", whole());
+    // Windows checkouts may embed CRLF line endings.
+    let reader_css = server
+        .ok("/assets/reader.css")
+        .await
+        .body
+        .replace("\r\n", "\n");
+    let urls = font_urls(&reader_css);
+    // Six fonts with four faces each.
+    assert_eq!(urls.len(), 24, "{urls:?}");
+    let mut folders = std::collections::BTreeSet::new();
+    for url in &urls {
+        assert!(url.starts_with("fonts/"), "{url}");
+        let font = server.ok(&format!("/assets/{url}")).await;
+        assert!(
+            font.header(header::CONTENT_TYPE).starts_with("font/"),
+            "{url}"
+        );
+        assert!(font.bytes.len() > 10_000, "{url}");
+        folders.insert(url.rsplit_once('/').unwrap().0.to_owned());
+    }
+    assert_eq!(folders.len(), 6, "{folders:?}");
+    // Every font comes with its licence and copyright notice (SIL OFL 1.1).
+    for folder in &folders {
+        let license = server.ok(&format!("/assets/{folder}/OFL.txt")).await;
+        assert!(license.body.contains("SIL Open Font License"), "{folder}");
+        assert!(license.body.contains("Copyright"), "{folder}");
+        let name = folder.strip_prefix("fonts/").unwrap();
+        // Each font has its own family name, a preset and a name in the panel.
+        assert!(reader_css.contains(&format!("font-family: \"sg-{name}\";")));
+        assert!(
+            reader_css.contains(&format!(
+                ":root[data-rfont=\"{name}\"] {{\n  --reader-font: \"sg-{name}\", var(--"
+            )),
+            "{name}"
+        );
+        assert!(reader_css.contains(&format!(".settings-form .font-{name} {{")));
+    }
+    let sources = server.ok("/assets/fonts/SOURCES.txt").await.body;
+    for folder in &folders {
+        let name = folder.strip_prefix("fonts/").unwrap();
+        assert!(
+            sources.contains(&format!("\n{name}/ ")),
+            "{name} in SOURCES.txt"
+        );
+    }
+    // A system font of the same name never stands in for a bundled one, and the
+    // system stacks never fetch one.
+    assert!(!reader_css.contains("font-family: \"PT Serif\""));
+    // The panel draws each name in its font; a font change waits for the font.
+    let id = lib.id_of("full.fb2");
+    let read = server.ok(&format!("/book/{id}/read")).await;
+    assert!(read.body.contains("<fieldset class=\"setting fonts\">"));
+    let reader_js = server.ok("/assets/reader.js").await.body;
+    for part in [
+        "document.fonts.load(`400 1em \"${family}\"`)",
+        "document.fonts?.addEventListener(\"loadingdone\"",
+    ] {
+        assert!(reader_js.contains(part), "{part} missing in reader.js");
+    }
 }

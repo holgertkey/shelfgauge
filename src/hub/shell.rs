@@ -40,6 +40,40 @@ struct HubAssets;
 #[exclude = "hub/*"]
 struct SharedAssets;
 
+/// The reading fonts (`assets/fonts/`, served under `/assets/fonts/`): not part of the
+/// shell, so installing the app never downloads them; the Service Worker keeps a font
+/// file once the reader has drawn it (`templates/hub/sw.js`).
+#[derive(Embed)]
+#[folder = "assets/fonts/"]
+struct FontAssets;
+
+/// A file under `/assets/`: the app's own, the library's shared one or a font.
+fn asset_file(name: &str) -> Option<rust_embed::EmbeddedFile> {
+    HubAssets::get(name)
+        .or_else(|| SharedAssets::get(name))
+        .or_else(|| name.strip_prefix("fonts/").and_then(FontAssets::get))
+}
+
+/// The font files as `(path under /assets/, version)`, sorted: the Service Worker
+/// keeps these versions and drops other copies.
+fn font_files() -> &'static [(String, String)] {
+    static FONTS: std::sync::OnceLock<Vec<(String, String)>> = std::sync::OnceLock::new();
+    FONTS.get_or_init(|| {
+        let mut fonts: Vec<(String, String)> = FontAssets::iter()
+            .filter(|name| name.ends_with(".woff2") || name.ends_with(".ttf"))
+            .map(|name| {
+                let file = FontAssets::get(&name).expect("listed files exist");
+                (
+                    format!("fonts/{name}"),
+                    hex_prefix(&file.metadata.sha256_hash()),
+                )
+            })
+            .collect();
+        fonts.sort();
+        fonts
+    })
+}
+
 /// `/` and `/pair`.
 #[derive(Template)]
 #[template(path = "hub/home.html")]
@@ -156,6 +190,7 @@ struct ServiceWorker<'a> {
     base: String,
     version: &'a str,
     files: &'a [String],
+    fonts: &'a [(String, String)],
 }
 
 /// The names of the shell's files, sorted, and their version: 16 hex digits of a
@@ -200,6 +235,7 @@ fn service_worker_text(base: &str) -> String {
         base: base.to_owned(),
         version,
         files,
+        fonts: font_files(),
     }
     .render()
     .expect("the Service Worker renders")
@@ -381,9 +417,7 @@ fn read_page(base: String) -> ReadPage {
 
 /// `GET /assets/{*path}`: a file of the shell, revalidated by its `ETag`.
 async fn asset(Path(name): Path<String>, headers: HeaderMap) -> Result<Response, HubError> {
-    let file = HubAssets::get(&name)
-        .or_else(|| SharedAssets::get(&name))
-        .ok_or(HubError::NotFound)?;
+    let file = asset_file(&name).ok_or(HubError::NotFound)?;
     let etag = format!("\"{}\"", hex_prefix(&file.metadata.sha256_hash()));
     let etag_value = HeaderValue::from_str(&etag).expect("hex is a valid header");
     let cache = (header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));

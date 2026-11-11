@@ -75,7 +75,7 @@ pub const DATABASE_FILE: &str = "hub.sqlite";
 /// WASM from the hub itself, images through `blob:` URLs, no inline code, no framing
 /// (concept §11).
 pub const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; \
-     script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob:; \
+     script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src 'self' blob:; \
      connect-src 'self'; worker-src 'self'; manifest-src 'self'; base-uri 'none'; \
      form-action 'none'; frame-ancestors 'none'";
 

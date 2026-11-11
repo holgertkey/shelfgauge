@@ -177,8 +177,9 @@ WantedBy=multi-user.target
   when focused) to resize the sidebar; double-click restores the default width. The
   width is remembered per browser.
 - Themes: auto (system), light, sepia, mist, stone, dusk, dark, navy, black.
-- While reading, the **Aa** button (top bar) sets the theme, the font (sans or serif,
-  from the fonts installed on your system), the text size, line spacing, column width
+- While reading, the **Aa** button (top bar) sets the theme, the font (sans or serif
+  from the fonts installed on your system, or one of the bundled Literata, PT Serif,
+  Merriweather, Lora, Inter and JetBrains Mono), the text size, line spacing, column width
   and alignment of the book text. They apply at once, keeping your place in the text,
   and are saved in your profile, so they are the same on every device (settings that an
   older version kept in the browser are taken over once); **Defaults** resets them.
@@ -695,7 +696,8 @@ See [CHANGELOG.md](CHANGELOG.md) for the version history.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). The bundled reading fonts (`assets/fonts/`) are under the
+SIL Open Font License 1.1, each with its own `OFL.txt`.
 
 ---
 

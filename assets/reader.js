@@ -878,8 +878,8 @@
     });
   }
 
-  // Late images above the target block shift the layout: scroll to the block again
-  // unless the reader has scrolled meanwhile.
+  // Late images or fonts above the target block shift the layout: scroll to the block
+  // again unless the reader has scrolled meanwhile.
   function setupRescroll() {
     const id = decodeURIComponent(window.location.hash.slice(1));
     const target = BLOCK_ID.test(id) && document.getElementById(id);
@@ -902,6 +902,40 @@
         });
       }
     }
+    // A bundled reading font arrives after the first layout (`font-display: swap`).
+    document.fonts?.addEventListener("loadingdone", () => {
+      if (!moved) {
+        target.scrollIntoView();
+      }
+    });
+  }
+
+  // ---------- Reading fonts ----------
+
+  // How long a font change waits for its font; offline (no copy kept) it applies anyway
+  // with the fallback.
+  const FONT_WAIT_MS = 3000;
+
+  // The bundled font (reader.css: family names `sg-…`) first in a `font-family`, or null.
+  function bundledFamily(fontFamily) {
+    const first = fontFamily.split(",")[0].trim().replace(/^["']|["']$/g, "");
+    return first.startsWith("sg-") ? first : null;
+  }
+
+  // Loads the four faces of a bundled font (`family`): the regular one is awaited (up to
+  // FONT_WAIT_MS), the others come along, so the hub reader keeps them all offline
+  // (a face is fetched only when drawn otherwise). Resolves at once for a system font.
+  function loadFont(family) {
+    if (!family || !document.fonts) {
+      return Promise.resolve();
+    }
+    for (const face of ["italic 400", "700", "italic 700"]) {
+      document.fonts.load(`${face} 1em "${family}"`).catch(() => {});
+    }
+    return Promise.race([
+      document.fonts.load(`400 1em "${family}"`).catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, FONT_WAIT_MS)),
+    ]);
   }
 
   // ---------- Page turns on touch screens ----------
@@ -2143,6 +2177,10 @@
     const defaultSize = Number(settings.OPTIONS.size[0]);
     let closedAt = 0;
     let peekByMouse = false;
+    // Counts font choices (see the form's `change`).
+    let fontChoice = 0;
+    // The chosen bundled font's other faces, for reading offline in the hub.
+    loadFont(bundledFamily(getComputedStyle(root).getPropertyValue("--reader-font")));
 
     const focused = () => root.classList.contains("reading-focus");
     // A phone-sized screen is always in focus mode (theme.js).
@@ -2259,6 +2297,21 @@
           setFocus(input.checked);
         } else if (input.type === "checkbox") {
           update(input.name, input.checked ? "on" : "off");
+        } else if (input.name === "font") {
+          // A bundled font first, so the place is kept against its own line breaks; a
+          // later choice (or Defaults) wins over one still waiting.
+          const choice = ++fontChoice;
+          const label = input.nextElementSibling;
+          const family = label && bundledFamily(getComputedStyle(label).fontFamily);
+          if (!family) {
+            update("font", input.value);
+          } else {
+            loadFont(family).then(() => {
+              if (choice === fontChoice) {
+                update("font", input.value);
+              }
+            });
+          }
         } else if (input.name in settings.OPTIONS) {
           update(input.name, input.value);
         }
@@ -2268,6 +2321,7 @@
         if (step) {
           stepSize(Number(step.dataset.step));
         } else if (event.target.closest(".settings-reset")) {
+          fontChoice += 1;
           keepPlace(() => settings.save({}));
           sync();
           updateStatus();

@@ -10,6 +10,11 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ### Added
 
+- Six reading fonts come with shelfgauge, for the book text: Literata, PT Serif,
+  Merriweather, Lora, Inter and JetBrains Mono (SIL Open Font License 1.1, in
+  `assets/fonts/`), next to the system Sans and Serif. The reading settings show each
+  font's name in that font, in two columns. A font is downloaded only when it is used;
+  the hub reader keeps it on the device for reading offline.
 - Three themes between light and dark: Mist (light gray), Stone (gray, still with
   dark text) and Dusk (graphite, softer than Dark). The theme menu and the theme
   circles in the reading settings go from light to dark: Auto, Light, Sepia, Mist,

@@ -1,0 +1,25 @@
+The reading fonts of shelfgauge's reader (the font setting of the reading settings).
+
+Every font here is licensed under the SIL Open Font License 1.1; each folder holds
+the font's own OFL.txt with its copyright notice. The files are the authors' original
+files, unchanged (not subset, converted or renamed), so the Reserved Font Names
+(Lora, Merriweather, PT Serif) are used as the licence allows.
+
+literata/        Literata 3.103, the static web fonts
+                 https://github.com/googlefonts/literata
+                 fonts/webfonts/ at 0c2761b727a1b3a7cffd313c37f0f5163dfc7a63
+pt-serif/        PT Serif 1.000W (ParaType), the web TrueType fonts
+                 https://github.com/google/fonts
+                 ofl/ptserif/ at 5bb28733cec313b63fbd415b574b5ae35c8aa8b8
+merriweather/    Merriweather 2.200, the static web fonts
+                 https://github.com/SorkinType/Merriweather
+                 fonts/webfonts/ at 4481226b336843648b5b2ee64f75737f262ded15
+lora/            Lora 3.021, the static web fonts
+                 https://github.com/cyrealtype/Lora-Cyrillic
+                 fonts/webfonts/ at 2d53b449b60e185b39f671b44fded83e0910ad30
+inter/           Inter 4.1, web/ of the release archive Inter-4.1.zip
+                 https://github.com/rsms/inter/releases/tag/v4.1
+                 (OFL.txt is the archive's LICENSE.txt)
+jetbrains-mono/  JetBrains Mono 2.305, the static web fonts
+                 https://github.com/JetBrains/JetBrainsMono
+                 fonts/webfonts/ at 19371302b95d218af43299bce79ddbddd0bc364d

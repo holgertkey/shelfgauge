@@ -369,10 +369,234 @@ mark.sg-find.current {
 :root {
   --serif: "PT Serif", Georgia, Cambria, "Noto Serif", "DejaVu Serif", "Liberation Serif",
     "Times New Roman", serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 :root[data-rfont="serif"] {
   --reader-font: var(--serif);
+}
+
+/* The bundled reading fonts (assets/fonts/, SIL OFL 1.1; SOURCES.txt there). Their
+   family names are our own, so a font of the same name on the system never stands in
+   for them and the system stacks never fetch them. Only the chosen font is fetched
+   (reader.js loads its four faces, for reading offline in the hub) and, while the
+   settings panel is open, the regular face of each font for its name there. Each
+   falls back to a system stack for what it lacks (Lora, Merriweather and PT Serif
+   have no Greek). */
+@font-face {
+  font-family: "sg-literata";
+  src: url("fonts/literata/Literata-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "sg-literata";
+  src: url("fonts/literata/Literata-Italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "sg-literata";
+  src: url("fonts/literata/Literata-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "sg-literata";
+  src: url("fonts/literata/Literata-BoldItalic.woff2") format("woff2");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "sg-pt-serif";
+  src: url("fonts/pt-serif/PT_Serif-Web-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "sg-pt-serif";
+  src: url("fonts/pt-serif/PT_Serif-Web-Italic.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "sg-pt-serif";
+  src: url("fonts/pt-serif/PT_Serif-Web-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "sg-pt-serif";
+  src: url("fonts/pt-serif/PT_Serif-Web-BoldItalic.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "sg-merriweather";
+  src: url("fonts/merriweather/Merriweather-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "sg-merriweather";
+  src: url("fonts/merriweather/Merriweather-Italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "sg-merriweather";
+  src: url("fonts/merriweather/Merriweather-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "sg-merriweather";
+  src: url("fonts/merriweather/Merriweather-BoldItalic.woff2") format("woff2");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "sg-lora";
+  src: url("fonts/lora/Lora-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "sg-lora";
+  src: url("fonts/lora/Lora-Italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "sg-lora";
+  src: url("fonts/lora/Lora-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "sg-lora";
+  src: url("fonts/lora/Lora-BoldItalic.woff2") format("woff2");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "sg-inter";
+  src: url("fonts/inter/Inter-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "sg-inter";
+  src: url("fonts/inter/Inter-Italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "sg-inter";
+  src: url("fonts/inter/Inter-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "sg-inter";
+  src: url("fonts/inter/Inter-BoldItalic.woff2") format("woff2");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "sg-jetbrains-mono";
+  src: url("fonts/jetbrains-mono/JetBrainsMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "sg-jetbrains-mono";
+  src: url("fonts/jetbrains-mono/JetBrainsMono-Italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "sg-jetbrains-mono";
+  src: url("fonts/jetbrains-mono/JetBrainsMono-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "sg-jetbrains-mono";
+  src: url("fonts/jetbrains-mono/JetBrainsMono-BoldItalic.woff2") format("woff2");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+:root[data-rfont="literata"] {
+  --reader-font: "sg-literata", var(--serif);
+}
+
+:root[data-rfont="pt-serif"] {
+  --reader-font: "sg-pt-serif", var(--serif);
+}
+
+:root[data-rfont="merriweather"] {
+  --reader-font: "sg-merriweather", var(--serif);
+}
+
+:root[data-rfont="lora"] {
+  --reader-font: "sg-lora", var(--serif);
+}
+
+:root[data-rfont="inter"] {
+  --reader-font: "sg-inter", var(--font);
+}
+
+:root[data-rfont="jetbrains-mono"] {
+  --reader-font: "sg-jetbrains-mono", var(--mono);
 }
 
 /* 14, 16, 17, 18 (default), 20, 22, 24, 28px. */
@@ -879,6 +1103,42 @@ mark.sg-find.current {
 
 .settings-form .font-serif {
   font-family: var(--serif);
+}
+
+.settings-form .font-literata {
+  font-family: "sg-literata", var(--serif);
+}
+
+.settings-form .font-pt-serif {
+  font-family: "sg-pt-serif", var(--serif);
+}
+
+.settings-form .font-merriweather {
+  font-family: "sg-merriweather", var(--serif);
+}
+
+.settings-form .font-lora {
+  font-family: "sg-lora", var(--serif);
+}
+
+.settings-form .font-inter {
+  font-family: "sg-inter", var(--font);
+}
+
+.settings-form .font-jetbrains-mono {
+  font-family: "sg-jetbrains-mono", var(--mono);
+}
+
+/* Eight fonts: two columns, each name drawn in its font. */
+.settings-form .fonts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.settings-form .fonts label span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-form .size button {

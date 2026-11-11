@@ -23,7 +23,7 @@ const shelfgaugeReader = (() => {
   // The settings of the hub's reader app (`data-local-settings`).
   const LOCAL_KEY = "shelfgauge-hub-reader";
   const OPTIONS = {
-    font: ["sans", "serif"],
+    font: ["sans", "serif", "literata", "pt-serif", "merriweather", "lora", "inter", "jetbrains-mono"],
     size: ["3", "0", "1", "2", "4", "5", "6", "7"],
     leading: ["normal", "tight", "loose"],
     width: ["medium", "narrow", "wide", "full"],

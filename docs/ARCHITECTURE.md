@@ -218,7 +218,9 @@ Key design points to keep in mind when implementing:
 - **UI is server-rendered** (askama templates, hand-written CSS/JS, assets embedded in the
   binary; no SPA, no Node). Layout is inspired by mdBook: collapsible left sidebar + main
   area + top bar + color themes. **Nothing is copied from mdBook** (MPL-2.0) — only the
-  idea; no bundled third-party fonts/icon fonts.
+  idea; no icon fonts. The only bundled third-party files are the reading fonts
+  (`assets/fonts/`, SIL OFL 1.1, the authors' files unchanged, each with its `OFL.txt`;
+  `SOURCES.txt` there names their origin); the UI itself uses system font stacks.
   - *Library mode*: sidebar groups books by author or by folder (switchable; a `.zip` is a
     virtual folder). Sidebar is paginated/lazy, never rendered in full: each level is a
     server-rendered HTML fragment (`/sidebar/...`) fetched when a node is expanded, and
@@ -401,7 +403,13 @@ in the core crate), `src/web/routes/annotations.rs`, `assets/reader.js`/`reader.
     `/annotation/{id}/delete` (JSON for the reader, forms with a local `back` URL and
     303 for the card), `/book/{id}/position` (JSON); request bodies are limited by
     `web::write_body_limit` (derived from `max_note_length`).
-- Reader settings (font family from system stacks, size, line height, column width,
+- Reader settings (font family: the system sans or serif stack, or one of six bundled
+  reading fonts — Literata, PT Serif, Merriweather, Lora, Inter, JetBrains Mono — under
+  family names of our own (`sg-…`) that fall back to a system stack; only the chosen
+  font's four faces are fetched (and each font's regular face while the panel is open,
+  for its name there), a font change waits up to 3 s for its font before keeping the
+  place, a late font re-scrolls to the target block as late images do, and the hub's Service Worker keeps a drawn font file outside the shell's
+  precache, under its version; size, line height, column width,
   alignment, how long the screen stays on: the Screen Wake Lock API holds it for
   5/10/30 minutes, 10 by default, after the last page turn, scroll, tap or key, and is
   taken again when the page is shown; without the API, over plain HTTP, the setting

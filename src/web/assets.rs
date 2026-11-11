@@ -39,6 +39,7 @@ pub(crate) fn content_type(name: &str) -> &'static str {
         Some("png") => "image/png",
         Some("ico") => "image/x-icon",
         Some("woff2") => "font/woff2",
+        Some("ttf") => "font/ttf",
         Some("wasm") => "application/wasm",
         Some("txt") => "text/plain; charset=utf-8",
         _ => "application/octet-stream",
