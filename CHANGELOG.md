@@ -44,6 +44,9 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ### Changed
 
+- A book marked as finished shows a double check mark (in the accent color) instead
+  of the single one, on the book's page in the library and on the hub reader's
+  Bookshelf.
 - Line spacing and Width in the reading settings are set with − and + like the text
   size, showing the value, with eight steps each: line spacing 1.2, 1.3, 1.4, 1.5,
   1.65, 1.75, 1.9, 2; width 448 to 960 pixels, then Full. The line spacing and width

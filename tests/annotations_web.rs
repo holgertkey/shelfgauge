@@ -1128,6 +1128,8 @@ async fn currently_reading_list() {
     );
     let card = server.ok(&format!("/book/{}", ids[1])).await;
     assert!(card.contains("aria-pressed=\"true\""), "{card}");
+    // A finished book shows the double check mark.
+    assert!(card.contains("<use href=\"#i-done-all\">"), "{card}");
     assert!(card.contains("name=\"finished\" value=\"0\""), "{card}");
     assert!(card.contains("read 1"), "{card}");
     // A form without the field (a page from before the toggle) marks too.
@@ -1149,6 +1151,7 @@ async fn currently_reading_list() {
     assert!(server.ok("/").await.contains(">Book b</a>"));
     let card = server.ok(&format!("/book/{}", ids[1])).await;
     assert!(card.contains("aria-pressed=\"false\""), "{card}");
+    assert!(!card.contains("#i-done-all"), "{card}");
     // Reading a marked book keeps the mark.
     server
         .form(&format!("/book/{}/finished", ids[1]), &[("finished", "1")])

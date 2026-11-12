@@ -1027,7 +1027,8 @@ kbd {
   margin-left: 0;
 }
 
-/* The finished mark: a check mark, in the accent color while pressed. */
+/* The finished mark: a check mark, a double one in the accent color while pressed
+   (the icon is i-done-all then). */
 .finished-toggle {
   border-radius: 4px;
   cursor: pointer;

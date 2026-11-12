@@ -224,7 +224,8 @@ function bookActions(item, reading, changed) {
       title,
       "aria-label": title,
     });
-    toggle.append(icon("i-done"));
+    // A finished book shows a double check mark (in the accent color, style.css).
+    toggle.append(icon(finished ? "i-done-all" : "i-done"));
     toggle.addEventListener("click", async () => {
       toggle.disabled = true;
       await setFinished(item, !finished);
