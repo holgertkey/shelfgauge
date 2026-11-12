@@ -7,7 +7,7 @@ default-members = [".", "crates/*"]
 # requirement on `shelfgauge-core` below as well (publishing needs it, and Cargo refuses
 # to build while the two differ); the `+BUILD` counter is changed only here.
 [workspace.package]
-version = "0.24.0+011"
+version = "0.24.0+012"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/holgertkey/shelfgauge"
@@ -59,7 +59,7 @@ serde_ignored = "0.1.14"
 tempfile = "3.27.0"
 thiserror.workspace = true
 toml = "1.1.8"
-tokio = { version = "1.53.2", features = ["rt-multi-thread", "net", "signal", "macros", "time"] }
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "net", "signal", "macros", "time", "sync"] }
 tracing.workspace = true
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 walkdir = "2.5.0"
@@ -93,6 +93,24 @@ tower = { version = "0.5.3", features = ["util"] }
 opt-level = 3
 
 [profile.dev.package.blake2]
+opt-level = 3
+
+# Images are decoded, scaled and encoded at every publishing (thumbnails and smaller
+# images, Phase 31.7): unoptimized, a 3000×2000 photo takes seconds in tests and debug
+# builds (staging).
+[profile.dev.package.image]
+opt-level = 3
+
+[profile.dev.package.zune-jpeg]
+opt-level = 3
+
+[profile.dev.package.png]
+opt-level = 3
+
+[profile.dev.package.fdeflate]
+opt-level = 3
+
+[profile.dev.package.miniz_oxide]
 opt-level = 3
 
 # Smaller binary at the cost of a longer build. Panics must keep unwinding: request

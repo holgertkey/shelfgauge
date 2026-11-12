@@ -1104,8 +1104,59 @@ function goneFromHub() {
   readerMessage("This book is no longer on the hub", "Its copy on the hub is gone: it was not opened for a long time, or the library deleted it. Ask the library to send it again.");
 }
 
-// How often the reading view looks for a book asked for again.
+// The pause before the reading view looks again for a book asked for when the hub
+// answered at once with nothing new (an older hub, its cap on held calls) or could not
+// be reached; else it holds a pull open (`store.awaitChange`).
 const REQUEST_POLL_MS = 15000;
+
+/** Resolves once the page is visible. */
+function visible() {
+  return new Promise((resolve) => {
+    if (!document.hidden) {
+      resolve();
+      return;
+    }
+    const shown = () => {
+      if (!document.hidden) {
+        document.removeEventListener("visibilitychange", shown);
+        resolve();
+      }
+    };
+    document.addEventListener("visibilitychange", shown);
+  });
+}
+
+/**
+ * Waits for account `p` to change on the hub while the page is visible: a held pull
+ * (Phase 31.7), let go of when the page is hidden; REQUEST_POLL_MS when the hub
+ * answers at once or is out of reach. Throws `store.Unpaired`.
+ */
+async function waitForChange(p) {
+  await visible();
+  const controller = new AbortController();
+  const hidden = () => {
+    if (document.hidden) {
+      controller.abort();
+    }
+  };
+  document.addEventListener("visibilitychange", hidden);
+  try {
+    if ((await store.awaitChange(p, controller.signal)) === "quick") {
+      await after(REQUEST_POLL_MS);
+    }
+  } catch (e) {
+    if (e instanceof store.Unpaired) {
+      throw e;
+    }
+    if (controller.signal.aborted) {
+      await visible();
+    } else {
+      await after(REQUEST_POLL_MS);
+    }
+  } finally {
+    document.removeEventListener("visibilitychange", hidden);
+  }
+}
 
 /** How many days this hub keeps a book after it was last opened (0: always), or null. */
 async function expiryDays() {
@@ -1118,8 +1169,8 @@ async function expiryDays() {
  * The reading view of shelf item `item` of account `p` whose copy on the hub is gone
  * and not kept here (Phase 31.6: the hub keeps books only for a while): asks the
  * library for it with a `book_request` (as the Showcase's Get this book; the library
- * sends a book on the member's own shelf even from a closed folder) and waits,
- * looking every REQUEST_POLL_MS; the book opens once its shelf item names a new
+ * sends a book on the member's own shelf even from a closed folder) and waits for
+ * the account to change (`waitForChange`); the book opens once its shelf item names a new
  * publication. A refusal, or the book leaving the shelf, ends the wait. A book the
  * hub's operator took down (`410`) is not asked for.
  */
@@ -1204,7 +1255,7 @@ async function askLibrary(p, item) {
   };
   draw();
   while (await look()) {
-    await after(REQUEST_POLL_MS);
+    await waitForChange(p);
   }
 }
 
@@ -1394,11 +1445,20 @@ class Book {
     return this.images.get(imageId);
   }
 
-  /** Fills in the images of `root` (rendered with ids instead of URLs). */
+  /**
+   * Fills in the images of `root` (rendered with ids instead of URLs). An image the
+   * publication does not carry (sent without images, `[hub] images = "none"`) shows
+   * as a small placeholder with its alt text.
+   */
   fillImages(root) {
     for (const img of root.querySelectorAll("img[data-image]")) {
       const imageId = img.dataset.image;
       img.removeAttribute("data-image");
+      if (!this.summary.images.some((i) => i.id === imageId)) {
+        const alt = (img.getAttribute("alt") || "").trim();
+        img.replaceWith(el("span", { class: "image-missing" }, alt || "Image"));
+        continue;
+      }
       this.image(imageId).then((url) => {
         if (url) {
           img.src = url;

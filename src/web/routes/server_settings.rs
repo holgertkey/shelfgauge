@@ -53,6 +53,8 @@ struct ServerPage {
     instance_name: String,
     sync_interval: u32,
     show_online: bool,
+    /// `[hub] images`: `reduced`, `original` or `none`.
+    images: &'static str,
     handle: Option<String>,
     action: String,
     restart_action: String,
@@ -175,6 +177,7 @@ async fn page_response(
         instance_name: config.hub.instance_name.clone(),
         sync_interval: config.hub.sync_interval_minutes,
         show_online: config.hub.show_online,
+        images: config.hub.images.as_str(),
         handle: library.map(|l| l.handle),
         action: urls.settings_action("server"),
         restart_action: urls.settings_action("restart"),
@@ -235,6 +238,8 @@ pub(crate) struct ServerForm {
     #[serde(default)]
     show_online: Option<String>,
     #[serde(default)]
+    images: String,
+    #[serde(default)]
     handle: String,
 }
 
@@ -284,7 +289,7 @@ pub(crate) async fn save(
             };
             let token = library.token.clone();
             let sent = handle.clone();
-            match super::hub::call(library.hub_url.clone(), move |c| {
+            match super::hub::call(&state, library.hub_url.clone(), move |c| {
                 c.set_handle(&token, &sent)
             })
             .await?
@@ -368,6 +373,11 @@ async fn save_config(
     new.hub.instance_name = form.instance_name.trim().to_owned();
     new.hub.sync_interval_minutes = sync;
     new.hub.show_online = form.show_online.is_some();
+    new.hub.images = match form.images.as_str() {
+        "original" => crate::config::ImageMode::Original,
+        "none" => crate::config::ImageMode::None,
+        _ => crate::config::ImageMode::Reduced,
+    };
     // Normalized as the program reads them (the hub's address in its form), so the
     // file holds what is used and a save of the same values changes nothing.
     if let Err(e) = new.validate() {

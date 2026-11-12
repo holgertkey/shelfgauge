@@ -9,7 +9,7 @@
 //! its accounts in `sync` by naming it in the [`ACCOUNT_HEADER`]. Request bodies are
 //! limited per route.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::Json;
 use axum::Router;
@@ -30,6 +30,7 @@ use sha2::{Digest, Sha256};
 
 use super::address::{normalize_label, parse_address};
 use super::config::{MIN_PASSWORD_ITERATIONS, MIN_PASSWORD_MEMORY_KIB, Registration};
+use super::held::{Topic, WAIT_MAX};
 use super::limits::{LoginKey, client_key};
 use super::store::{
     self, Auth, DeviceAuth, DeviceInfo, Kdf, NewDevice, Password, RecordChange, Redeem, Role,
@@ -37,6 +38,7 @@ use super::store::{
 use super::{AccountId, HubError, HubState, Secret};
 use crate::publication::format::{BlobPath, Envelope, PublicationId, SUPPORTED_VERSIONS};
 use crate::web::security::peer_addr;
+use crate::web::trace::HeldFor;
 use shelfgauge_core::catalog::{self, CatalogPath};
 
 /// The body limit of the small JSON routes.
@@ -186,20 +188,36 @@ async fn require_token(State(state): State<HubState>, mut req: Request, next: Ne
     };
     let span = tracing::Span::current();
     span.record("library", auth.library());
-    // Device ids are positive; a library's token takes the negative of its id.
-    let bucket = match auth {
-        Auth::Device(device) => {
-            span.record("account", device.account);
-            device.device
-        }
-        Auth::Library(library) => -library,
-    };
-    if let Err(wait) = state.0.devices.take(bucket, Instant::now()) {
+    if let Auth::Device(device) = auth {
+        span.record("account", device.account);
+    }
+    if let Err(wait) = state.0.devices.take(bucket(&auth), Instant::now()) {
         tracing::debug!("rate limited a token");
         return HubError::RateLimited(wait).into_response();
     }
     req.extensions_mut().insert(auth);
     next.run(req).await
+}
+
+/// The rate-limit bucket of a token, also the key of its held calls: device ids are
+/// positive, a library's token takes the negative of its id.
+fn bucket(auth: &Auth) -> i64 {
+    match auth {
+        Auth::Device(device) => device.device,
+        Auth::Library(library) => -library,
+    }
+}
+
+/// The seconds a call asks to be held (`wait`), at most [`WAIT_MAX`].
+fn held_secs(wait: Option<u32>) -> u32 {
+    wait.unwrap_or(0).min(WAIT_MAX)
+}
+
+/// `response` marked as held for `held` (not logged as a slow request).
+fn held_response(body: serde_json::Value, held: Duration) -> Response {
+    let mut response = Json(body).into_response();
+    response.extensions_mut().insert(HeldFor(held));
+    response
 }
 
 /// The device of a request that only a signed-in device may make.
@@ -368,6 +386,7 @@ async fn info(State(state): State<HubState>) -> Result<Json<serde_json::Value>, 
         "catalog_formats": catalog::CATALOG_SUPPORTED_VERSIONS,
         "registration": config.libraries.registration.as_str(),
         "accepting": accepting,
+        "wait_max": WAIT_MAX,
         "operator": {
             "name": config.operator.name,
             "contact": config.operator.contact,
@@ -1373,6 +1392,9 @@ async fn delete_publication(
 struct PullQuery {
     since: Option<i64>,
     limit: Option<u32>,
+    /// Hold the answer up to this many seconds (at most [`WAIT_MAX`]) until the
+    /// account changes after `since`.
+    wait: Option<u32>,
 }
 
 /// A record as sent to clients.
@@ -1510,47 +1532,106 @@ async fn delete_catalog_blob(
 struct PendingQuery {
     /// `1`: the library lets its members see that its computer is online now.
     online: Option<String>,
+    /// Hold the answer up to this many seconds (at most [`WAIT_MAX`]) while the
+    /// answer's `mark` is still `seen`.
+    wait: Option<u32>,
+    /// The `mark` of the library's last answer.
+    seen: Option<String>,
 }
 
-/// `GET /api/library/pending?online=1`: per account of the library holding request
-/// records (`book_request`, `cover_request`), the highest sequence number among them,
-/// as `{"accounts": [{"id", "seq"}]}`: the library's cheap check every 30 s, after
-/// which it syncs the accounts whose number grew (see [`store::pending_requests`]).
+/// The `mark` of a pending answer: the first 16 bytes of the SHA-256 of its
+/// `(id, seq)` list, as hex. It changes with every request record pushed or answered.
+fn pending_mark(pending: &[(AccountId, i64)]) -> String {
+    let mut hash = Sha256::new();
+    for (id, seq) in pending {
+        hash.update(id.as_bytes());
+        hash.update(seq.to_le_bytes());
+    }
+    hash.finalize()[..16]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// `GET /api/library/pending?online=1&wait=25&seen=<mark>`: per account of the
+/// library holding request records (`book_request`, `cover_request`), the highest
+/// sequence number among them, as `{"accounts": [{"id", "seq"}], "mark"}`: the
+/// library's check, after which it syncs the accounts whose number grew (see
+/// [`store::pending_requests`]). With `wait` and `seen` the hub holds the answer
+/// while its `mark` is still `seen`, until a device of the library pushes a request
+/// record or `wait` seconds pass; without them it answers at once.
 /// With `online=1` the hub notes the time (in memory, to the minute) for the
-/// library's devices (`library_online_at` in `GET /api/account`); without it, it
-/// forgets it. Only the library's token.
+/// library's devices (`library_online_at` in `GET /api/account`), also while the call
+/// is held; without it, it forgets it. Only the library's token.
 async fn pending(
     State(state): State<HubState>,
     Extension(auth): Extension<Auth>,
     query: Result<Query<PendingQuery>, QueryRejection>,
-) -> Result<Json<serde_json::Value>, HubError> {
+) -> Result<Response, HubError> {
     let library = library_only(auth)?;
     let Query(query) = query.map_err(|_| HubError::BadRequest("invalid query"))?;
-    state.set_online(library, query.online.as_deref() == Some("1"));
-    let pending = state
-        .db(move |conn| store::pending_requests(conn, library))
-        .await?;
+    let online = query.online.as_deref() == Some("1");
+    state.set_online(library, online);
+    let wait = held_secs(query.wait);
+    // Taken before the read, so a request pushed after it wakes the call.
+    let mut slot = (wait > 0 && query.seen.is_some())
+        .then(|| state.0.held.hold(bucket(&auth), Topic::Requests(library)))
+        .flatten();
+    let read = || state.db(move |conn| store::pending_requests(conn, library));
+    let mut pending = read().await?;
+    let mut mark = pending_mark(&pending);
+    let mut held = Duration::ZERO;
+    if let Some(slot) = slot.as_mut()
+        && query.seen.as_deref() == Some(mark.as_str())
+    {
+        let started = Instant::now();
+        slot.wait(Duration::from_secs(wait.into())).await;
+        held = started.elapsed();
+        pending = read().await?;
+        mark = pending_mark(&pending);
+        state.set_online(library, online);
+    }
+    drop(slot);
     let accounts: Vec<_> = pending
         .into_iter()
         .map(|(id, seq)| json!({ "id": id.to_string(), "seq": seq }))
         .collect();
-    Ok(Json(json!({ "accounts": accounts })))
+    Ok(held_response(
+        json!({ "accounts": accounts, "mark": mark }),
+        held,
+    ))
 }
 
-/// `GET /api/sync?since=N&limit=M`: the account's records changed after `since`, in
-/// sequence order. `seq` is the cursor for the next pull: the last record's when
-/// `more` is true, else the account's current sequence number. A device also gets
-/// the account's last password change (`password_changed`).
+/// `GET /api/sync?since=N&limit=M&wait=S`: the account's records changed after
+/// `since`, in sequence order. `seq` is the cursor for the next pull: the last
+/// record's when `more` is true, else the account's current sequence number. A device
+/// also gets the account's last password change (`password_changed`). With `wait`,
+/// an account without changes after `since` holds the answer until a push to it or
+/// `wait` seconds pass.
 async fn pull(
     State(state): State<HubState>,
     Extension(auth): Extension<Auth>,
     headers: HeaderMap,
     query: Result<Query<PullQuery>, QueryRejection>,
-) -> Result<Json<serde_json::Value>, HubError> {
+) -> Result<Response, HubError> {
     let Query(query) = query.map_err(|_| HubError::BadRequest("invalid query"))?;
     let account = sync_account(&state, auth, &headers).await?;
     let since = query.since.unwrap_or(0).max(0);
     let limit = query.limit.unwrap_or(SYNC_PAGE).clamp(1, SYNC_PAGE_MAX);
+    let wait = held_secs(query.wait);
+    let mut held = Duration::ZERO;
+    if wait > 0
+        && let Some(mut slot) = state.0.held.hold(bucket(&auth), Topic::Account(account))
+    {
+        let current = state
+            .db(move |conn| store::current_seq(conn, account))
+            .await?;
+        if current <= since {
+            let started = Instant::now();
+            slot.wait(Duration::from_secs(wait.into())).await;
+            held = started.elapsed();
+        }
+    }
     let (records, more, current, changed) = state
         .db(move |conn| {
             let (records, more) = store::pull_records(conn, account, since, limit)?;
@@ -1584,7 +1665,7 @@ async fn pull(
             "device": changed.device,
         });
     }
-    Ok(Json(body))
+    Ok(held_response(body, held))
 }
 
 /// The body of `POST /api/sync`.
@@ -1648,9 +1729,17 @@ async fn push(
     let total = state.config().limits.max_total_bytes;
     let now = state.now();
     let count = changes.len();
+    // A member asking: wakes the library's held check (its own answers need not).
+    let asks = matches!(auth, Auth::Device(_))
+        && (changes.iter()).any(|c| store::REQUEST_KINDS.contains(&c.kind.as_str()));
     let seqs = state
         .db(move |conn| store::push_records(conn, library, account, &changes, &quotas, total, now))
         .await?;
+    // After the commit: a woken call reads the change.
+    state.0.held.signal(Topic::Account(account));
+    if asks {
+        state.0.held.signal(Topic::Requests(library));
+    }
     tracing::debug!(account, count, "records pushed");
     let seq = seqs.last().copied();
     Ok(Json(json!({ "seqs": seqs, "seq": seq })))

@@ -159,15 +159,7 @@ pub fn done(conn: &Connection, request: &Pending) -> Result<(), StorageError> {
 pub fn thumbnail(data: &[u8]) -> Option<Vec<u8>> {
     use image::codecs::jpeg::JpegEncoder;
     use image::imageops::FilterType;
-    let mut reader = image::ImageReader::new(std::io::Cursor::new(data))
-        .with_guessed_format()
-        .ok()?;
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(8192);
-    limits.max_image_height = Some(8192);
-    limits.max_alloc = Some(256 * 1024 * 1024);
-    reader.limits(limits);
-    let image = reader.decode().ok()?;
+    let image = crate::images::decode_upright(data, None)?;
     let small = image.resize(THUMBNAIL_WIDTH, THUMBNAIL_WIDTH * 2, FilterType::Triangle);
     let mut out = Vec::new();
     JpegEncoder::new_with_quality(&mut out, THUMBNAIL_QUALITY)

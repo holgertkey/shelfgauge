@@ -25,6 +25,7 @@ pub mod config;
 
 mod api;
 mod blobs;
+mod held;
 mod limits;
 mod shell;
 mod store;
@@ -60,6 +61,7 @@ use config::HubConfig;
 use limits::{DeviceLimiter, IpRange, LoginLimiter, WindowLimiter};
 
 pub use api::ACCOUNT_HEADER;
+pub use held::{MAX_HELD, MAX_HELD_PER_TOKEN, WAIT_MAX};
 pub use shelfgauge_core::address;
 pub use store::{
     DeviceInfo, Expired, LibraryQuotas, LibrarySummary, MAX_LIBRARY_ACCOUNTS, PAIRING_TTL, Usage,
@@ -618,6 +620,8 @@ struct Inner {
     /// When each library's 30 s check last came with `online=1` (Unix seconds, rounded
     /// down to the minute), by internal library id: in memory only, gone at a restart.
     online: Mutex<std::collections::HashMap<i64, i64>>,
+    /// The calls held open (long polling).
+    held: Arc<held::Held>,
     clock: Clock,
     slow_request: Duration,
 }
@@ -666,6 +670,7 @@ impl HubState {
             refused_hosts: Mutex::new(HashSet::new()),
             accepting: Mutex::new(None),
             online: Mutex::new(std::collections::HashMap::new()),
+            held: Arc::new(held::Held::default()),
             clock,
             slow_request: trace::SLOW_REQUEST,
         }))
@@ -695,6 +700,13 @@ impl HubState {
         } else {
             online.remove(&library);
         }
+    }
+
+    /// Answers every held call now and holds no more: the hub shuts down (so a
+    /// restart does not wait for them). [`serve`] calls it when its shutdown signal
+    /// comes.
+    pub fn close_held(&self) {
+        self.0.held.close();
     }
 
     /// When `library`'s computer was last seen online, if it lets its members know.
@@ -889,7 +901,9 @@ pub fn router(state: HubState) -> Router {
 }
 
 /// Serves the hub on `listener` until `shutdown` completes, deleting expired
-/// publications and idle libraries and accounts on start and daily.
+/// publications and idle libraries and accounts on start and daily. At the shutdown
+/// the held calls are answered at once ([`HubState::close_held`]); requests in flight
+/// are waited for.
 pub async fn serve(
     listener: std::net::TcpListener,
     state: HubState,
@@ -910,6 +924,11 @@ pub async fn serve(
         })
     };
     let listener = tokio::net::TcpListener::from_std(listener)?;
+    let closing = state.clone();
+    let shutdown = async move {
+        shutdown.await;
+        closing.close_held();
+    };
     let result = axum::serve(
         listener,
         router(state).into_make_service_with_connect_info::<SocketAddr>(),

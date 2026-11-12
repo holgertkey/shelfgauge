@@ -190,14 +190,34 @@ pub fn catalog_key(conn: &Connection) -> Result<Option<CatalogKey>, StorageError
     Ok(load(conn)?.map(|state| state.key))
 }
 
-/// Notes that thumbnail `id` is on the hub.
-pub fn cover_uploaded(conn: &Connection, id: &CoverId, now: i64) -> Result<(), StorageError> {
+/// Notes that thumbnail `id` (sealed, `size` bytes) is on the hub.
+pub fn cover_uploaded(
+    conn: &Connection,
+    id: &CoverId,
+    size: u64,
+    now: i64,
+) -> Result<(), StorageError> {
     conn.execute(
-        "INSERT INTO hub_catalog_covers (cover_id, uploaded_at) VALUES (?1, ?2)
-         ON CONFLICT (cover_id) DO NOTHING",
-        params![id.as_bytes().as_slice(), now],
+        "INSERT INTO hub_catalog_covers (cover_id, uploaded_at, size) VALUES (?1, ?2, ?3)
+         ON CONFLICT (cover_id) DO UPDATE SET size = excluded.size",
+        params![id.as_bytes().as_slice(), now, size as i64],
     )?;
     Ok(())
+}
+
+/// The size counted for a thumbnail uploaded before its size was noted (about what a
+/// sealed thumbnail takes, rounded up).
+pub const THUMBNAIL_SIZE_GUESS: u64 = 8 * 1024;
+
+/// How many thumbnails are on the hub, as far as this library knows, and their sealed
+/// bytes (those of unknown size counted as [`THUMBNAIL_SIZE_GUESS`]).
+pub fn uploaded_cover_usage(conn: &Connection) -> Result<(u64, u64), StorageError> {
+    let (count, bytes): (i64, i64) = conn.query_row(
+        "SELECT count(*), coalesce(sum(coalesce(size, ?1)), 0) FROM hub_catalog_covers",
+        [THUMBNAIL_SIZE_GUESS as i64],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    Ok((count.max(0) as u64, bytes.max(0) as u64))
 }
 
 /// The thumbnails on the hub, as far as this library knows.

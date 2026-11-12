@@ -28,7 +28,7 @@ use crate::storage::{StorageError, migrations, open_wal};
 
 /// Schema migrations of the user-data database; index `i` upgrades version `i` to
 /// `i + 1`. Append only: user data cannot be rebuilt.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10];
 
 /// Version 1: annotations and reading positions.
 ///
@@ -484,6 +484,13 @@ const V9: &str = r#"
 ALTER TABLE reading_positions ADD COLUMN finished_at INTEGER;
 UPDATE reading_positions SET finished_at = updated_at
  WHERE progress >= 1000 AND deleted_at IS NULL;
+"#;
+
+/// Version 10: `hub_catalog_covers.size`, the sealed size of a thumbnail on the hub
+/// (`NULL`: uploaded before, size not known), so the thumbnails made ahead of the
+/// members' requests keep to their share of the library's quota.
+const V10: &str = r#"
+ALTER TABLE hub_catalog_covers ADD COLUMN size INTEGER;
 "#;
 
 /// The schema version this build creates and understands.

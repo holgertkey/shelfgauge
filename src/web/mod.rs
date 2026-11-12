@@ -148,6 +148,16 @@ struct Inner {
     /// The library's catalog on the hub may be out of date (the Showcase or a
     /// publication changed); the sync worker rebuilds it at its next tick.
     catalog_dirty: std::sync::atomic::AtomicBool,
+    /// Counts the changes of the Showcase and of publications
+    /// ([`mark_catalog_dirty`](AppState::mark_catalog_dirty)): part of the key of
+    /// the cached catalog build.
+    catalog_epoch: std::sync::atomic::AtomicU64,
+    /// The last build of the catalog, for the members' requests between two
+    /// changes ([`hub_sync`]).
+    catalog_cache: Mutex<Option<hub_sync::CachedCatalog>>,
+    /// The client of the library's hub, kept so that calls reuse its connections
+    /// (a clone shares the pool); replaced when the hub's URL changes.
+    hub_client: Mutex<Option<crate::hub_client::HubClient>>,
     /// A restart asked for on the settings page (the server stops, the program starts
     /// again with the same arguments).
     restart: Arc<Restart>,
@@ -315,6 +325,9 @@ impl AppState {
             addresses: AddressLimiter::new(),
             publishing: Arc::default(),
             catalog_dirty: std::sync::atomic::AtomicBool::new(true),
+            catalog_epoch: std::sync::atomic::AtomicU64::new(0),
+            catalog_cache: Mutex::new(None),
+            hub_client: Mutex::new(None),
             restart: Arc::default(),
         }))
     }
@@ -423,11 +436,49 @@ impl AppState {
         &self.0.userdata
     }
 
-    /// Asks the sync worker to rebuild the hub's catalog at its next tick.
+    /// The client of the hub at `url`: the kept one (sharing its connections) while
+    /// the URL stays the same, else a new one kept from now on.
+    pub(crate) fn hub_client(
+        &self,
+        url: &crate::hub_client::HubUrl,
+    ) -> crate::hub_client::HubClient {
+        let mut kept = self.0.hub_client.lock().unwrap_or_else(|e| e.into_inner());
+        match &*kept {
+            Some(client) if client.url() == url => client.clone(),
+            _ => {
+                let client = crate::hub_client::HubClient::new(url.clone());
+                *kept = Some(client.clone());
+                client
+            }
+        }
+    }
+
+    /// Asks the sync worker to rebuild the hub's catalog at its next tick, and moves
+    /// the catalog epoch on (a cached build is not used again).
     pub(crate) fn mark_catalog_dirty(&self) {
+        self.0
+            .catalog_epoch
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.0
             .catalog_dirty
             .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The catalog epoch (see [`mark_catalog_dirty`](Self::mark_catalog_dirty)).
+    pub(crate) fn catalog_epoch(&self) -> u64 {
+        self.0
+            .catalog_epoch
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// The cached catalog build.
+    pub(crate) fn catalog_cache(
+        &self,
+    ) -> std::sync::MutexGuard<'_, Option<hub_sync::CachedCatalog>> {
+        self.0
+            .catalog_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
     }
 
     /// Whether the catalog was marked out of date since the last call.

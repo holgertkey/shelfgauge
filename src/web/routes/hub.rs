@@ -189,12 +189,15 @@ pub(super) async fn hub_account(
     super::profiles::user(state, move |_, conn| Ok(store::account(conn, profile)?)).await
 }
 
-/// Runs a hub call on a blocking thread.
+/// Runs a hub call on a blocking thread, with the kept client of the hub at `url`
+/// ([`AppState::hub_client`]).
 pub(super) async fn call<T: Send + 'static>(
+    state: &AppState,
     url: HubUrl,
     f: impl FnOnce(&HubClient) -> Result<T, ClientError> + Send + 'static,
 ) -> Result<Result<T, ClientError>, AppError> {
-    blocking(move || f(&HubClient::new(url))).await
+    let client = state.hub_client(&url);
+    blocking(move || f(&client)).await
 }
 
 /// `(major, minor)` of a version text `MAJOR.MINOR.PATCH[+BUILD]`.
@@ -265,7 +268,7 @@ async fn page_response(
     let mut devices_error = None;
     let mut has_password = false;
     match (&library, &configured) {
-        (None, Some(url)) if admin => match call(url.clone(), |c| c.info()).await? {
+        (None, Some(url)) if admin => match call(state, url.clone(), |c| c.info()).await? {
             Ok(info) => {
                 let operator = info.operator.as_ref().and_then(|o| {
                     let text = [o.name.as_str(), o.contact.as_str()]
@@ -303,7 +306,7 @@ async fn page_response(
         (Some(library), _) if account.as_ref().is_some_and(|a| a.role == Role::Owner) => {
             let (url, token) = (library.hub_url.clone(), library.token.clone());
             let key = account.as_ref().map(|a| a.key.clone()).expect("checked");
-            let listed = call(url, move |c| {
+            let listed = call(state, url, move |c| {
                 let devices = c.owner_devices(&token)?;
                 let members = c.members(&token)?;
                 Ok((devices, members))
@@ -509,7 +512,11 @@ pub(crate) async fn save(
         ("pair", Some(library)) if owner => {
             let key = account.as_ref().map(|a| a.key.clone()).expect("checked");
             let token = library.token.clone();
-            match call(library.hub_url.clone(), move |c| c.create_pairing(&token)).await? {
+            match call(&state, library.hub_url.clone(), move |c| {
+                c.create_pairing(&token)
+            })
+            .await?
+            {
                 Ok(pairing) => {
                     tracing::info!(profile = id.0, "hub pairing link shown");
                     let link = library.hub_url.pair_link(&pairing.secret, &key);
@@ -533,7 +540,7 @@ pub(crate) async fn save(
                 .parse()
                 .map_err(|_| AppError::BadRequest("invalid device".to_owned()))?;
             let token = library.token.clone();
-            match call(library.hub_url.clone(), move |c| {
+            match call(&state, library.hub_url.clone(), move |c| {
                 c.remove_owner_device(&token, device)
             })
             .await?
@@ -551,7 +558,7 @@ pub(crate) async fn save(
             };
             let token = library.token.clone();
             let sent = name.clone();
-            match call(library.hub_url.clone(), move |c| {
+            match call(&state, library.hub_url.clone(), move |c| {
                 c.set_owner_name(&token, &sent)
             })
             .await?
@@ -662,7 +669,7 @@ async fn create_library(
     else {
         return Ok(Outcome::Refused(NAME_RULES.to_owned()));
     };
-    let info = match call(url.clone(), |c| c.info()).await? {
+    let info = match call(state, url.clone(), |c| c.info()).await? {
         Ok(info) => info,
         Err(e) => return Ok(Outcome::Refused(e.user_text())),
     };
@@ -683,7 +690,7 @@ async fn create_library(
     }
     let invite = (!invite.is_empty()).then(|| invite.to_owned());
     let (sent_handle, sent_name) = (handle.clone(), owner_name.clone());
-    let created = match call(url.clone(), move |c| {
+    let created = match call(state, url.clone(), move |c| {
         c.create_library(invite.as_deref(), &sent_handle, &sent_name)
     })
     .await?
@@ -732,7 +739,8 @@ async fn set_owner_password(
     if password != repeat {
         return Ok(Outcome::Refused("The two passwords differ.".to_owned()));
     }
-    let info = match call(library.hub_url.clone(), |c| c.info()).await? {
+    let url = library.hub_url.clone();
+    let info = match blocking(move || HubClient::new(url).info()).await? {
         Ok(info) => info,
         Err(e) => return Ok(Outcome::Refused(e.user_text())),
     };
@@ -783,7 +791,11 @@ async fn delete_library(state: &AppState, library: HubLibrary) -> Result<Outcome
         }
     }
     let token = library.token.clone();
-    match call(library.hub_url.clone(), move |c| c.delete_library(&token)).await? {
+    match call(state, library.hub_url.clone(), move |c| {
+        c.delete_library(&token)
+    })
+    .await?
+    {
         Ok(()) | Err(ClientError::Hub { status: 401, .. }) => {}
         Err(e) => return Ok(Outcome::Refused(e.user_text())),
     }
@@ -821,6 +833,8 @@ mod tests {
             passwords: None,
             operator: None,
             catalog_formats: None,
+            quotas: None,
+            wait_max: None,
         };
         // One minor version below this build.
         let (major, minor) = major_minor(crate::VERSION).unwrap();

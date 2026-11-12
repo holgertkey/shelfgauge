@@ -70,7 +70,17 @@ pub(crate) fn aes_decrypt(
 
 /// Raw deflate (RFC 1951, no zlib header: `DecompressionStream("deflate-raw")`).
 pub fn compress(data: &[u8]) -> Vec<u8> {
-    let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
+    compress_at(data, Compression::default())
+}
+
+/// Raw deflate in stored blocks (level 0): still deflate for every reader, without
+/// the work of compressing what does not compress (JPEG, PNG).
+pub fn store(data: &[u8]) -> Vec<u8> {
+    compress_at(data, Compression::none())
+}
+
+fn compress_at(data: &[u8], level: Compression) -> Vec<u8> {
+    let mut encoder = DeflateEncoder::new(Vec::new(), level);
     encoder
         .write_all(data)
         .expect("writing to a Vec cannot fail");
@@ -113,8 +123,9 @@ pub fn encrypt_padded(
     .to_bytes()
 }
 
-/// Seals the plaintext of the blob at `path` of publication `id`: compress, pad,
-/// encrypt under `key` with a fresh random nonce, with the plaintext `header`.
+/// Seals the plaintext of the blob at `path` of publication `id`: compress (an image
+/// [`store`]d, it does not compress), pad, encrypt under `key` with a fresh random
+/// nonce, with the plaintext `header`.
 pub fn seal(
     id: &PublicationId,
     key: &BookKey,
@@ -129,7 +140,10 @@ pub fn seal(
         key,
         path,
         header,
-        &pad(&compress(plain)),
+        &pad(&match path {
+            BlobPath::Image(_) => store(plain),
+            _ => compress(plain),
+        }),
         nonce,
     ))
 }

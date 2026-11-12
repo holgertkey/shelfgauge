@@ -445,3 +445,44 @@ async fn a_book_put_back_on_the_shelf_from_its_file_stays_this_librarys() {
     lib.sync().await;
     assert!(!lib.shelf()[0].own);
 }
+
+/// Phase 31.7: a book file is made with the images reduced (`[hub] images` is
+/// `reduced` by default) and opens; its wide image is 1080 px wide.
+#[tokio::test]
+async fn a_book_file_with_reduced_images_opens() {
+    let mut jpeg = Vec::new();
+    image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(2400, 1600, |x, y| {
+        image::Rgb([(x % 251) as u8, (y % 241) as u8, ((x * y) % 239) as u8])
+    }))
+    .write_to(
+        &mut std::io::Cursor::new(&mut jpeg),
+        image::ImageFormat::Jpeg,
+    )
+    .unwrap();
+    let fb2 = format!(
+        r##"<?xml version="1.0" encoding="UTF-8"?>
+<FictionBook xmlns:l="http://www.w3.org/1999/xlink"><description><title-info><author><first-name>Ann</first-name><last-name>Writer</last-name></author><book-title>Pictures</book-title></title-info></description><body><section><p>Before.</p><image l:href="#p"/><p>After.</p></section></body><binary id="p" content-type="image/jpeg">{}</binary></FictionBook>"##,
+        base64::engine::general_purpose::STANDARD.encode(&jpeg)
+    );
+    let hub = TestHub::start().await;
+    let lib = Lib::with_books(
+        &hub.url,
+        "Home library",
+        &[("pictures.fb2", fb2.into_bytes())],
+    );
+    lib.create_library(&hub.invite()).await;
+    let book = lib.book("pictures.fb2");
+    let file = lib.export(book).await.bytes;
+    let opened = open_file(&lib, &file).unwrap();
+    let manifest = open_all(&opened);
+    assert_eq!(manifest.images.len(), 1);
+    assert_eq!(manifest.images[0].mime, "image/jpeg");
+    let (path, blob) = (opened.blobs.iter())
+        .find(|(path, _)| *path == BlobPath::Image(0))
+        .unwrap();
+    let plain =
+        shelfgauge::publication::open(&opened.id, &opened.book_key, *path, blob, 1 << 26).unwrap();
+    assert!(plain.len() < jpeg.len());
+    let decoded = image::load_from_memory(&plain).unwrap();
+    assert_eq!((decoded.width(), decoded.height()), (1080, 720));
+}

@@ -485,6 +485,7 @@ pub const RESTART_KEYS: &[&str] = &[
     "hub.instance_name",
     "hub.sync_interval_minutes",
     "hub.show_online",
+    "hub.images",
 ];
 
 /// The value of restart key `key` in `config`, as TOML.
@@ -507,6 +508,7 @@ fn restart_value(config: &Config, key: &str) -> Value {
         "hub.instance_name" => Value::from(hub.instance_name.as_str()),
         "hub.sync_interval_minutes" => Value::from(i64::from(hub.sync_interval_minutes)),
         "hub.show_online" => Value::from(hub.show_online),
+        "hub.images" => Value::from(hub.images.as_str()),
         _ => unreachable!("not a restart key: {key}"),
     }
 }

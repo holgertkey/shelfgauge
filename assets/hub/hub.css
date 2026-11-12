@@ -364,3 +364,20 @@
   background: #2da44e;
   vertical-align: 0.05rem;
 }
+
+/* An image of the book left out of the publication (`[hub] images = "none"`): its
+   alt text in a small dashed box. */
+.text .image-missing {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0.1rem 0.45rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--cover-bg);
+  color: var(--muted);
+  font-size: 0.85em;
+  line-height: 1.4;
+  /* An inline-block takes the paragraph's first-line indent otherwise. */
+  text-indent: 0;
+  overflow-wrap: anywhere;
+}

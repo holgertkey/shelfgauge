@@ -525,7 +525,7 @@ async fn passwords_and_login_forms_are_never_logged() {
 /// never logs its book key, its id or the book's text, not even at trace level.
 #[test]
 fn publication_keys_and_ids_are_never_logged() {
-    use shelfgauge::config::ReaderConfig;
+    use shelfgauge::config::{ImageMode, ReaderConfig};
     use shelfgauge::format::BookParser;
     use shelfgauge::format::fb2::Fb2Parser;
     use shelfgauge::publication::format::{BlobPath, PublicationId};
@@ -544,7 +544,14 @@ fn publication_keys_and_ids_are_never_logged() {
         content_key: vec![0x3c; 16],
         ..BookInfo::default()
     };
-    let publication = build(&info, &content, None, &ReaderConfig::default()).unwrap();
+    let publication = build(
+        &info,
+        &content,
+        None,
+        &ReaderConfig::default(),
+        ImageMode::Original,
+    )
+    .unwrap();
     let sealed = publication.seal(&id, &key, &[]).unwrap();
     for (path, blob) in &sealed {
         open(&id, &key, *path, blob, 1 << 26).unwrap();

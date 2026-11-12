@@ -29,6 +29,7 @@ use crate::hub_client::store::{self, HubAccount, HubLibrary, ShelfEntry, ShelfKi
 use crate::hub_client::sync::Target;
 use crate::hub_client::{ClientError, HubClient, sync};
 use crate::profiles::ProfileId;
+use crate::publication::format::BlobPath;
 use crate::publication::{self, BookInfo, BookKey, Publication, generate_publication_id};
 use crate::render::load::content_key;
 use crate::storage::books::{BookDetails, BookStatus, book_by_id};
@@ -127,6 +128,10 @@ pub(crate) fn notice(code: &str) -> Option<(&'static str, &'static str)> {
             "The book is being uploaded; reload this page in a moment.",
         ),
         "unreachable" => ("error", "The hub cannot be reached; try again later."),
+        "slow-down" => (
+            "error",
+            "The hub asked this library to slow down; try again in a minute.",
+        ),
         "quota" => ("error", "The hub refused: the library's quota is used up."),
         "too-large" => (
             "error",
@@ -153,6 +158,9 @@ fn failure(e: &ClientError) -> &'static str {
         ClientError::Unreachable(_) => "unreachable",
         ClientError::Hub { status: 401, .. } => "unpaired",
         ClientError::Hub { status: 413, .. } => "too-large",
+        // The library's token is over its rate limit (thumbnails ahead, many
+        // requests at once): later, not a failure.
+        ClientError::Hub { status: 429, .. } => "slow-down",
         e if e.code() == Some("quota_exceeded") => "quota",
         _ => "failed",
     }
@@ -254,7 +262,11 @@ async fn pair_with_book(
             .ok_or(AppError::NotFound)?
     };
     let token = library.token.clone();
-    let pairing = match call(library.hub_url.clone(), move |c| c.create_pairing(&token)).await? {
+    let pairing = match call(state, library.hub_url.clone(), move |c| {
+        c.create_pairing(&token)
+    })
+    .await?
+    {
         Ok(pairing) => pairing,
         Err(e) => {
             let code = failure(&e);
@@ -305,8 +317,15 @@ async fn build(state: &AppState, id: i64) -> Result<Option<(BookInfo, Publicatio
             let info = BookInfo::of(&book).ok_or(AppError::NotFound)?;
             let content = s.content(&book)?;
             let cover = cover(s, &book);
-            let reader = s.config().reader.clone();
-            match publication::build(&info, &content, cover.as_ref(), &reader) {
+            let config = s.config();
+            let built = publication::build(
+                &info,
+                &content,
+                cover.as_ref(),
+                &config.reader,
+                config.hub.images,
+            );
+            match built {
                 Ok(publication) => Ok(Some((info, publication))),
                 Err(publication::PublishError::Protected(_)) => Ok(None),
             }
@@ -341,7 +360,7 @@ pub(crate) async fn publish(
     let userdata = state.userdata_handle();
     let url = library.hub_url.clone();
     let progress = Arc::clone(&publishing.progress);
-    let code = call(url, move |client| {
+    let code = call(state, url, move |client| {
         Ok(upload(
             &userdata,
             &library,
@@ -452,20 +471,27 @@ fn upload(
     {
         tracing::info!(error = %e, "the hub did not delete an earlier copy");
     }
-    // The manifest last: a device never sees a publication with missing parts.
-    let mut blobs = sealed;
-    blobs.rotate_left(1);
-    progress.start(blobs.len());
-    for (path, blob) in &blobs {
-        if let Err(e) = client.put_blob(&library.token, &pub_id, *path, blob) {
-            tracing::info!(profile = profile.0, error = %e, "publishing failed");
-            if let Err(e) = client.delete_publication(&library.token, &pub_id) {
-                tracing::info!(error = %e, "the hub did not delete the partial copy");
-            }
-            restore(userdata, profile, &info.content_key, previous.as_ref());
-            return failure(&e);
-        }
+    // The parts a few at a time, the manifest last and only after all of them: a
+    // device never sees a publication with missing parts.
+    progress.start(sealed.len());
+    let put = |(path, blob): &(BlobPath, Vec<u8>)| {
+        client.put_blob(&library.token, &pub_id, *path, blob)?;
         progress.advance();
+        Ok::<_, ClientError>(())
+    };
+    let sent = match sealed.split_first() {
+        Some((manifest, parts)) => {
+            crate::hub_client::upload_at_once(parts, put).and_then(|()| put(manifest))
+        }
+        None => Ok(()),
+    };
+    if let Err(e) = sent {
+        tracing::info!(profile = profile.0, error = %e, "publishing failed");
+        if let Err(e) = client.delete_publication(&library.token, &pub_id) {
+            tracing::info!(error = %e, "the hub did not delete the partial copy");
+        }
+        restore(userdata, profile, &info.content_key, previous.as_ref());
+        return failure(&e);
     }
     {
         let conn = userdata.lock();
@@ -658,7 +684,7 @@ async fn remove(
         entry
     };
     let userdata = state.userdata_handle();
-    let done = call(library.hub_url.clone(), move |client| {
+    let done = call(state, library.hub_url.clone(), move |client| {
         Ok(Target::of(&library, &account)
             .is_some_and(|target| sync::take_down(&userdata, target, &account, client, &entry)))
     })
@@ -672,4 +698,31 @@ async fn remove(
         "book taken off the hub shelf"
     );
     Ok(if done { "removed" } else { "removing" })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hub(status: u16, code: &str) -> ClientError {
+        ClientError::Hub {
+            status,
+            code: code.to_owned(),
+            message: String::new(),
+        }
+    }
+
+    #[test]
+    fn a_hub_that_asks_to_slow_down_is_tried_again_not_a_failure() {
+        // The sync worker answers a member's request `Later` for this code, never
+        // refuses it.
+        assert_eq!(failure(&hub(429, "rate_limited")), "slow-down");
+        assert!(notice("slow-down").is_some());
+        assert_eq!(failure(&hub(403, "quota_exceeded")), "quota");
+        assert_eq!(failure(&hub(500, "internal")), "failed");
+        assert_eq!(
+            failure(&ClientError::Unreachable("down".into())),
+            "unreachable"
+        );
+    }
 }

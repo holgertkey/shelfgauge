@@ -103,6 +103,10 @@ sync_interval_minutes = 5
 # Whether the library's members see on their devices when this computer is online
 # (the hub learns it from the library's check every 30 s).
 show_online = true
+# Images in books sent to devices (publications and book files made from then on):
+# "reduced" (at most 1080 px wide, JPEG or PNG: smaller, for phones), "original" (as
+# in the book) or "none" (text only).
+images = "reduced"
 "#;
 
 /// The largest accepted value of `annotations.max_text_length` and
@@ -272,6 +276,33 @@ pub struct HubConfig {
     pub sync_interval_minutes: u32,
     /// Whether the members' devices are told when this computer is online.
     pub show_online: bool,
+    /// The images of books sent to devices.
+    pub images: ImageMode,
+}
+
+/// The images of books sent to devices: `[hub] images`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageMode {
+    /// At most [`MAX_IMAGE_WIDTH`](crate::images::MAX_IMAGE_WIDTH) wide, as JPEG or
+    /// PNG ([`reduce`](crate::images::reduce)): smaller, for phones.
+    #[default]
+    Reduced,
+    /// As in the book.
+    Original,
+    /// No images: text only.
+    None,
+}
+
+impl ImageMode {
+    /// The value as written in `config.toml`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Reduced => "reduced",
+            Self::Original => "original",
+            Self::None => "none",
+        }
+    }
 }
 
 impl Default for HubConfig {
@@ -281,6 +312,7 @@ impl Default for HubConfig {
             instance_name: String::new(),
             sync_interval_minutes: 5,
             show_online: true,
+            images: ImageMode::Reduced,
         }
     }
 }

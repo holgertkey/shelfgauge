@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use shelfgauge::annotations::text::{BookText, rendered_text};
-use shelfgauge::config::{ReaderConfig, SplitMode};
+use shelfgauge::config::{ImageMode, ReaderConfig, SplitMode};
 use shelfgauge::format::epub::EpubParser;
 use shelfgauge::format::fb2::Fb2Parser;
 use shelfgauge::format::html::HtmlParser;
@@ -154,7 +154,17 @@ fn round_trip(
     cover: Option<&Image>,
     config: &ReaderConfig,
 ) -> (Manifest, Vec<PartBlob>, Vec<Vec<u8>>) {
-    let publication = build(&info(), content, cover, config).unwrap();
+    round_trip_with(content, cover, config, ImageMode::Original)
+}
+
+/// [`round_trip`] with the images as `mode` says.
+fn round_trip_with(
+    content: &BookContent,
+    cover: Option<&Image>,
+    config: &ReaderConfig,
+    mode: ImageMode,
+) -> (Manifest, Vec<PartBlob>, Vec<Vec<u8>>) {
+    let publication = build(&info(), content, cover, config, mode).unwrap();
     let key = BookKey::generate().unwrap();
     let sealed = publication.seal(&id(), &key, &[]).unwrap();
     let opened: BTreeMap<String, Vec<u8>> = sealed
@@ -356,8 +366,14 @@ fn every_book_publishes_exactly_the_images_its_text_shows() {
     // `build` finds them by walking the model; the renderer is the reference.
     for (name, content, cover) in books() {
         let shown = rendered_images(&content);
-        let publication =
-            build(&info(), &content, cover.as_ref(), &ReaderConfig::default()).unwrap();
+        let publication = build(
+            &info(),
+            &content,
+            cover.as_ref(),
+            &ReaderConfig::default(),
+            ImageMode::Original,
+        )
+        .unwrap();
         let published: std::collections::BTreeSet<String> = publication
             .manifest
             .images
@@ -385,7 +401,14 @@ fn a_cover_the_text_does_not_show_is_not_published() {
         mime: "image/png".into(),
         data: common::PNG.to_vec(),
     };
-    let publication = build(&info(), &content, Some(&cover), &ReaderConfig::default()).unwrap();
+    let publication = build(
+        &info(),
+        &content,
+        Some(&cover),
+        &ReaderConfig::default(),
+        ImageMode::Original,
+    )
+    .unwrap();
     assert!(publication.images.is_empty());
     assert!(publication.manifest.images.is_empty());
     assert_eq!(publication.manifest.cover, None);
@@ -402,7 +425,14 @@ fn a_cover_the_text_does_not_show_is_not_published() {
     );
     let content = BookContent::new(vec![Body::main(paragraph_section("Text"))], images);
     let cover = content.images()["cover.png"].clone();
-    let publication = build(&info(), &content, Some(&cover), &ReaderConfig::default()).unwrap();
+    let publication = build(
+        &info(),
+        &content,
+        Some(&cover),
+        &ReaderConfig::default(),
+        ImageMode::Original,
+    )
+    .unwrap();
     assert!(publication.images.is_empty());
     assert!(publication.manifest.images.is_empty());
     assert_eq!(publication.manifest.cover, None);
@@ -469,7 +499,14 @@ fn only_images_the_text_shows_are_published() {
     };
     let content = BookContent::new(vec![Body::main(main), Body::notes(notes)], images);
     let cover = png(4);
-    let publication = build(&info(), &content, Some(&cover), &ReaderConfig::default()).unwrap();
+    let publication = build(
+        &info(),
+        &content,
+        Some(&cover),
+        &ReaderConfig::default(),
+        ImageMode::Original,
+    )
+    .unwrap();
     let published: Vec<&str> = publication
         .manifest
         .images
@@ -489,7 +526,14 @@ fn only_images_the_text_shows_are_published() {
 
     // The cover as an image the text shows: published once, as that image.
     let cover = png(2);
-    let publication = build(&info(), &content, Some(&cover), &ReaderConfig::default()).unwrap();
+    let publication = build(
+        &info(),
+        &content,
+        Some(&cover),
+        &ReaderConfig::default(),
+        ImageMode::Original,
+    )
+    .unwrap();
     assert_eq!(publication.images.len(), 4);
     assert_eq!(publication.manifest.image_index("verse"), Some(3));
     assert_eq!(publication.manifest.cover, Some(3));
@@ -517,6 +561,7 @@ fn only_raster_images_are_published() {
         &content,
         Some(&svg_cover),
         &ReaderConfig::default(),
+        ImageMode::Original,
     )
     .unwrap();
     assert_eq!(publication.manifest.image_index("evil"), None);
@@ -551,7 +596,14 @@ fn a_cover_that_is_also_an_image_of_the_text_is_stored_once() {
         images
     });
     let cover = content.images()["cover.png"].clone();
-    let publication = build(&info(), &content, Some(&cover), &ReaderConfig::default()).unwrap();
+    let publication = build(
+        &info(),
+        &content,
+        Some(&cover),
+        &ReaderConfig::default(),
+        ImageMode::Original,
+    )
+    .unwrap();
     assert_eq!(publication.images.len(), 1);
     assert_eq!(publication.manifest.cover, Some(0));
     assert_eq!(publication.manifest.images[0].id, "cover.png");
@@ -570,7 +622,14 @@ fn drm_protected_books_are_refused() {
         (info, BookContent::default())
     });
     let (info, content) = content;
-    let error = build(&info, &content, None, &ReaderConfig::default()).unwrap_err();
+    let error = build(
+        &info,
+        &content,
+        None,
+        &ReaderConfig::default(),
+        ImageMode::Original,
+    )
+    .unwrap_err();
     assert!(matches!(error, PublishError::Protected(_)));
     assert!(error.to_string().contains("cannot be published"), "{error}");
 }
@@ -579,7 +638,14 @@ fn drm_protected_books_are_refused() {
 fn blobs_open_only_with_their_key_publication_and_path() {
     let books = books();
     let (_, content, cover) = &books[0];
-    let publication = build(&info(), content, cover.as_ref(), &ReaderConfig::default()).unwrap();
+    let publication = build(
+        &info(),
+        content,
+        cover.as_ref(),
+        &ReaderConfig::default(),
+        ImageMode::Original,
+    )
+    .unwrap();
     let key = BookKey::generate().unwrap();
     let sealed = publication.seal(&id(), &key, &[]).unwrap();
     let (path, blob) = &sealed[1];
@@ -640,7 +706,14 @@ fn blobs_open_only_with_their_key_publication_and_path() {
 fn each_seal_uses_a_fresh_nonce() {
     let books = books();
     let (_, content, cover) = &books[0];
-    let publication = build(&info(), content, cover.as_ref(), &ReaderConfig::default()).unwrap();
+    let publication = build(
+        &info(),
+        content,
+        cover.as_ref(),
+        &ReaderConfig::default(),
+        ImageMode::Original,
+    )
+    .unwrap();
     let key = BookKey::generate().unwrap();
     let a = publication.seal(&id(), &key, &[]).unwrap();
     let b = publication.seal(&id(), &key, &[]).unwrap();
@@ -676,7 +749,14 @@ fn sealed_blobs_are_padded_to_a_bucket() {
             part_size: 2000,
             ..ReaderConfig::default()
         };
-        let publication = build(&info(), content, cover.as_ref(), &config).unwrap();
+        let publication = build(
+            &info(),
+            content,
+            cover.as_ref(),
+            &config,
+            ImageMode::Original,
+        )
+        .unwrap();
         let key = BookKey::generate().unwrap();
         for ((path, blob), (_, plain)) in publication
             .seal(&id(), &key, &[])
@@ -818,7 +898,14 @@ fn a_whole_sealed_publication_vector_opens() {
         book_key: URL_SAFE_NO_PAD.encode(&sealed_key),
     }
     .encode();
-    let publication = build(&info(), &content, None, &ReaderConfig::default()).unwrap();
+    let publication = build(
+        &info(),
+        &content,
+        None,
+        &ReaderConfig::default(),
+        ImageMode::Original,
+    )
+    .unwrap();
     let path = vectors_dir().join("publication.json");
     if std::env::var_os("SHELFGAUGE_WRITE_VECTORS").is_some() {
         let blobs: serde_json::Map<String, serde_json::Value> = publication
@@ -1040,7 +1127,14 @@ fn timing_on_real_books() {
             let ms = |start: Instant| format!("{:.1} ms", start.elapsed().as_secs_f64() * 1e3);
 
             let start = Instant::now();
-            let publication = build(&info(), &content, metadata.cover.as_ref(), &config).unwrap();
+            let publication = build(
+                &info(),
+                &content,
+                metadata.cover.as_ref(),
+                &config,
+                ImageMode::Original,
+            )
+            .unwrap();
             let built = ms(start);
 
             let key = BookKey::generate().unwrap();
@@ -1582,7 +1676,13 @@ fn image_size_report() {
             else {
                 return;
             };
-            let Ok(publication) = build(&info(), &content, metadata.cover.as_ref(), &config) else {
+            let Ok(publication) = build(
+                &info(),
+                &content,
+                metadata.cover.as_ref(),
+                &config,
+                ImageMode::Original,
+            ) else {
                 return;
             };
             let sealed = publication.seal(&id(), &key, &[]).unwrap();
@@ -1780,4 +1880,121 @@ fn image_size_report() {
         kb(img_deflated),
         pct(img_deflated, img_raw),
     );
+}
+
+/// A book whose text shows a wide photo (3000×2000, JPEG: also the cover) and a small
+/// PNG; the photo's bytes.
+fn book_with_photo() -> (BookContent, Image) {
+    let mut jpeg = Vec::new();
+    image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(3000, 2000, |x, y| {
+        image::Rgb([(x % 251) as u8, (y % 241) as u8, ((x * y) % 239) as u8])
+    }))
+    .write_to(
+        &mut std::io::Cursor::new(&mut jpeg),
+        image::ImageFormat::Jpeg,
+    )
+    .unwrap();
+    let photo = Image {
+        mime: "image/jpeg".into(),
+        data: jpeg,
+    };
+    let small = Image {
+        mime: "image/png".into(),
+        data: common::PNG.to_vec(),
+    };
+    let image_ref = |id: &str| ImageRef {
+        id: id.into(),
+        ..ImageRef::default()
+    };
+    let main = Section {
+        blocks: vec![
+            Block::new(BlockKind::Paragraph(vec![Inline::Text("Before.".into())])),
+            Block::new(BlockKind::Image(image_ref("photo"))),
+            Block::new(BlockKind::Paragraph(vec![Inline::Image(image_ref(
+                "small",
+            ))])),
+            Block::new(BlockKind::Paragraph(vec![Inline::Text("After.".into())])),
+        ],
+        ..Section::default()
+    };
+    let images: BTreeMap<String, Image> = [
+        ("photo".to_owned(), photo.clone()),
+        ("small".to_owned(), small),
+    ]
+    .into_iter()
+    .collect();
+    (BookContent::new(vec![Body::main(main)], images), photo)
+}
+
+/// Phase 31.7: `reduced` makes the wide photo 1080 px wide and smaller (the cover
+/// found by its original bytes), keeps the small image's bytes; `original` keeps
+/// every byte.
+#[test]
+fn reduced_images_are_smaller_and_original_ones_the_books_bytes() {
+    let (content, photo) = book_with_photo();
+    let config = ReaderConfig::default();
+    let (manifest, _, images) =
+        round_trip_with(&content, Some(&photo), &config, ImageMode::Reduced);
+    let at = manifest.image_index("photo").unwrap() as usize;
+    assert_eq!(manifest.images[at].mime, "image/jpeg");
+    assert!(images[at].len() < photo.data.len());
+    let decoded = image::load_from_memory(&images[at]).unwrap();
+    assert_eq!((decoded.width(), decoded.height()), (1080, 720));
+    assert_eq!(manifest.cover, Some(at as u32), "still the cover");
+    let small = manifest.image_index("small").unwrap() as usize;
+    assert_eq!(images[small], common::PNG);
+    let (manifest, _, images) =
+        round_trip_with(&content, Some(&photo), &config, ImageMode::Original);
+    let at = manifest.image_index("photo").unwrap() as usize;
+    assert_eq!(images[at], photo.data);
+}
+
+/// Phase 31.7: `none` leaves the images out; the parts render as before, the images
+/// without a source.
+#[test]
+fn without_images_the_text_still_renders() {
+    let (content, photo) = book_with_photo();
+    let config = ReaderConfig::default();
+    let (manifest, parts, images) =
+        round_trip_with(&content, Some(&photo), &config, ImageMode::None);
+    assert!(manifest.images.is_empty());
+    assert!(images.is_empty());
+    assert_eq!(manifest.cover, None);
+    let split = split(&content, &config);
+    for (index, blob) in parts.iter().enumerate() {
+        assert_eq!(
+            blob.render(&manifest.split(), index, &Links),
+            render_part(&content, &split, index, &Links)
+        );
+    }
+}
+
+/// Phase 31.7: image blobs are sealed in stored deflate blocks (no work on what does
+/// not compress) and open as every blob does; parts are still compressed.
+#[test]
+fn image_blobs_are_stored_and_open_as_before() {
+    use shelfgauge::publication::{compress, inflate, store};
+    let (content, photo) = book_with_photo();
+    let publication = build(
+        &info(),
+        &content,
+        None,
+        &ReaderConfig::default(),
+        ImageMode::Original,
+    )
+    .unwrap();
+    let key = BookKey::generate().unwrap();
+    let sealed = publication.seal(&id(), &key, &[]).unwrap();
+    let at = publication.manifest.image_index("photo").unwrap();
+    let (path, blob) = sealed
+        .iter()
+        .find(|(path, _)| *path == BlobPath::Image(at))
+        .unwrap();
+    assert_eq!(open(&id(), &key, *path, blob, LIMIT).unwrap(), photo.data);
+    assert!(blob.len() > photo.data.len(), "not deflated");
+    let stored = store(&photo.data);
+    assert!(stored.len() > photo.data.len());
+    assert_eq!(inflate(&stored, LIMIT).unwrap(), photo.data);
+    let text = b"words words words words words words words words".repeat(100);
+    assert!(compress(&text).len() < text.len() / 10);
 }

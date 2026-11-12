@@ -322,6 +322,21 @@ pub struct HubInfo {
     /// The catalog format versions the hub accepts (absent before 0.22: no catalogs).
     #[serde(default)]
     pub catalog_formats: Option<VersionRange>,
+    /// The quotas of a library on the hub (absent before 0.20).
+    #[serde(default)]
+    pub quotas: Option<HubQuotas>,
+    /// The longest hold of a call in seconds (absent before 0.25: the hub answers
+    /// at once and ignores `wait`).
+    #[serde(default)]
+    pub wait_max: Option<u32>,
+}
+
+/// The quotas in [`HubInfo`] (the hub's defaults; the operator may give a library
+/// its own).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct HubQuotas {
+    /// The bytes a library may store; 0 = no limit.
+    pub max_bytes: u64,
 }
 
 /// The operator in [`HubInfo`].
@@ -448,11 +463,75 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(60);
 /// The time limit of uploading one blob.
 const BLOB_TIMEOUT: Duration = Duration::from_secs(600);
 
+/// How many blobs a publication or a batch of thumbnails uploads at once.
+pub const UPLOADS_AT_ONCE: usize = 4;
+
+/// Runs `put` for every item, [`UPLOADS_AT_ONCE`] at a time on scoped threads (a
+/// [`HubClient`]'s clones share its connections). The first failure stops the items
+/// not started yet and is returned once the ones in flight are done.
+///
+/// # Examples
+///
+/// ```
+/// use std::sync::atomic::{AtomicUsize, Ordering};
+/// use shelfgauge::hub_client::upload_at_once;
+///
+/// let sent = AtomicUsize::new(0);
+/// let all: Result<(), ()> = upload_at_once(&[1, 2, 3, 4, 5], |_| {
+///     sent.fetch_add(1, Ordering::Relaxed);
+///     Ok(())
+/// });
+/// assert!(all.is_ok());
+/// assert_eq!(sent.into_inner(), 5);
+/// assert_eq!(upload_at_once(&[1, 2, 3], |&n| if n == 2 { Err(n) } else { Ok(()) }), Err(2));
+/// ```
+pub fn upload_at_once<T: Sync, E: Send>(
+    items: &[T],
+    put: impl Fn(&T) -> Result<(), E> + Sync,
+) -> Result<(), E> {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let next = AtomicUsize::new(0);
+    let stop = AtomicBool::new(false);
+    let failure = std::sync::Mutex::new(None);
+    let span = tracing::Span::current();
+    std::thread::scope(|scope| {
+        for _ in 0..UPLOADS_AT_ONCE.min(items.len()) {
+            scope.spawn(|| {
+                let _entered = span.enter();
+                while !stop.load(Ordering::Relaxed) {
+                    let Some(item) = items.get(next.fetch_add(1, Ordering::Relaxed)) else {
+                        break;
+                    };
+                    if let Err(e) = put(item) {
+                        stop.store(true, Ordering::Relaxed);
+                        let mut failure = failure.lock().unwrap_or_else(|e| e.into_inner());
+                        failure.get_or_insert(e);
+                        break;
+                    }
+                }
+            });
+        }
+    });
+    match failure.into_inner().unwrap_or_else(|e| e.into_inner()) {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
 /// The time limit of connecting.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The largest JSON answer read.
 const MAX_ANSWER: u64 = 32 * 1024 * 1024;
+
+/// The answer of [`HubClient::pending_held`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pending {
+    /// Per account holding request records, the highest sequence number among them.
+    pub accounts: Vec<(AccountId, i64)>,
+    /// The hub's mark of this answer, passed back as `seen` (absent before 0.25).
+    pub mark: Option<String>,
+}
 
 /// A blocking client of one hub; the device token is passed per call.
 #[derive(Debug, Clone)]
@@ -474,6 +553,8 @@ impl HubClient {
             .http_status_as_error(false)
             .timeout_connect(Some(CONNECT_TIMEOUT))
             .timeout_global(Some(CALL_TIMEOUT))
+            // The uploads at once, the held check and a call besides.
+            .max_idle_connections_per_host(UPLOADS_AT_ONCE + 2)
             .user_agent(format!("shelfgauge/{}", crate::VERSION))
             .build()
             .new_agent();
@@ -874,6 +955,21 @@ impl HubClient {
         token: &Secret,
         online: bool,
     ) -> Result<Vec<(AccountId, i64)>, ClientError> {
+        Ok(self.pending_held(token, online, None, 0)?.accounts)
+    }
+
+    /// `GET /api/library/pending?wait=N&seen=<mark>`: like
+    /// [`pending_requests`](Self::pending_requests), but held by the hub up to `wait`
+    /// seconds while its answer's mark is still `seen` (a hub that names `wait_max`
+    /// in [`HubInfo`]; an older one answers at once). The call's time limit is above
+    /// the hold.
+    pub fn pending_held(
+        &self,
+        token: &Secret,
+        online: bool,
+        seen: Option<&str>,
+        wait: u32,
+    ) -> Result<Pending, ClientError> {
         #[derive(Deserialize)]
         struct Item {
             id: String,
@@ -882,22 +978,40 @@ impl HubClient {
         #[derive(Deserialize)]
         struct Body {
             accounts: Vec<Item>,
+            #[serde(default)]
+            mark: Option<String>,
         }
+        let mut query = Vec::new();
+        if online {
+            query.push("online=1".to_owned());
+        }
+        if let Some(seen) = seen.filter(|_| wait > 0) {
+            query.push(format!("wait={wait}"));
+            // The hub's own hex mark; anything else would only never match.
+            let seen: String = seen.chars().filter(char::is_ascii_hexdigit).collect();
+            query.push(format!("seen={seen}"));
+        }
+        let path = match query.is_empty() {
+            true => "library/pending".to_owned(),
+            false => format!("library/pending?{}", query.join("&")),
+        };
         let response = self
             .agent
-            .get(self.url.api(if online {
-                "library/pending?online=1"
-            } else {
-                "library/pending"
-            }))
+            .get(self.url.api(&path))
+            .config()
+            .timeout_global(Some(CALL_TIMEOUT + Duration::from_secs(wait.into())))
+            .build()
             .header("Authorization", bearer(token))
             .call()
             .map_err(transport)?;
         let body: Body = answer(response)?;
-        body.accounts
-            .into_iter()
+        let accounts = (body.accounts.into_iter())
             .map(|a| Ok((a.id.parse().map_err(|_| ClientError::BadAnswer)?, a.seq)))
-            .collect()
+            .collect::<Result<_, ClientError>>()?;
+        Ok(Pending {
+            accounts,
+            mark: body.mark,
+        })
     }
 
     /// `GET /api/pub`: the ids of the library's publications on the hub.

@@ -883,6 +883,7 @@ async fn save_server(h: &Harness, change: &[(&str, &str)]) -> Reply {
         ("instance_name".to_owned(), String::new()),
         ("sync_interval".to_owned(), "5".to_owned()),
         ("show_online".to_owned(), "1".to_owned()),
+        ("images".to_owned(), "reduced".to_owned()),
     ];
     for (key, value) in change {
         set(&mut fields, key, value);
@@ -909,6 +910,30 @@ async fn showing_the_members_that_this_computer_is_online_can_be_turned_off() {
     save_server(&h, &[]).await;
     let (config, _) = Config::from_toml(&h.config_file(), &h.library.config_path()).unwrap();
     assert!(config.hub.show_online);
+}
+
+#[tokio::test]
+async fn the_images_of_books_sent_to_devices_are_a_setting() {
+    let h = harness(COMMENTED, ConfigOverrides::default());
+    let page = h.ok("/settings/server").await;
+    assert!(
+        page.body
+            .contains(r#"<input type="radio" name="images" value="reduced" checked>"#),
+        "reduced by default"
+    );
+    for (value, mode) in [
+        ("none", shelfgauge::config::ImageMode::None),
+        ("original", shelfgauge::config::ImageMode::Original),
+        ("reduced", shelfgauge::config::ImageMode::Reduced),
+    ] {
+        let reply = save_server(&h, &[("images", value)]).await;
+        assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.body);
+        let (config, _) = Config::from_toml(&h.config_file(), &h.library.config_path()).unwrap();
+        assert_eq!(config.hub.images, mode);
+    }
+    assert!(h.config_file().contains(r#"images = "reduced""#));
+    // Anything else in the file is refused.
+    assert!(Config::from_toml("[hub]\nimages = \"tiny\"\n", &h.library.config_path()).is_err());
 }
 
 #[tokio::test]

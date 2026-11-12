@@ -923,8 +923,15 @@ and sealing in the app (`src/publication/`).
   (`shown_images`: block and inline images, table cells included), and the cover only
   when it is one of them: the hub reader shows no cover of its own (the Showcase has
   its own thumbnails), and a cover outside the text was often half a book's size.
+  With `[hub] images = "reduced"` (the default; 0.25.0) an image wider than 1080 px
+  as shown (turned upright by its EXIF orientation first, as browsers show it; so are
+  the catalog's thumbnails) is scaled to that width (Lanczos3; the readers limit
+  images by width only) and re-encoded, JPEG q80 or PNG for transparency or at most 256 colors; the original
+  stays when not smaller, undecodable within the thumbnail's limits, or an animated
+  GIF (`images::reduce`). `"none"` leaves images out (the hub reader shows the alt
+  text in a box); `"original"` keeps the book's bytes.
 - **Sealing**: raw deflate (`flate2`; `DecompressionStream("deflate-raw")` on the
-  device) → padding (`[len u32 BE][data][zeros]` up to the bucket: 256 bytes, then
+  device; image blobs in stored blocks since 0.25.0, level 0: the same format) → padding (`[len u32 BE][data][zeros]` up to the bucket: 256 bytes, then
   each size plus an eighth) → AES-256-GCM with the book key (`aes-gcm`; WebCrypto on
   the device; the core crate does no cryptography). A blob is
   `[format version u16 BE][nonce 12][ciphertext + tag]`; associated data
@@ -1473,8 +1480,21 @@ and away, and the circles of libraries later.
   library's `max_bytes`; never expiring): `PUT`/`DELETE /api/catalog/{*path}` by the
   library token (at most 4 MiB, a catalog envelope of a supported version), `GET` by
   it and its accounts' devices, `GET /api/catalog` (the library's listing),
-  `GET /api/library/pending` (per account the highest `seq` of its request records),
-  record kinds `book_request` and `cover_request`, `catalog_formats` in `/api/info`.
+  `GET /api/library/pending` (per account the highest `seq` of its request records,
+  and a `mark` of that list), record kinds `book_request` and `cover_request`,
+  `catalog_formats` in `/api/info`.
+- **Held calls** (0.25.0, Phase 31.7; `hub::held`): `GET /api/library/pending?wait=25&seen=<mark>`
+  holds the answer while its `mark` (the first 16 bytes of the SHA-256 of the
+  `(id, seq)` list, hex) is still `seen`, until a device of the library pushes a
+  request record or 25 s pass; `GET /api/sync?since=N&wait=25` holds while the
+  account has nothing after `N`, until any push to it. A wake is an in-memory hint
+  (a `watch` channel per library or account, taken before the database is read and
+  signalled after the push commits); the answer is read from the database as without
+  waiting, and nothing is read while held. At most 2 held calls per token and 4096 on
+  the hub (over a cap: answered at once); a held call counts once in the token's
+  bucket; the shutdown signal answers them all (a restart does not wait 25 s);
+  `wait_max` in `/api/info` names the hold; the trace does not log the held time as
+  a slow request. A hub restart loses nothing: the mark is stateless.
 - **Library** (`hub_client::catalog_sync`, `requests`; `userdata.sqlite` v8): the
   catalog is built from the books on the Showcase (readable ones, one entry per
   content; five queries for any number of books), changed chunks uploaded first
@@ -1483,7 +1503,15 @@ and away, and the circles of libraries later.
   a Showcase change, a publication or a scan, and at every full round. Requests are
   kept from the pull in the cursor's transaction (`hub_requests`), so none is lost
   when serving fails. Every 30 s the library asks `pending` and pulls only the
-  accounts ahead of their cursor. A `book_request` is served only if the book is on
+  accounts ahead of their cursor; with a hub that names `wait_max` (0.25), a watcher
+  task holds `pending` open in a loop and wakes the worker (a `Notify`; the worker
+  waits for its tick or the wake, so serving stays in one task) when an account's
+  request records moved past its cursor: a request is served within seconds. A check
+  answered at once with nothing new waits a tick (the watcher never spins). The
+  catalog build is cached (`showcase_built`) while the index's scan generation, the
+  catalog epoch (`mark_catalog_dirty` counts), the Showcase marks themselves and the
+  catalog key are what it was made from; cover requests are served before book
+  requests. A `book_request` is served only if the book is on
   the Showcase *now* (a member's catalog may be stale, and anyone with the library key
   can name any book id), or (Phase 31.6) it is on the requesting account's own shelf
   as an upload, published or expired (`hub_shelf`: the admin's earlier **Read on
@@ -1498,6 +1526,14 @@ and away, and the circles of libraries later.
   and an `updated_at` later than the request's, so it wins the devices' merge. A
   `cover_request` gets JPEG thumbnails 120 px wide (the `image` crate, decoding
   limits, only covers of books on the Showcase), deleted with their book's leaving.
+  **Thumbnails ahead** (0.25.0, Phase 31.7): after the requests at each tick (not
+  at a watcher's wake, so a burst of requests keeps the token's rate) the worker
+  uploads up to 100 thumbnails the hub lacks (`built.covers` minus
+  `hub_catalog_covers`, `userdata.sqlite` v10 noting each one's sealed size), in the
+  Explore page's first order (Recent: newest `added`, then title), 4 at a time, until
+  5 000 thumbnails or 5 % of `quotas.max_bytes` of `/api/info` (the lower; those made
+  on request counted, which the cap does not bound). The hub's `quota` answer stops
+  the pass until the next full round; an unreachable hub or a `429` backs off.
 - **Reader** (`assets/hub/showcase.js`, `/showcase`; the shelf and the Showcase share
   the page tabs Bookshelf | Explore, `pageTabs` in `hub.js`, the library's `.modes`
   switch, with only Bookshelf on all shelves at once): the catalog kept per account in
@@ -1505,7 +1541,10 @@ and away, and the circles of libraries later.
   WASM `LibraryCatalog` checks and searches; a chunk that does not match its index
   means the library is uploading: the kept catalog stays. Views in the library's
   markup (`.books`, `.authors`, `.book-card`, `.facts`, `.pager`). **Get this book**
-  writes a `book_request` record and asks for answers every 15 s while one waits;
+  writes a `book_request` record; while one waits (or thumbnails asked for, up to
+  3 minutes) the page holds `GET /api/sync?wait=25` open (`store.awaitChange`), let
+  go of while hidden, and syncs on a change (every 15 s with a hub that answers at
+  once);
   **Open** for a book on the shelf or already on the hub; **Download book file** makes
   the `.sgbook` on the device (`bookfile.writeBookFile`, the instance's bytes for the
   same entries); thumbnails asked for when a card is shown, kept on the device.

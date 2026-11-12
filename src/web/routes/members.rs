@@ -171,7 +171,7 @@ pub(crate) async fn invite(
         .and_then(|a| a.invite.as_ref())
         .map(|i| i.id);
     let token = library.token.clone();
-    let created = call(library.hub_url.clone(), move |c| {
+    let created = call(state, library.hub_url.clone(), move |c| {
         if let Some(old) = replaced {
             c.withdraw_invite(&token, &old)?;
         }
@@ -243,7 +243,7 @@ pub(crate) async fn sign_out(
         return Ok(Err(Refusal::NoAccount));
     };
     let token = library.token.clone();
-    match call(library.hub_url.clone(), move |c| {
+    match call(state, library.hub_url.clone(), move |c| {
         c.sign_out_member(&token, &id)
     })
     .await?

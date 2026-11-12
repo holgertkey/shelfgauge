@@ -2441,28 +2441,30 @@ async fn a_forged_shelf_item_does_not_open_a_closed_folder() {
     );
 }
 
+/// An FB2 book `title` with a cover (a 1×1 PNG).
+fn covered(title: &str) -> Vec<u8> {
+    const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    String::from_utf8(fb2_book(title, "Cora"))
+        .unwrap()
+        .replace(
+            "<FictionBook>",
+            r#"<FictionBook xmlns:l="http://www.w3.org/1999/xlink">"#,
+        )
+        .replace(
+            "<book-title>",
+            r##"<coverpage><image l:href="#c"/></coverpage><book-title>"##,
+        )
+        .replace(
+            "</FictionBook>",
+            &format!(r#"<binary id="c" content-type="image/png">{PNG}</binary></FictionBook>"#),
+        )
+        .into_bytes()
+}
+
 #[tokio::test]
 async fn thumbnails_are_made_on_request_for_showcase_books_only() {
     use shelfgauge::hub_client::catalog::open;
     use shelfgauge_core::catalog::CatalogPath;
-    const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
-    let covered = |title: &str| {
-        String::from_utf8(fb2_book(title, "Cora"))
-            .unwrap()
-            .replace(
-                "<FictionBook>",
-                r#"<FictionBook xmlns:l="http://www.w3.org/1999/xlink">"#,
-            )
-            .replace(
-                "<book-title>",
-                r##"<coverpage><image l:href="#c"/></coverpage><book-title>"##,
-            )
-            .replace(
-                "</FictionBook>",
-                &format!(r#"<binary id="c" content-type="image/png">{PNG}</binary></FictionBook>"#),
-            )
-            .into_bytes()
-    };
     let hub = TestHub::start().await;
     let lib = Lib::with_books(
         &hub.url,
@@ -2583,4 +2585,384 @@ async fn the_pending_check_names_accounts_with_new_requests() {
     };
     tokio::task::spawn_blocking(quiet).await.unwrap();
     assert!(online_at().await.is_null());
+}
+
+/// Phase 31.7: with a hub that holds calls, the worker's watcher wakes it as soon as
+/// a member's device asks, so the request is served within seconds, not at the next
+/// 30 s tick.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_request_is_served_within_seconds_of_its_push() {
+    let hub = TestHub::start().await;
+    let lib = showcase_library(&hub).await;
+    let (token, key) = member_device(&hub, &lib, "Olga").await;
+    open_folder(&lib, "sf", true).await;
+    lib.sync().await;
+    let worker = shelfgauge::web::hub_sync::start(lib.state.clone());
+    // The worker's first round (at start) is over before the member asks.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while lib.account().unwrap().synced_at.is_none() {
+        assert!(std::time::Instant::now() < deadline, "no first round");
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    let beta = catalog_id(&lib, "sf/inner/beta.fb2");
+    let asked = std::time::Instant::now();
+    ask(&hub, &token, &key, &beta, shelfgauge::annotations::now()).await;
+    loop {
+        if request_answer(&hub, &token, &key, &beta).await.is_none() {
+            break;
+        }
+        assert!(
+            asked.elapsed() < std::time::Duration::from_secs(10),
+            "not served before the next tick"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let records = common::hub::pull_records(&hub, &token, &key).await;
+    assert!(records.iter().any(|(kind, _, data)| kind == "shelf_item"
+        && data.as_ref().is_some_and(|d| d["title"] == "Beta")));
+    worker.abort();
+}
+
+/// The answer to the member's request for `book`: `None` once served (deleted).
+async fn answered(hub: &TestHub, token: &str, key: &AccountKey, book: &str) -> Option<String> {
+    request_answer(hub, token, key, book)
+        .await
+        .map(|answer| answer["reason"].as_str().unwrap_or_default().to_owned())
+}
+
+/// Phase 31.7: requests are checked against a cached build of the catalog, which is
+/// never used after the Showcase or the index changed.
+#[tokio::test]
+async fn a_cached_catalog_never_outlives_a_closed_folder_or_a_scan() {
+    let hub = TestHub::start().await;
+    let lib = showcase_library(&hub).await;
+    let (token, key) = member_device(&hub, &lib, "Olga").await;
+    open_folder(&lib, "sf", true).await;
+    lib.sync().await;
+    // Served from the Showcase: the build is cached now.
+    let beta = catalog_id(&lib, "sf/inner/beta.fb2");
+    ask(&hub, &token, &key, &beta, shelfgauge::annotations::now()).await;
+    lib.sync().await;
+    assert_eq!(answered(&hub, &token, &key, &beta).await, None);
+    // The folder closes: the next request is checked against the Showcase now.
+    open_folder(&lib, "sf", false).await;
+    let alpha = catalog_id(&lib, "sf/alpha.fb2");
+    ask(&hub, &token, &key, &alpha, shelfgauge::annotations::now()).await;
+    lib.sync().await;
+    assert_eq!(
+        answered(&hub, &token, &key, &alpha).await.as_deref(),
+        Some("closed")
+    );
+    // A book new in an open folder is found after the scan.
+    open_folder(&lib, "sf", true).await;
+    std::fs::write(lib.root().join("sf/delta.fb2"), fb2_book("Delta", "Dina")).unwrap();
+    lib.rescan();
+    let delta = catalog_id(&lib, "sf/delta.fb2");
+    ask(&hub, &token, &key, &delta, shelfgauge::annotations::now()).await;
+    lib.sync().await;
+    assert_eq!(answered(&hub, &token, &key, &delta).await, None);
+}
+
+/// One call seen by [`recording_hub`]: method, path, when it started and ended.
+#[derive(Debug, Clone)]
+struct Seen {
+    method: Method,
+    path: String,
+    started: std::time::Instant,
+    ended: std::time::Instant,
+}
+
+/// Serves `hub`'s app on another loopback port, recording every call and failing the
+/// `fail_at`-th blob upload (counted from 1) with a 500; its URL and the record.
+async fn recording_hub(
+    hub: &TestHub,
+    fail_at: Option<usize>,
+) -> (String, Arc<std::sync::Mutex<Vec<Seen>>>) {
+    use axum::extract::Request;
+    use axum::middleware::Next;
+    use axum::response::IntoResponse;
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let blobs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let record = Arc::clone(&seen);
+    // The hub answers only to its own address.
+    let host = header::HeaderValue::from_str(hub.url.trim_start_matches("http://")).unwrap();
+    let app = hub.app.clone().layer(axum::middleware::from_fn(
+        move |mut req: Request, next: Next| {
+            let (record, blobs) = (Arc::clone(&record), Arc::clone(&blobs));
+            req.headers_mut().insert(header::HOST, host.clone());
+            async move {
+                let (method, path) = (req.method().clone(), req.uri().path().to_owned());
+                let started = std::time::Instant::now();
+                let blob = method == Method::PUT && path.starts_with("/api/pub/");
+                let n = if blob {
+                    blobs.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+                } else {
+                    0
+                };
+                let response = if blob && Some(n) == fail_at {
+                    StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                } else {
+                    next.run(req).await
+                };
+                record.lock().unwrap().push(Seen {
+                    method,
+                    path,
+                    started,
+                    ended: std::time::Instant::now(),
+                });
+                response
+            }
+        },
+    ));
+    let port = serve(app).await;
+    (format!("http://127.0.0.1:{port}"), seen)
+}
+
+/// A library whose book `long.txt` is published in several parts, on `hub` reached
+/// through `url`.
+async fn long_book_library(hub: &TestHub) -> (Lib, i64) {
+    let paragraph = "A line of a long book that goes on and on. ".repeat(20);
+    let text = (0..3000)
+        .map(|n| format!("{n} {paragraph}\n\n"))
+        .collect::<String>();
+    let lib = Lib::with_books(&hub.url, "Home library", &[("long.txt", text.into_bytes())]);
+    lib.create_library(&hub.invite()).await;
+    let book = lib.book("long.txt");
+    (lib, book)
+}
+
+/// Points `lib` at the hub URL `url`.
+fn point_at(lib: &Lib, url: &str) {
+    lib.userdata
+        .lock()
+        .execute("UPDATE hub_library SET hub_url = ?1", [url])
+        .unwrap();
+}
+
+/// Phase 31.7: a book's blobs go several at a time, the manifest last, only after
+/// every other blob was stored.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_manifest_is_uploaded_after_every_other_blob() {
+    let hub = TestHub::start().await;
+    let (lib, book) = long_book_library(&hub).await;
+    let (url, seen) = recording_hub(&hub, None).await;
+    point_at(&lib, &url);
+    assert_eq!(lib.publish(book).await, "published");
+    let puts: Vec<Seen> = (seen.lock().unwrap().iter())
+        .filter(|s| s.method == Method::PUT && s.path.starts_with("/api/pub/"))
+        .cloned()
+        .collect();
+    assert!(puts.len() > 4, "several parts: {}", puts.len());
+    let manifest = puts.iter().find(|s| s.path.ends_with("/manifest")).unwrap();
+    for other in puts.iter().filter(|s| !s.path.ends_with("/manifest")) {
+        assert!(
+            other.ended <= manifest.started,
+            "{} after the manifest",
+            other.path
+        );
+    }
+    assert_eq!(
+        lib.shelf()[0].state,
+        shelfgauge::hub_client::store::ShelfState::Published
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failed_blob_deletes_the_partial_copy_and_restores_the_shelf() {
+    let hub = TestHub::start().await;
+    let (lib, book) = long_book_library(&hub).await;
+    let (url, seen) = recording_hub(&hub, Some(2)).await;
+    point_at(&lib, &url);
+    assert_ne!(lib.publish(book).await, "published");
+    let seen = seen.lock().unwrap().clone();
+    assert!(
+        !seen.iter().any(|s| s.path.ends_with("/manifest")),
+        "no manifest after a failure"
+    );
+    assert!(
+        seen.iter()
+            .any(|s| s.method == Method::DELETE && s.path.starts_with("/api/pub/")),
+        "the partial copy is deleted"
+    );
+    assert!(lib.shelf().is_empty(), "the shelf entry is gone again");
+    let token = lib.hub_library().token;
+    let listed = tokio::task::spawn_blocking(move || {
+        shelfgauge::hub_client::HubClient::new(shelfgauge::hub_client::HubUrl::parse(&url).unwrap())
+            .publications(&token)
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    assert!(listed.is_empty(), "nothing left on the hub");
+}
+
+/// A library on `hub` with `count` covered books in `open/` (`Book 000`, ...), each
+/// added one second after the one before, the folder on the Showcase and the
+/// catalog uploaded.
+async fn covered_library(hub: &TestHub, count: usize) -> Lib {
+    let books: Vec<(String, Vec<u8>)> = (0..count)
+        .map(|n| (format!("open/{n:03}.fb2"), covered(&format!("Book {n:03}"))))
+        .collect();
+    let files: Vec<(&str, Vec<u8>)> = books.iter().map(|(p, b)| (p.as_str(), b.clone())).collect();
+    let lib = Lib::with_books(&hub.url, "Home library", &files);
+    let index = rusqlite::Connection::open(lib.library.db_path()).unwrap();
+    index
+        .execute("UPDATE books SET added_at = 1000000 + id", [])
+        .unwrap();
+    drop(index);
+    lib.create_library(&hub.invite()).await;
+    open_folder(&lib, "open", true).await;
+    lib.sync().await;
+    lib
+}
+
+/// The titles of the catalog entries whose thumbnails are on the hub.
+async fn titles_with_thumbnails(hub: &TestHub, lib: &Lib, token: &str) -> Vec<String> {
+    let (_, _, entries) = read_catalog(hub, lib, token).await;
+    let mut out = Vec::new();
+    for entry in entries {
+        let path = shelfgauge_core::catalog::CatalogPath::Thumbnail(entry.cover.unwrap());
+        if hub.catalog_blob(token, &path.to_string()).await.0 == StatusCode::OK {
+            out.push(entry.title);
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Phase 31.7: the worker uploads the Showcase's thumbnails ahead of any request, a
+/// batch at a tick, the books the Explore page shows first (newest) first.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn thumbnails_go_up_ahead_newest_first_a_batch_at_a_time() {
+    use shelfgauge::web::hub_sync::{Ahead, thumbnails_ahead_once};
+    let hub = TestHub::start().await;
+    let lib = covered_library(&hub, 250).await;
+    let (token, _) = member_device(&hub, &lib, "Olga").await;
+    assert_eq!(
+        thumbnails_ahead_once(&lib.state).await,
+        Some(Ahead::Uploaded(100))
+    );
+    // The newest 100: books 150 to 249.
+    let up = titles_with_thumbnails(&hub, &lib, &token).await;
+    let newest: Vec<String> = (150..250).map(|n| format!("Book {n:03}")).collect();
+    assert_eq!(up, newest);
+    assert_eq!(
+        thumbnails_ahead_once(&lib.state).await,
+        Some(Ahead::Uploaded(100))
+    );
+    assert_eq!(
+        thumbnails_ahead_once(&lib.state).await,
+        Some(Ahead::Uploaded(50))
+    );
+    assert_eq!(thumbnails_ahead_once(&lib.state).await, Some(Ahead::Done));
+    assert_eq!(
+        lib.value::<i64>("SELECT count(*) FROM hub_catalog_covers"),
+        250
+    );
+    assert_eq!(
+        lib.value::<i64>("SELECT count(*) FROM hub_catalog_covers WHERE size > 0"),
+        250,
+        "sizes noted"
+    );
+    // A book leaving the Showcase takes its thumbnail with it, as before.
+    std::fs::remove_file(lib.root().join("open/249.fb2")).unwrap();
+    lib.rescan();
+    lib.sync().await;
+    assert_eq!(
+        lib.value::<i64>("SELECT count(*) FROM hub_catalog_covers"),
+        249
+    );
+}
+
+/// Phase 31.7: thumbnails ahead take at most 5 % of the library's quota; a member's
+/// request for one past it is still served.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn thumbnails_ahead_keep_to_their_share_of_the_quota() {
+    use shelfgauge::web::hub_sync::{Ahead, thumbnails_ahead_once};
+    // 5 % of 40 000 bytes: room for a few thumbnails.
+    let hub = TestHub::start_with(|c| c.quotas.max_bytes = 40_000).await;
+    let lib = covered_library(&hub, 20).await;
+    let (token, key) = member_device(&hub, &lib, "Olga").await;
+    let first = thumbnails_ahead_once(&lib.state).await;
+    let Some(Ahead::Uploaded(made)) = first else {
+        panic!("{first:?}");
+    };
+    assert!((1..20).contains(&made), "{made}");
+    let bytes = lib.value::<i64>("SELECT sum(size) FROM hub_catalog_covers");
+    assert!(bytes <= 2000, "{bytes}");
+    assert_eq!(
+        thumbnails_ahead_once(&lib.state).await,
+        Some(Ahead::Done),
+        "capped"
+    );
+    // On request: made past the cap.
+    let (_, _, entries) = read_catalog(&hub, &lib, &token).await;
+    let missing = (entries.iter())
+        .find(|e| e.title == "Book 000")
+        .and_then(|e| e.cover)
+        .unwrap();
+    common::hub::push_record(
+        &hub,
+        &token,
+        &key,
+        "cover_request",
+        "covers-1",
+        Some(serde_json::json!({ "covers": [missing.to_string()], "updated_at": 1 })),
+    )
+    .await;
+    lib.sync().await;
+    let path = shelfgauge_core::catalog::CatalogPath::Thumbnail(missing);
+    assert_eq!(
+        hub.catalog_blob(&token, &path.to_string()).await.0,
+        StatusCode::OK
+    );
+}
+
+/// Phase 31.7: the hub's quota answer stops the pass (the worker waits for the next
+/// full round); a member's request is still served once there is room.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_full_quota_stops_the_thumbnails_ahead() {
+    use shelfgauge::hub::LibraryQuotas;
+    use shelfgauge::web::hub_sync::{Ahead, thumbnails_ahead_once};
+    let hub = TestHub::start().await;
+    let lib = covered_library(&hub, 20).await;
+    let (token, key) = member_device(&hub, &lib, "Olga").await;
+    let set_quota = |extra: u64| {
+        let summary = hub.state.hub().libraries().unwrap().pop().unwrap();
+        let quotas = LibraryQuotas {
+            max_bytes: Some(summary.usage.bytes + extra),
+            max_publications: None,
+        };
+        assert!(
+            hub.state
+                .hub()
+                .set_library_quotas(summary.id, &quotas)
+                .unwrap()
+        );
+    };
+    set_quota(10);
+    assert_eq!(thumbnails_ahead_once(&lib.state).await, Some(Ahead::Quota));
+    assert_eq!(
+        lib.value::<i64>("SELECT count(*) FROM hub_catalog_covers"),
+        0
+    );
+    set_quota(1 << 20);
+    let (_, _, entries) = read_catalog(&hub, &lib, &token).await;
+    let cover = entries[0].cover.unwrap();
+    common::hub::push_record(
+        &hub,
+        &token,
+        &key,
+        "cover_request",
+        "covers-1",
+        Some(serde_json::json!({ "covers": [cover.to_string()], "updated_at": 1 })),
+    )
+    .await;
+    lib.sync().await;
+    let path = shelfgauge_core::catalog::CatalogPath::Thumbnail(cover);
+    assert_eq!(
+        hub.catalog_blob(&token, &path.to_string()).await.0,
+        StatusCode::OK
+    );
 }

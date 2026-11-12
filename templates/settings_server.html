@@ -66,6 +66,13 @@
       <label class="check"><input type="checkbox" name="show_online" value="1"{% if show_online %} checked{% endif %}> Show the library's members when this computer is online</label>
       <p class="hint">In Explore in the reader: “online: the book comes within a minute”, or when it was last online.</p>
     </div>
+    <fieldset class="field">
+      <legend>Images in books sent to devices</legend>
+      <label class="check"><input type="radio" name="images" value="reduced"{% if images == "reduced" %} checked{% endif %}> Reduced <span class="muted">(smaller, for phones)</span></label>
+      <label class="check"><input type="radio" name="images" value="original"{% if images == "original" %} checked{% endif %}> Original</label>
+      <label class="check"><input type="radio" name="images" value="none"{% if images == "none" %} checked{% endif %}> None <span class="muted">(text only)</span></label>
+      <p class="hint">For books sent from now on (Read on phone, members' requests, book files); copies already on the hub and on the devices stay as they are.</p>
+    </fieldset>
   </section>
   <div class="form-actions">
     <button type="submit" class="primary">Save</button>

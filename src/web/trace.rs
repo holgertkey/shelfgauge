@@ -55,6 +55,11 @@ pub(crate) struct TraceSettings {
     pub(crate) slow: Duration,
 }
 
+/// A response extension: how long the handler held the call on purpose (long
+/// polling), not counted as slow.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct HeldFor(pub(crate) Duration);
+
 /// Middleware: runs the request in its span and logs its end.
 ///
 /// The end event is at `warn` for 5xx, at `info` for a slow request, at `debug`
@@ -83,13 +88,17 @@ pub(crate) async fn trace_requests(
     req.extensions_mut().insert(id);
     let started = Instant::now();
     let response = next.run(req).instrument(span.clone()).await;
+    let held = response
+        .extensions()
+        .get::<HeldFor>()
+        .map_or(Duration::ZERO, |h| h.0);
     let elapsed = started.elapsed();
     let status = response.status().as_u16();
     let latency_ms = elapsed.as_micros() as f64 / 1000.0;
     let _entered = span.enter();
     if status >= 500 {
         tracing::warn!(status, latency_ms, "request failed");
-    } else if elapsed >= settings.slow {
+    } else if elapsed.saturating_sub(held) >= settings.slow {
         tracing::info!(status, latency_ms, "slow request");
     } else if asset {
         tracing::trace!(status, latency_ms, "request");

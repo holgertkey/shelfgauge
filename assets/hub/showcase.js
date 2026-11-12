@@ -11,24 +11,27 @@
 // is uploading a new catalog: what is kept here stays until the next try.
 //
 // "Get this book" writes a `book_request` record into the person's account; the
-// library publishes the book onto their shelf at its next check (every 30 s while its
-// computer is on), or refuses it (`refused` with a reason). The reading view asks the
-// same way for a shelf book whose copy on the hub is gone (Phase 31.6, hub.js). A book card shows the
-// book's thumbnail: kept here, else fetched from the hub, else asked for with a
-// `cover_request` record (the library makes it at its next check). "Download book
-// file" makes a book file here from a published book's blobs (bookfile.js). Text from
-// the catalog goes into the page as text only (`textContent`), never as markup.
+// library publishes the book onto their shelf within seconds while its computer is
+// on (the hub wakes its held check, Phase 31.7), or refuses it (`refused` with a
+// reason). The reading view asks the same way for a shelf book whose copy on the hub
+// is gone (Phase 31.6, hub.js). A book card shows the book's thumbnail: kept here,
+// else fetched from the hub (the library uploads them ahead), else asked for with a
+// `cover_request` record and fetched once more when the library answered it. While
+// something waits, the page holds a pull open (`store.awaitChange`) instead of
+// asking on a timer, and lets go of it while hidden. "Download book file" makes a
+// book file here from a published book's blobs (bookfile.js). Text from the catalog
+// goes into the page as text only (`textContent`), never as markup.
 import * as bookfile from "./bookfile.js";
 import * as c from "./crypto.js";
 import * as store from "./store.js";
 
 const base = store.base;
 const PAGE_SIZE = 50;
-// How often the page asks for the answers to its requests while some are waiting.
+// The pause before the next look when the hub answered at once with nothing new (an
+// older hub, its cap on held calls) or could not be reached.
 const POLL_MS = 15000;
-// How often, and how many times, a thumbnail asked for is looked for again.
-const COVER_RETRY_MS = 15000;
-const COVER_TRIES = 6;
+// How long the page waits for the thumbnails it asked for.
+const COVER_WAIT_MS = 180000;
 // The largest thumbnail opened.
 const MAX_THUMBNAIL = 1024 * 1024;
 
@@ -43,6 +46,11 @@ let shelved = new Map();
 // Book ids (hex) → the request record's value.
 let requests = new Map();
 let pollTimer = null;
+// The held look running now, to abort it when the page is hidden.
+let pollAbort = null;
+// Thumbnails asked for and not answered yet: cover id → [entry, placeholder].
+const coversWaiting = new Map();
+let coversAskedAt = 0;
 // When the library's computer last checked in with the hub (Unix seconds), or null
 // (it does not let its members know, or the hub restarted since).
 let onlineAt = null;
@@ -556,8 +564,11 @@ function bookCard(id) {
 // Thumbnails asked for in this page's life (not asked again).
 const coversAsked = new Set();
 
-/** The thumbnail of `entry` in place of `placeholder`: kept here, else fetched, else asked for. */
-async function showCover(entry, placeholder, tries = 0) {
+/**
+ * The thumbnail of `entry` in place of `placeholder`: kept here, else fetched, else
+ * (with `ask`) asked for, and fetched again when the library answered.
+ */
+async function showCover(entry, placeholder, ask = true) {
   try {
     let image = await store.catalogGet(p, `t/${entry.cover}`);
     if (!image && shown.key) {
@@ -567,11 +578,9 @@ async function showCover(entry, placeholder, tries = 0) {
         const plain = await c.openCatalogBlob(shown.key, c.unhex(p.library), `t/${entry.cover}`, sealed, MAX_THUMBNAIL);
         image = new Blob([plain], { type: "image/jpeg" });
         await store.catalogWrite(p, [[`t/${entry.cover}`, image]]);
-      } else if (response.status === 404) {
-        await askCover(entry.cover);
-        if (tries < COVER_TRIES && placeholder.isConnected) {
-          setTimeout(() => showCover(entry, placeholder, tries + 1), COVER_RETRY_MS);
-        }
+      } else if (response.status === 404 && ask && (await askCover(entry.cover))) {
+        coversWaiting.set(entry.cover, [entry, placeholder]);
+        poll();
       }
     }
     if (image && placeholder.isConnected) {
@@ -587,17 +596,47 @@ async function showCover(entry, placeholder, tries = 0) {
   }
 }
 
-/** Asks the library for a thumbnail (a `cover_request` record of this device). */
+/**
+ * Asks the library for a thumbnail (a `cover_request` record of this device); false
+ * when it was asked for already in this page's life.
+ */
 async function askCover(cover) {
   if (coversAsked.has(cover)) {
-    return;
+    return false;
   }
   coversAsked.add(cover);
+  coversAskedAt = Date.now();
   await store.write(p, "cover_request", `covers-${p.device}`, {
     covers: [...coversAsked].slice(-200),
     updated_at: Math.floor(Date.now() / 1000),
   });
   await store.push(p).catch(() => {});
+  return true;
+}
+
+/**
+ * Once the library answered the thumbnails asked for (it deleted the request), fetches
+ * those still on the page once more.
+ */
+async function coversAnswered() {
+  if (!coversWaiting.size) {
+    return;
+  }
+  if (Date.now() - coversAskedAt >= COVER_WAIT_MS) {
+    coversWaiting.clear();
+    return;
+  }
+  const asked = await store.get(p, "cover_request", `covers-${p.device}`).catch(() => null);
+  if (asked) {
+    return;
+  }
+  const waiting = [...coversWaiting.values()];
+  coversWaiting.clear();
+  for (const [entry, placeholder] of waiting) {
+    if (placeholder.isConnected) {
+      showCover(entry, placeholder, false);
+    }
+  }
 }
 
 /** The key the lists of authors and series take (the core's `normalize_key`). */
@@ -759,26 +798,65 @@ export async function requestBook(account, id) {
   return value;
 }
 
-/** While a request waits, asks for the answers every POLL_MS. */
+/** Whether a book or thumbnails asked for wait for the library's answer. */
+function waitingForAnswers() {
+  const books = [...requests.entries()].some(([id, r]) => r.state === "pending" && !shelved.has(id));
+  const covers = coversWaiting.size > 0 && Date.now() - coversAskedAt < COVER_WAIT_MS;
+  return books || covers;
+}
+
+/**
+ * While a request waits and the page is visible, holds a pull open (the hub answers
+ * as soon as the account changes, Phase 31.7); on a change, syncs and draws the page
+ * again. A hub that answers at once, or one out of reach, is asked again after
+ * POLL_MS. A hidden page lets go of the held call ([`watchVisibility`]).
+ */
 function poll() {
   clearTimeout(pollTimer);
-  const waiting = [...requests.entries()].some(([id, r]) => r.state === "pending" && !shelved.has(id));
-  if (!waiting) {
+  if (pollAbort || document.hidden || !waitingForAnswers()) {
     return;
   }
-  pollTimer = setTimeout(async () => {
+  const controller = new AbortController();
+  pollAbort = controller;
+  (async () => {
+    let next = 0;
     try {
-      p = await ui.syncAccount(p);
-      await readAccount();
-      await refreshOnline();
-      render();
+      const outcome = await store.awaitChange(p, controller.signal);
+      if (outcome === "changed") {
+        p = await ui.syncAccount(p);
+        await readAccount();
+        await refreshOnline();
+        render();
+        await coversAnswered();
+      } else if (outcome === "quick") {
+        next = POLL_MS;
+      }
     } catch (e) {
-      if (!ui.unreachable(e)) {
+      if (!controller.signal.aborted && !ui.unreachable(e)) {
         console.error(e);
       }
+      next = POLL_MS;
+    } finally {
+      pollAbort = null;
     }
-    poll();
-  }, POLL_MS);
+    if (!controller.signal.aborted) {
+      pollTimer = setTimeout(poll, next);
+    }
+  })();
+}
+
+/** Lets go of the held call while the page is hidden, and looks again when shown. */
+function watchVisibility() {
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      clearTimeout(pollTimer);
+      if (pollAbort) {
+        pollAbort.abort();
+      }
+    } else {
+      poll();
+    }
+  });
 }
 
 /**
@@ -810,6 +888,7 @@ export async function showcasePage(helpers) {
   await refreshOnline();
   render();
   poll();
+  watchVisibility();
   window.addEventListener("popstate", render);
   document.getElementById("hub-app").addEventListener("click", (event) => {
     const a = event.target.closest("a[data-showcase]");

@@ -359,6 +359,7 @@ as it is now. When changes take effect:
 | `hub.instance_name` | `""` | The name of this library on your other devices; empty = the library folder's name. |
 | `hub.sync_interval_minutes` | `5` | Minutes between syncs with the hub; `1`–`1440`. |
 | `hub.show_online` | `true` | Whether the library's members see in the reader's Explore when this computer is online. |
+| `hub.images` | `"reduced"` | Images in books sent to devices (from then on): `"reduced"` (at most 1080 px wide, JPEG or PNG), `"original"` or `"none"` (text only). |
 
 ## Remote access
 

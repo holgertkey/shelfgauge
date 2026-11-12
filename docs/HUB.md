@@ -10,7 +10,8 @@ Caddy, by hand or with one script ("Automatic setup"). The files it uses are in
 - [`Caddyfile`](../deploy/hub/Caddyfile): Caddy in front of the hub, with HTTPS;
 - [`shelfgauge-hub.service`](../deploy/hub/shelfgauge-hub.service): the systemd unit;
 - [`hub.toml.example`](../deploy/hub/hub.toml.example): the settings of a hub on the
-  internet;
+  internet (a library's `max_bytes` holds its books, records and catalog; since 0.25
+  a library uploads the Explore thumbnails ahead, up to 5 % of it);
 - [`setup.sh`](../deploy/hub/setup.sh) with
   [`setup.env.example`](../deploy/hub/setup.env.example): the whole server in one
   script; [`update.sh`](../deploy/hub/update.sh): installing a release;
@@ -405,6 +406,9 @@ Healthchecks itself.
 
 nginx works too: pass `proxy_set_header Host $host;` and
 `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`, and add the proxy's
-address to `trusted_proxies` if it runs on another machine. Under a path
+address to `trusted_proxies` if it runs on another machine. The hub holds a
+library's check and a reader's sync open for up to 25 s (long polling, 0.25): keep
+`proxy_read_timeout` above that (nginx's default 60 s is fine). Caddy needs no
+setting. Under a path
 (`https://example.org/hub/`), set `[server] base_path = "/hub"` and let the proxy pass
 the path unchanged.

@@ -2995,7 +2995,7 @@ async fn pending_requests_report_only_request_records() {
             .await
             .json()
     };
-    assert_eq!(pending().await, json!({ "accounts": [] }));
+    assert_eq!(pending().await["accounts"], json!([]));
     assert_eq!(
         hub.get("/api/library/pending", Some(&olga.token))
             .await
@@ -3018,15 +3018,15 @@ async fn pending_requests_report_only_request_records() {
     };
     // Reading positions are not requests.
     push(olga.token.clone(), "position", "p").await;
-    assert_eq!(pending().await, json!({ "accounts": [] }));
+    assert_eq!(pending().await["accounts"], json!([]));
     let asked = push(olga.token.clone(), "book_request", "r1").await;
     let covers = push(ivan.token.clone(), "cover_request", "covers").await;
     assert_eq!(
-        pending().await,
-        json!({ "accounts": [
+        pending().await["accounts"],
+        json!([
             { "id": olga.account, "seq": asked },
             { "id": ivan.account, "seq": covers },
-        ] })
+        ])
     );
     // Other changes of the account do not move it; the library's answer does.
     push(olga.token.clone(), "annotation", "a").await;
@@ -3087,4 +3087,245 @@ async fn members_see_when_their_librarys_computer_last_checked_in() {
         StatusCode::FORBIDDEN
     );
     assert_eq!(online_at(olga.token.clone()).await, Value::Null);
+}
+
+/// Runs `call` and how long it took.
+async fn timed<T>(call: impl Future<Output = T>) -> (T, std::time::Duration) {
+    let started = std::time::Instant::now();
+    let answer = call.await;
+    (answer, started.elapsed())
+}
+
+/// Waits `ms` milliseconds of real time.
+async fn pause(ms: u64) {
+    tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+}
+
+/// A record pushed by `token`; its sequence number.
+async fn push_one(hub: &TestHub, token: &str, kind: &str, id: &str) -> i64 {
+    let answer = hub
+        .post(
+            "/api/sync",
+            Some(token),
+            json!({ "records": [{ "kind": kind, "id": id, "data": b64(&[1; 40]) }] }),
+        )
+        .await;
+    assert_eq!(answer.status, StatusCode::OK, "{kind}");
+    answer.json()["seq"].as_i64().unwrap()
+}
+
+const SECOND: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// The bound of an answer "at once", well under the holds of 5 s and more the tests
+/// use (CI machines can be slow).
+const AT_ONCE: std::time::Duration = std::time::Duration::from_secs(3);
+
+#[tokio::test]
+async fn info_names_the_longest_hold() {
+    let hub = TestHub::open();
+    assert_eq!(hub.get("/api/info", None).await.json()["wait_max"], 25);
+}
+
+#[tokio::test]
+async fn a_held_pending_check_answers_when_a_member_asks_and_not_before() {
+    let hub = TestHub::open();
+    let lib = hub.library("smiths").await;
+    let olga = hub.member(&lib, "olga", 1).await;
+    let first = hub
+        .get("/api/library/pending", Some(&lib.token))
+        .await
+        .json();
+    assert_eq!(first["accounts"], json!([]));
+    let mark = first["mark"].as_str().unwrap().to_owned();
+    let uri = format!("/api/library/pending?wait=5&seen={mark}");
+    let held = hub.get(&uri, Some(&lib.token));
+    let pushes = async {
+        pause(300).await;
+        // Not a request: the call stays held.
+        push_one(&hub, &olga.token, "position", "p").await;
+        pause(500).await;
+        push_one(&hub, &olga.token, "book_request", "r1").await
+    };
+    let ((answer, took), asked) = tokio::join!(timed(held), pushes);
+    assert_eq!(answer.status, StatusCode::OK);
+    assert!(took >= std::time::Duration::from_millis(700), "{took:?}");
+    assert!(took < 3 * SECOND, "{took:?}");
+    let json = answer.json();
+    assert_eq!(
+        json["accounts"],
+        json!([{ "id": olga.account, "seq": asked }])
+    );
+    assert_ne!(json["mark"], mark.as_str());
+}
+
+#[tokio::test]
+async fn a_held_pending_check_answers_at_once_when_something_moved_and_else_times_out() {
+    let hub = TestHub::open();
+    let lib = hub.library("smiths").await;
+    let olga = hub.member(&lib, "olga", 1).await;
+    let stale = hub
+        .get("/api/library/pending", Some(&lib.token))
+        .await
+        .json()["mark"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    push_one(&hub, &olga.token, "cover_request", "covers").await;
+    // Moved since the mark the library saw: at once.
+    let (answer, took) = timed(hub.get(
+        &format!("/api/library/pending?wait=5&seen={stale}"),
+        Some(&lib.token),
+    ))
+    .await;
+    assert!(took < AT_ONCE, "{took:?}");
+    let mark = answer.json()["mark"].as_str().unwrap().to_owned();
+    assert_ne!(mark, stale);
+    // Nothing new: held to the end, the same mark.
+    let (answer, took) = timed(hub.get(
+        &format!("/api/library/pending?wait=1&seen={mark}"),
+        Some(&lib.token),
+    ))
+    .await;
+    assert!(took >= SECOND, "{took:?}");
+    assert_eq!(answer.json()["mark"], mark.as_str());
+    // The library's own answer moves the mark too, but does not wake a held check.
+    let uri = format!("/api/library/pending?wait=1&seen={mark}");
+    let held = hub.get(&uri, Some(&lib.token));
+    let answer_it = async {
+        pause(200).await;
+        let answered = hub
+            .sync_as(
+                &lib,
+                &olga.account,
+                Some(json!({ "records": [{ "kind": "cover_request", "id": "covers", "data": null }] })),
+            )
+            .await;
+        assert_eq!(answered.status, StatusCode::OK);
+    };
+    let ((_, took), ()) = tokio::join!(timed(held), answer_it);
+    assert!(took >= SECOND, "{took:?}");
+    // Without `seen` (an older library, the first check): at once.
+    let (_, took) = timed(hub.get("/api/library/pending?wait=5", Some(&lib.token))).await;
+    assert!(took < AT_ONCE, "{took:?}");
+    // A `wait` that is not a number is refused.
+    assert_eq!(
+        hub.get("/api/library/pending?wait=soon", Some(&lib.token))
+            .await
+            .status,
+        StatusCode::BAD_REQUEST
+    );
+}
+
+#[tokio::test]
+async fn the_library_stays_online_while_its_check_is_held() {
+    let hub = TestHub::open();
+    let lib = hub.library("smiths").await;
+    let olga = hub.member(&lib, "olga", 1).await;
+    let mark = hub
+        .get("/api/library/pending", Some(&lib.token))
+        .await
+        .json()["mark"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let uri = format!("/api/library/pending?online=1&wait=2&seen={mark}");
+    let held = hub.get(&uri, Some(&lib.token));
+    let look = async {
+        pause(300).await;
+        hub.get("/api/account", Some(&olga.token)).await.json()["library_online_at"].clone()
+    };
+    let (_, during) = tokio::join!(held, look);
+    let now = hub.now();
+    assert_eq!(during, json!(now - now % 60));
+}
+
+#[tokio::test]
+async fn a_held_sync_answers_on_any_push_to_the_account() {
+    let hub = TestHub::open();
+    let lib = hub.library("smiths").await;
+    let olga = hub.member(&lib, "olga", 1).await;
+    let since = push_one(&hub, &olga.token, "book_request", "r1").await;
+    // Something after `since` already: at once.
+    let (answer, took) = timed(hub.get(
+        &format!("/api/sync?since={}&wait=5", since - 1),
+        Some(&olga.token),
+    ))
+    .await;
+    assert!(took < AT_ONCE, "{took:?}");
+    assert_eq!(answer.json()["seq"], since);
+    // The library's answer wakes the member's held call.
+    let uri = format!("/api/sync?since={since}&wait=5");
+    let held = hub.get(&uri, Some(&olga.token));
+    let answer_it = async {
+        pause(300).await;
+        hub.sync_as(
+            &lib,
+            &olga.account,
+            Some(json!({ "records": [{ "kind": "book_request", "id": "r1", "data": null }] })),
+        )
+        .await
+        .json()["seq"]
+            .as_i64()
+            .unwrap()
+    };
+    let ((answer, took), answered) = tokio::join!(timed(held), answer_it);
+    assert!(
+        took < AT_ONCE + std::time::Duration::from_millis(300),
+        "{took:?}"
+    );
+    let json = answer.json();
+    assert_eq!(json["seq"], answered);
+    assert_eq!(json["records"][0]["id"], "r1");
+    assert_eq!(json["records"][0]["data"], Value::Null);
+    // Another account's push does not.
+    let ivan = hub.member(&lib, "ivan", 2).await;
+    let uri = format!("/api/sync?since={answered}&wait=1");
+    let held = hub.get(&uri, Some(&olga.token));
+    let other = async {
+        pause(200).await;
+        push_one(&hub, &ivan.token, "position", "p").await;
+    };
+    let ((answer, took), ()) = tokio::join!(timed(held), other);
+    assert!(took >= SECOND, "{took:?}");
+    assert_eq!(answer.json()["records"], json!([]));
+}
+
+#[tokio::test]
+async fn a_token_holds_at_most_two_calls() {
+    let hub = TestHub::open();
+    let lib = hub.library("smiths").await;
+    let olga = hub.member(&lib, "olga", 1).await;
+    let uri = "/api/sync?since=0&wait=5";
+    let third = async {
+        pause(200).await;
+        timed(hub.get(uri, Some(&olga.token))).await.1
+    };
+    let ((_, first), (_, second), third) = tokio::join!(
+        timed(hub.get(uri, Some(&olga.token))),
+        timed(hub.get(uri, Some(&olga.token))),
+        third
+    );
+    assert!(first >= 5 * SECOND && second >= 5 * SECOND);
+    assert!(third < AT_ONCE, "answered at once: {third:?}");
+    // Released when answered.
+    let (_, again) = timed(hub.get("/api/sync?since=0&wait=1", Some(&olga.token))).await;
+    assert!(again >= SECOND);
+}
+
+#[tokio::test]
+async fn shutting_down_answers_the_held_calls() {
+    let hub = TestHub::open();
+    let lib = hub.library("smiths").await;
+    let olga = hub.member(&lib, "olga", 1).await;
+    let held = hub.get("/api/sync?since=0&wait=10", Some(&olga.token));
+    let close = async {
+        pause(300).await;
+        hub.state.close_held();
+    };
+    let ((answer, took), ()) = tokio::join!(timed(held), close);
+    assert_eq!(answer.status, StatusCode::OK);
+    assert!(took < 3 * SECOND, "{took:?}");
+    // Nothing is held any more.
+    let (_, took) = timed(hub.get("/api/sync?since=0&wait=10", Some(&olga.token))).await;
+    assert!(took < AT_ONCE, "{took:?}");
 }

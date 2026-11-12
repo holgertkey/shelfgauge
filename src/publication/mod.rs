@@ -11,12 +11,12 @@
 
 pub(crate) mod seal;
 
-pub use seal::{OpenError, compress, encrypt_padded, inflate, open, seal};
+pub use seal::{OpenError, compress, encrypt_padded, inflate, open, seal, store};
 pub use shelfgauge_core::publication as format;
 
 use crate::annotations::text::BookText;
 use crate::cache::covers;
-use crate::config::ReaderConfig;
+use crate::config::{ImageMode, ReaderConfig};
 use std::collections::BTreeSet;
 
 use crate::format::model::{BlockKind, BookContent, Image, Inline};
@@ -125,7 +125,9 @@ pub struct Publication {
 }
 
 /// Builds the publication of a book from its content, split by `reader`, with its
-/// cover (if any).
+/// cover (if any) and its images as `images` says: [`ImageMode::Reduced`] makes the
+/// wide ones smaller ([`reduce`](crate::images::reduce)), [`ImageMode::None`] leaves
+/// them out (the readers show a placeholder with the alt text).
 ///
 /// Only the images the text shows (block and inline images, table cells included) are
 /// included, and of them only raster images of the types the instance serves (an SVG
@@ -138,6 +140,7 @@ pub fn build(
     content: &BookContent,
     cover: Option<&Image>,
     reader: &ReaderConfig,
+    images_mode: ImageMode,
 ) -> Result<Publication, PublishError> {
     if let Some(drm) = &info.drm {
         return Err(PublishError::Protected(drm.clone()));
@@ -145,7 +148,10 @@ pub fn build(
     let parts = split(content, reader);
     let text = BookText::new(content);
 
-    let shown = shown_images(content);
+    let shown = match images_mode {
+        ImageMode::None => BTreeSet::new(),
+        _ => shown_images(content),
+    };
     let mut images = Vec::new();
     let mut infos = Vec::new();
     for (id, image) in content.images() {
@@ -168,6 +174,15 @@ pub fn build(
             .position(|(info, data)| info.mime == mime && *data == cover.data)?;
         Some(same as u32)
     });
+    // After the cover was found by its bytes.
+    if images_mode == ImageMode::Reduced {
+        for (info, data) in infos.iter_mut().zip(images.iter_mut()) {
+            if let Some((smaller, mime)) = crate::images::reduce(data, &info.mime) {
+                *data = smaller;
+                info.mime = mime.to_owned();
+            }
+        }
+    }
 
     let manifest = Manifest {
         format_version: FORMAT_VERSION,

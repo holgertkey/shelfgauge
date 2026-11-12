@@ -51,6 +51,26 @@ Build numbers (`+NNN`) do not get their own sections.
 - `deploy/hub/shelfgauge-hub.service` starts `/usr/local/bin/shelfgauge-hub` (a link
   to the installed version, or the binary itself) instead of
   `/usr/local/bin/shelfgauge`.
+- Covers in Explore are uploaded ahead: the library sends the thumbnails of the books
+  in Explore to the hub on its own, newest first, a hundred at a time, so they show at
+  once, also while its computer is off. They take at most 5 000 thumbnails and 5 % of
+  the library's quota on the hub; past that a cover is still made when someone looks
+  at it.
+- Requests are answered within seconds while the library's computer is on: the hub
+  holds the library's check open (up to 25 s) and answers it as soon as a member asks
+  for a book or covers, and the reader waits for the answer the same way instead of
+  asking every 15 s (only while something is asked for, and not while the page is
+  hidden). An older library or hub keeps asking every 30 s.
+- Books go to the hub faster: their parts are uploaded four at a time (the book's
+  manifest still last), over connections kept between calls.
+- Images in books sent to devices are made smaller: an image wider than 1080 pixels
+  is scaled to that width (the height follows) and saved as JPEG, or as PNG when it
+  has transparency or few colors, a photo turned upright as its camera noted; the
+  original is kept when that is not smaller, and for animated GIFs. Camera data (EXIF) goes with the re-encoding. **Settings →
+  Server and hub → Images in books sent to devices** (`[hub] images`) keeps the
+  originals, or sends books without images (the hub reader then shows each image's
+  description in a small box). Copies already on the hub and on the devices stay as
+  they are.
 
 ### Fixed
 

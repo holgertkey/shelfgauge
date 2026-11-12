@@ -472,15 +472,24 @@ export async function remoteWins(key, remote, local) {
   return !l || newer(r, l);
 }
 
+/** The cursor of account `p`'s last pull (0 before the first). */
+async function cursor(p) {
+  return (await tx(p, ["state"], "readonly", (t) => done(t.objectStore("state").get("seq")))) || 0;
+}
+
 /**
  * Pulls the records changed on the hub since the last pull and merges them into the
- * records store. Returns the number of records that changed here.
+ * records store. Returns the number of records that changed here. With `wait` (seconds)
+ * the hub holds the first answer until the account changes or `wait` passes (Phase
+ * 31.7); `signal` aborts the call.
  */
-export async function pull(p) {
-  let seq = (await tx(p, ["state"], "readonly", (t) => done(t.objectStore("state").get("seq")))) || 0;
+export async function pull(p, { wait = 0, signal } = {}) {
+  let seq = await cursor(p);
   let changed = 0;
+  let held = wait > 0 ? `&wait=${wait}` : "";
   for (;;) {
-    const response = await api(`sync?since=${seq}`, {}, p.token);
+    const response = await api(`sync?since=${seq}${held}`, signal ? { signal } : {}, p.token);
+    held = "";
     if (!response.ok) {
       throw new Error(`sync: ${response.status}`);
     }
@@ -534,6 +543,27 @@ export async function pull(p) {
       return changed;
     }
   }
+}
+
+// The longest the hub holds a call (its `wait_max`).
+export const HELD_S = 25;
+
+/**
+ * Waits for account `p` to change on the hub: a pull the hub holds up to `HELD_S`
+ * seconds (Phase 31.7). Resolves with "changed" (records changed here, or the
+ * cursor moved: this device's own push), "held" (nothing within the hold) or "quick"
+ * (answered at once with nothing new: an older hub, or its cap on held calls; the
+ * caller waits its own interval before the next). Rejects as `pull` does, and with
+ * an `AbortError` when `signal` aborts.
+ */
+export async function awaitChange(p, signal) {
+  const before = await cursor(p);
+  const started = Date.now();
+  const changed = await pull(p, { wait: HELD_S, signal });
+  if (changed > 0 || (await cursor(p)) !== before) {
+    return "changed";
+  }
+  return Date.now() - started < (HELD_S * 1000) / 2 ? "quick" : "held";
 }
 
 // Browsers limit the bodies of `keepalive` requests (sent while a page goes away) to
