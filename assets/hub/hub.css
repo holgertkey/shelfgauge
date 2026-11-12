@@ -64,6 +64,13 @@
   overflow-wrap: anywhere;
 }
 
+/* A book in its library's catalog: the label links to its card in Explore (hub.js,
+   linkCatalogBooks), an ordinary link in weight, with room for a finger. */
+.hub-book-row a.hub-book-from {
+  font-weight: normal;
+  padding: 0.35rem 0;
+}
+
 .hub-book-actions {
   display: inline-flex;
   gap: 0.25rem;

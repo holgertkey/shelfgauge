@@ -24,6 +24,9 @@ Build numbers (`+NNN`) do not get their own sections.
   device's own screen timeout applies again. In both readers, the library's and the
   hub's; it needs HTTPS (or `localhost`), so a library opened over plain HTTP shows
   the setting disabled.
+- In the hub reader, `from <library>` under a book on the Bookshelf links to the
+  book's card in Explore when the book is in the catalog this device keeps; the card
+  goes back to the Bookshelf.
 
 - Each release carries `SHA256SUMS` of its archives and a build provenance
   attestation of them (`gh attestation verify ARCHIVE --repo holgertkey/shelfgauge`;

@@ -14,7 +14,7 @@
 import * as account from "./account.js";
 import * as bookfile from "./bookfile.js";
 import * as c from "./crypto.js";
-import { bookId, libraryOnlineAt, onlineNode, refusalText, requestBook, showcasePage } from "./showcase.js";
+import { bookId, cardUrl, inCatalog, libraryOnlineAt, onlineNode, refusalText, requestBook, showcasePage } from "./showcase.js";
 import * as store from "./store.js";
 
 const SHARE_SCALE = 10000;
@@ -353,6 +353,8 @@ function renderShelf(items, status, { head = [], showLibrary = false, changed = 
   if (!items.length) {
     nodes.push(el("p", { class: "hint" }, "No books yet. Open a book link your library sent you, or a book file (.sgbook) downloaded from your library with Open file, the folder at the top. The library's admin sends books with Read on phone on a book's page."));
   }
+  // The "from <library>" labels drawn: [item, label], linked to their cards below.
+  const fromLabels = [];
   const item = (i) => {
     const li = bookItem(i);
     if (showLibrary && i.library) {
@@ -362,7 +364,9 @@ function renderShelf(items, status, { head = [], showLibrary = false, changed = 
     // right): a line of their own, whatever the length of the title.
     const row = el("div", { class: "hub-book-row" });
     if (i.instance) {
-      row.append(el("span", { class: "muted hub-book-from" }, `from ${i.instance}`));
+      const from = el("span", { class: "muted hub-book-from" }, `from ${i.instance}`);
+      fromLabels.push([i, from]);
+      row.append(from);
     }
     if (i.position && Number.isFinite(i.position.progress)) {
       row.append(el("span", { class: "muted hub-progress" }, `${Math.min(Math.floor(i.position.progress / 10), 100)} %`));
@@ -381,6 +385,37 @@ function renderShelf(items, status, { head = [], showLibrary = false, changed = 
     nodes.push(el("ul", { class: "hub-books" }, ...rest.map(item)));
   }
   show(...nodes);
+  linkCatalogBooks(fromLabels, showLibrary ? "all" : "shelf");
+}
+
+/**
+ * Turns the "from <library>" labels of the books in the catalog this device keeps of
+ * their library into links to their cards in Explore, once the shelf is drawn (the
+ * catalog opens in the background; a book outside Explore keeps a plain label).
+ */
+async function linkCatalogBooks(labels, from) {
+  const byAccount = new Map();
+  for (const [item, label] of labels) {
+    if (item.account && item.content_key) {
+      const list = byAccount.get(item.account.account) || [];
+      list.push([item, label]);
+      byAccount.set(item.account.account, list);
+    }
+  }
+  for (const list of byAccount.values()) {
+    const account = list[0][0].account;
+    try {
+      const found = await inCatalog(account, list.map(([item]) => item));
+      for (const [item, label] of list) {
+        if (found.has(item.content_key) && label.isConnected) {
+          const a = el("a", { class: "hub-book-from", href: await cardUrl(account, item, from), title: "This book in Explore" }, label.textContent);
+          label.replaceWith(a);
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }
 }
 
 /** The shelf of account `p` with each book's book file copy here. */

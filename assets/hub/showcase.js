@@ -40,6 +40,9 @@ let wasm = null;
 // { cat, generation, entries, key } of the catalog shown.
 let shown = null;
 let p = null;
+// The account asked for with `?lib=` (a card opened from a shelf of every library),
+// kept in the Showcase's own links; null for the account shown.
+let lib = null;
 let status = "";
 // Book ids (hex) on the person's shelf → publication id.
 let shelved = new Map();
@@ -75,6 +78,52 @@ async function loadWasm() {
     await wasm.default();
   }
   return wasm;
+}
+
+// The catalogs kept here that `inCatalog` opened: account id → { generation, ready },
+// `ready` the opening (the catalog, or null), shared by calls that overlap (each
+// shelf redraw asks). Within a page's life the shelf does not fetch a newer catalog,
+// so one kept is not freed: a call may still be using it.
+const keptCatalogs = new Map();
+
+/**
+ * The content keys (base64url) of `items` (shelf items of account `account`) whose
+ * book is in the catalog this device keeps of its library, opened once per catalog
+ * generation. The Bookshelf links their "from <library>" to their card in Explore.
+ */
+export async function inCatalog(account, items) {
+  const found = new Set();
+  const index = await store.catalogGet(account, "index");
+  if (!index) {
+    return found;
+  }
+  let kept = keptCatalogs.get(account.account);
+  if (!kept || kept.generation !== index.generation) {
+    kept = {
+      generation: index.generation,
+      ready: loadWasm().then(() => localCatalog(account)).then((opened) => (opened ? opened.cat : null)),
+    };
+    keptCatalogs.set(account.account, kept);
+  }
+  const cat = await kept.ready;
+  if (!cat) {
+    return found;
+  }
+  for (const item of items) {
+    if (item.content_key && cat.get(await bookId(c.unbase64url(item.content_key)))) {
+      found.add(item.content_key);
+    }
+  }
+  return found;
+}
+
+/**
+ * The card of a shelf item of account `account` in Explore; `from` is the Bookshelf
+ * its card goes back to: "shelf", or "all" (every library's shelf at once).
+ */
+export async function cardUrl(account, item, from) {
+  const q = new URLSearchParams({ book: await bookId(c.unbase64url(item.content_key)), lib: account.account, from });
+  return `${base}/showcase?${q}`;
 }
 
 /** The catalog this device keeps, or null (none, or broken). */
@@ -297,6 +346,9 @@ function params() {
 /** The Showcase URL with `fields` (null values left out). */
 function url(fields = {}) {
   const q = new URLSearchParams();
+  if (lib) {
+    q.set("lib", lib);
+  }
   for (const [name, value] of Object.entries(fields)) {
     if (value !== null && value !== undefined && value !== "") {
       q.set(name, value);
@@ -721,7 +773,11 @@ function render() {
   }
   if (q.has("book")) {
     // The card has its own title (the book's).
-    const back = ui.el("p", { class: "hub-back" }, link("‹ Explore", {}));
+    // Opened from the Bookshelf: back to it (every library's, with `from=all`).
+    const from = q.get("from");
+    const back = ui.el("p", { class: "hub-back" }, from === "shelf" || from === "all"
+      ? ui.el("a", { href: `${base}/${from === "all" ? "?all" : ""}` }, "‹ Bookshelf")
+      : link("‹ Explore", {}));
     ui.show(...showcaseTabs(null), back, ...bookCard(q.get("book")));
     return;
   }
@@ -865,7 +921,11 @@ function watchVisibility() {
  */
 export async function showcasePage(helpers) {
   ui = helpers;
-  p = await store.current();
+  const asked = params().get("lib");
+  const chosen = asked ? await store.account(asked) : null;
+  p = chosen || await store.current();
+  const current = await store.current();
+  lib = chosen && current && chosen.account !== current.account ? chosen.account : null;
   if (!p) {
     ui.show(...ui.signedOut());
     return;
