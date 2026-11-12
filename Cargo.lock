@@ -1225,6 +1225,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
 
 [[package]]
+name = "libmimalloc-sys"
+version = "0.1.49"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a45a52f43e1c16f667ccfe4dd8c85b7f7c204fd5e3bf46c5b0db9a5c3c0b8e9"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "libsqlite3-sys"
 version = "0.38.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1308,6 +1317,15 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+
+[[package]]
+name = "mimalloc"
+version = "0.1.52"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d4139bb28d14ad1facf21d5eb8825051b326e172d216b39f6d31df53cc97862"
+dependencies = [
+ "libmimalloc-sys",
+]
 
 [[package]]
 name = "mime"
@@ -2105,7 +2123,7 @@ dependencies = [
 
 [[package]]
 name = "shelfgauge"
-version = "0.24.0+014"
+version = "0.24.0+015"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2124,6 +2142,7 @@ dependencies = [
  "http-body-util",
  "ignore",
  "image",
+ "mimalloc",
  "percent-encoding",
  "postcard",
  "qrcode",
@@ -2158,7 +2177,7 @@ dependencies = [
 
 [[package]]
 name = "shelfgauge-core"
-version = "0.24.0+014"
+version = "0.24.0+015"
 dependencies = [
  "argon2",
  "hmac",
@@ -2173,7 +2192,7 @@ dependencies = [
 
 [[package]]
 name = "shelfgauge-wasm"
-version = "0.24.0+014"
+version = "0.24.0+015"
 dependencies = [
  "askama",
  "base64",

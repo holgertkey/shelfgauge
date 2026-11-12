@@ -22,6 +22,11 @@ use shelfgauge::web;
 
 use cli::{Cli, HubAction, Mode, ProfilesAction};
 
+/// The allocator of the static Linux build (musl's own is slow under many threads).
+#[cfg(target_env = "musl")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// Read connections for the web handlers.
 const READ_POOL_SIZE: u32 = 4;
 

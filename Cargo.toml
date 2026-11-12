@@ -7,7 +7,7 @@ default-members = [".", "crates/*"]
 # requirement on `shelfgauge-core` below as well (publishing needs it, and Cargo refuses
 # to build while the two differ); the `+BUILD` counter is changed only here.
 [workspace.package]
-version = "0.24.0+014"
+version = "0.24.0+015"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/holgertkey/shelfgauge"
@@ -81,6 +81,11 @@ hmac = "0.13.0"
 # Cover thumbnails of the catalog on the hub: the formats of the cover cache in, JPEG
 # out (lossy WebP would need libwebp); no rayon.
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
+
+# musl's own malloc is slow under many threads (tokio, the scanner's rayon pool, image
+# decoding, Argon2): the static Linux release build uses mimalloc instead.
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc = "0.1.52"
 
 [dev-dependencies]
 # The reader app's bindings, run natively (path only: dropped when publishing).

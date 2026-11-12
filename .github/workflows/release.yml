@@ -54,6 +54,12 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             archive: tar.gz
+          # Static, for any Linux (no glibc version needed; mimalloc as the allocator).
+          # Its tests run here, the check job runs them on glibc only.
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            archive: tar.gz
+            musl: true
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             archive: zip
@@ -63,8 +69,23 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release --locked
+        with:
+          key: ${{ matrix.target }}
+      - name: musl toolchain
+        if: matrix.musl
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Tests (musl)
+        if: matrix.musl
+        run: cargo test --release --locked --target ${{ matrix.target }}
+      - run: cargo build --release --locked --target ${{ matrix.target }} -p shelfgauge
+      - name: Static binary
+        if: matrix.musl
+        run: |
+          file target/${{ matrix.target }}/release/shelfgauge | tee /dev/stderr | grep -q 'static'
+          target/${{ matrix.target }}/release/shelfgauge --version
       - name: Package
         shell: bash
         run: |
@@ -72,10 +93,10 @@ jobs:
           mkdir "$name"
           cp README.md CHANGELOG.md LICENSE "$name/"
           if [ "${{ matrix.archive }}" = zip ]; then
-            cp target/release/shelfgauge.exe "$name/"
+            cp target/${{ matrix.target }}/release/shelfgauge.exe "$name/"
             7z a "$name.zip" "$name"
           else
-            cp target/release/shelfgauge "$name/"
+            cp target/${{ matrix.target }}/release/shelfgauge "$name/"
             tar czf "$name.tar.gz" "$name"
           fi
       - uses: actions/upload-artifact@v7
@@ -111,7 +132,8 @@ jobs:
           cat > notes.md <<EOF
           The changes in this version are listed in [CHANGELOG.md](${changelog}).
 
-          Binaries: Linux (x86_64), Windows (x86_64), macOS (Apple Silicon).
+          Binaries: Linux (x86_64; \`linux-gnu\` needs glibc 2.39 or newer, \`linux-musl\`
+          is static and runs on any Linux), Windows (x86_64), macOS (Apple Silicon).
           From crates.io: \`cargo install shelfgauge\`.
 
           \`SHA256SUMS\` lists the archives' checksums (\`sha256sum -c SHA256SUMS --ignore-missing\`).

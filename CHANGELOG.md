@@ -41,6 +41,9 @@ Build numbers (`+NNN`) do not get their own sections.
 - `deploy.yml`: a release goes to the staging hub, then, after a reviewer's
   approval, to production, through keys that can only install an attested release on
   their own hub.
+- A static Linux binary, `x86_64-unknown-linux-musl`, next to the `linux-gnu` one on
+  the GitHub releases: it runs on any x86_64 Linux, including distributions older than
+  the glibc 2.39 that the `linux-gnu` binary needs. It uses mimalloc as its allocator.
 
 ### Changed
 
