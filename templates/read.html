@@ -71,7 +71,7 @@
 {%- endif %}
 {% endblock %}
 {% block main %}
-<article class="reader" data-annotations="{{ annotations_href }}" data-position="{{ position_href }}" data-max-text="{{ max_text }}" data-max-note="{{ max_note }}"
+<article class="reader" data-annotations="{{ annotations_href }}" data-position="{{ position_href }}" data-saved-position="{{ saved_position }}" data-max-text="{{ max_text }}" data-max-note="{{ max_note }}"
   {%- if let Some(progress) = progress %} data-progress-start="{{ progress.start }}" data-progress-end="{{ progress.end }}"{% endif %}>
   <header class="reader-head">
     <a class="book-link" href="{{ card_href }}">{{ book_title }}</a>

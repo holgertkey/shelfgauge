@@ -151,8 +151,8 @@ impl Urls {
         self.path(&format!("/book/{id}/read?at={block}"))
     }
 
-    /// Reading mode at a bookmark or mark: like [`read_at`](Self::read_at), with
-    /// `from=mark` so that this page view does not move the reading position.
+    /// Reading mode at the reading position: like [`read_at`](Self::read_at), with the
+    /// place in the block (code points, `o=`) when it is not the block's start.
     ///
     /// # Examples
     ///
@@ -161,10 +161,44 @@ impl Urls {
     /// use shelfgauge::web::Urls;
     ///
     /// let b = BlockId::new(5).unwrap();
-    /// assert_eq!(Urls::new("/").read_mark(3, b), "/book/3/read?at=b5&from=mark");
+    /// assert_eq!(Urls::new("/").read_resume(3, b, 0), "/book/3/read?at=b5");
+    /// assert_eq!(Urls::new("/").read_resume(3, b, 120), "/book/3/read?at=b5&o=120");
     /// ```
-    pub fn read_mark(&self, id: i64, block: crate::format::model::BlockId) -> String {
-        self.path(&format!("/book/{id}/read?at={block}&from=mark"))
+    pub fn read_resume(
+        &self,
+        id: i64,
+        block: crate::format::model::BlockId,
+        offset: u32,
+    ) -> String {
+        let url = self.read_at(id, block);
+        if offset > 0 {
+            format!("{url}&o={offset}")
+        } else {
+            url
+        }
+    }
+
+    /// Reading mode at a bookmark or mark: like [`read_at`](Self::read_at), with
+    /// `from=mark` so that this page view does not move the reading position, and
+    /// the place in the block (code points, `o=`) when it is not the block's start.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use shelfgauge::format::model::BlockId;
+    /// use shelfgauge::web::Urls;
+    ///
+    /// let b = BlockId::new(5).unwrap();
+    /// assert_eq!(Urls::new("/").read_mark(3, b, 0), "/book/3/read?at=b5&from=mark");
+    /// assert_eq!(Urls::new("/").read_mark(3, b, 9), "/book/3/read?at=b5&from=mark&o=9");
+    /// ```
+    pub fn read_mark(&self, id: i64, block: crate::format::model::BlockId, offset: u32) -> String {
+        let url = self.path(&format!("/book/{id}/read?at={block}&from=mark"));
+        if offset > 0 {
+            format!("{url}&o={offset}")
+        } else {
+            url
+        }
     }
 
     /// Reading mode: 1-based `part`, opened from a bookmark or mark (`from=mark`).

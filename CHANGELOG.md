@@ -95,6 +95,24 @@ Build numbers (`+NNN`) do not get their own sections.
 - A page turn with less than a page left to the end of a part (or to its start,
   turning back) lit a line further on instead of the kept line, the place you read up
   to.
+- The reading position is kept to the page, not to the paragraph: the line at the top
+  of the screen is saved and Continue reading opens at that line (a long paragraph
+  over several pages on a phone used to open at its start). Page turns and reading on
+  are saved at once (a turn right before minimizing the browser, or quick turns, were
+  lost: a place counted only after 6 seconds there; jumps through the contents, the
+  track or links still do); leaving the reader through a link saves first, and the
+  book card, Currently reading and the hub reader's Bookshelf show the new place also
+  when reached with Back. Opening a book without moving no longer saves the position
+  again (an open page could overwrite a newer one from another device). From a
+  bookmark, a quote or a search result the position is saved again once you read on a
+  page past it, not only in the next part. A turned phone keeps the top line. The hub
+  reader sends the position to the library 10 seconds after the last change (was 30).
+- Bookmarks go on the same place as the reading position, the line at the top of the
+  screen (they used to go on the paragraph, which could start a page or more before),
+  and making one saves the reading position there. A bookmark or quote link (the
+  reader's sidebar, the book card, the Markdown export) opens its line, not the start
+  of its paragraph.
+
 
 ## [0.24.0] - 2026-11-06
 

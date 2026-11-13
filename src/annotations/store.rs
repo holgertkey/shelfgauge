@@ -917,6 +917,9 @@ pub struct ReadingPosition {
     pub book: BookSnapshot,
     /// The topmost visible block.
     pub block: BlockId,
+    /// Where the top line of the screen starts in [`block`](Self::block), in code
+    /// points of its rendered text (0 = the start of the block).
+    pub offset: u32,
     /// The start of the block (fingerprint for re-attaching).
     pub suffix: String,
     /// Progress through the main text in per mille (1000 = the end of the main text).
@@ -943,9 +946,9 @@ pub fn save_position(
         "INSERT INTO reading_positions
              (profile_id, book_key, book_id, block, offset, suffix, progress, book_title,
               book_authors, updated_at)
-         VALUES (?9, ?1, ?2, ?3, 0, ?4, ?5, ?6, ?7, ?8)
+         VALUES (?9, ?1, ?2, ?3, ?10, ?4, ?5, ?6, ?7, ?8)
          ON CONFLICT (profile_id, book_key) DO UPDATE SET
-             book_id = excluded.book_id, block = excluded.block, offset = 0,
+             book_id = excluded.book_id, block = excluded.block, offset = excluded.offset,
              suffix = excluded.suffix, progress = excluded.progress,
              book_title = excluded.book_title, book_authors = excluded.book_authors,
              updated_at = excluded.updated_at, deleted_at = NULL, deleted_reason = NULL,
@@ -962,13 +965,14 @@ pub fn save_position(
             position.book.authors,
             position.updated_at,
             profile,
+            position.offset,
         ],
     )?;
     Ok(())
 }
 
 const POSITION_COLUMNS: &str = "book_key, book_id, book_title, book_authors, block, suffix, \
-    progress, updated_at, finished_at";
+    progress, updated_at, finished_at, offset";
 
 /// The live reading position of `profile` in a book.
 pub fn position(
@@ -997,7 +1001,7 @@ pub fn positions_for_key(
         "SELECT {POSITION_COLUMNS}, profile_id FROM reading_positions
           WHERE book_key = ?1 AND deleted_at IS NULL ORDER BY profile_id"
     ))?;
-    let rows = stmt.query_map([key], |row| Ok((row.get(9)?, position_row(row)?)))?;
+    let rows = stmt.query_map([key], |row| Ok((row.get(10)?, position_row(row)?)))?;
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
@@ -1010,6 +1014,10 @@ fn position_row(row: &Row<'_>) -> rusqlite::Result<ReadingPosition> {
             authors: row.get(3)?,
         },
         block: block(row.get(4)?),
+        // A negative or oversized value (a damaged record) reads as the block's start.
+        offset: row
+            .get::<_, i64>(9)
+            .map(|o| u32::try_from(o).unwrap_or(0))?,
         suffix: row.get(5)?,
         progress: row.get(6)?,
         updated_at: row.get(7)?,
@@ -1045,6 +1053,8 @@ pub fn move_position(
         &ReadingPosition {
             book: to.clone(),
             block,
+            // The block may differ in the new version: its start.
+            offset: 0,
             suffix: old.suffix,
             progress,
             updated_at: old.updated_at,
@@ -1087,13 +1097,13 @@ pub fn shared_reading(
 ) -> Result<Vec<(ProfileId, ReadingPosition)>, StorageError> {
     let mut stmt = conn.prepare(
         "SELECT r.book_key, r.book_id, r.book_title, r.book_authors, r.block, r.suffix,
-                r.progress, r.updated_at, r.finished_at, r.profile_id
+                r.progress, r.updated_at, r.finished_at, r.offset, r.profile_id
            FROM reading_positions r JOIN profiles p ON p.id = r.profile_id
           WHERE p.share_activity = 1 AND r.profile_id != ?1 AND r.deleted_at IS NULL
             AND r.dismissed_at IS NULL AND r.finished_at IS NULL
           ORDER BY r.updated_at DESC, r.profile_id, r.book_key",
     )?;
-    let rows = stmt.query_map([profile], |row| Ok((row.get(9)?, position_row(row)?)))?;
+    let rows = stmt.query_map([profile], |row| Ok((row.get(10)?, position_row(row)?)))?;
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
@@ -1271,6 +1281,7 @@ mod tests {
         ReadingPosition {
             book: snapshot(key),
             block: b(block),
+            offset: 0,
             suffix: "start".into(),
             progress: 250,
             updated_at: at,
@@ -1310,6 +1321,26 @@ mod tests {
             (moved.block, moved.progress, moved.updated_at),
             (b(6), 300, 20)
         );
+    }
+
+    #[test]
+    fn positions_keep_the_offset() {
+        let data = UserData::open_in_memory().unwrap();
+        let conn = data.lock();
+        let mut at = position_at(b"k", 5, 10);
+        at.offset = 1234;
+        save_position(&conn, P, &at).unwrap();
+        assert_eq!(position(&conn, P, b"k").unwrap().unwrap().offset, 1234);
+        // A later save in another block replaces it.
+        let mut later = position_at(b"k", 6, 20);
+        later.offset = 7;
+        save_position(&conn, P, &later).unwrap();
+        let read = position(&conn, P, b"k").unwrap().unwrap();
+        assert_eq!((read.block, read.offset), (b(6), 7));
+        assert_eq!(positions_for_key(&conn, b"k").unwrap()[0].1.offset, 7);
+        // Moving to another version of the book starts the block over.
+        move_position(&conn, P, b"k", &snapshot(b"new"), b(6), 300).unwrap();
+        assert_eq!(position(&conn, P, b"new").unwrap().unwrap().offset, 0);
     }
 
     #[test]

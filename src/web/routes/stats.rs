@@ -373,7 +373,7 @@ fn reading_and_quotes(
         };
         lines.push(QuoteLine {
             text: quote.quote.text.clone(),
-            href: urls.read_mark(id, quote.anchor.start_block),
+            href: urls.read_mark(id, quote.anchor.start_block, quote.anchor.start_offset),
             book: quote.book_title.clone(),
             book_href: urls.book(id),
         });

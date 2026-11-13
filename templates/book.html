@@ -25,7 +25,7 @@
     {%- if let Some(read) = read_href %}
     <div class="actions book-actions">
       {%- if let Some(continue_href) = continue_href %}
-      <a class="button primary" href="{{ continue_href }}">Continue reading</a>
+      <a class="button primary" href="{{ continue_href }}" data-reading-place>Continue reading</a>
       <a class="button" href="{{ read }}">Read from the start</a>
       {%- if let Some(progress) = progress %} <span class="progress muted">{{ progress }}</span>{% endif %}
       {%- if let Some(finished) = finished %}

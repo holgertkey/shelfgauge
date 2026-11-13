@@ -317,8 +317,12 @@ in the core crate), `src/web/routes/annotations.rs`, `assets/reader.js`/`reader.
 - **One entity**, the annotation (UI: "Quote"; "mark" in the code), replaces bookmarks,
   notes and quotes: the **selected text is immutable** (it is the quote and the anchor's
   fingerprint), a separate **note** is editable and optional (bookmark name / note
-  body). An annotation with no selection is a **bookmark** on the topmost visible block
-  (note optional; the automatic label is the section title and the start of the block).
+  body). An annotation with no selection is a **bookmark** on the place the reading
+  position keeps (the first whole line at the top: block and offset, a point anchor;
+  making one also saves the reading position there; note optional; the automatic label
+  is the section title and the start of the block, also its re-attaching fingerprint,
+  so a re-attached bookmark starts its block over). Links to bookmarks and quotes
+  carry the place in the block (`o=`) and open that line.
   No `kind` field: bookmarks (empty text) and quotes (non-empty text) are one model
   shown as two lists.
 - **The server owns annotations.** They live in a separate SQLite file,
@@ -354,15 +358,25 @@ in the core crate), `src/web/routes/annotations.rs`, `assets/reader.js`/`reader.
   `shelfgauge annotations export` rewrites all files; generated files carry a marker
   comment and only marked files are ever removed.
 - **Reading position** (separate from bookmarks, never in the lists): one server-side
-  row per book in `userdata.sqlite` (topmost visible block + fingerprint, progress),
-  same re-attaching and cleanup rules. Saved by `reader.js` after scrolling stops, on
-  part change and on leaving the page, never inside notes bodies and only after a dwell
-  time (stray jumps do not overwrite it); a page view opened from a bookmark or quote
-  link (`from=mark`) never saves it until the reader moves on with prev/next; last
-  write wins. A deep link's target block flashes (the highlight fades). The book card
-  offers
-  "Continue reading" / "Read from the start" and shows progress; an explicit `?at=`
-  always wins. `[reader] remember_position` turns it off.
+  row per book in `userdata.sqlite` (the first whole line at the top of the screen:
+  its block, the code point `offset` of the line's start in it, the block's
+  fingerprint, progress), same re-attaching (a moved position starts its block over)
+  and cleanup rules. Saved by `reader.js`: reading on (page turns, scrolling by less
+  than two screens at once, the next or previous part) counts at once, sent 2.5 s
+  after the reader stops and at once on `pagehide` / hidden; a jump (contents, track,
+  links, a long scroll, a page opened at a place) only after a dwell time (stray
+  jumps do not overwrite it); a page opened from a bookmark, quote or search result
+  (`from=mark`, `hit=`), or a jump to one within the part, holds it until the reader
+  has read on a page past that place; never inside notes bodies, never the place
+  already saved (the read page carries it as `data-saved-position`, so opening a book
+  without moving does not overwrite a newer position from another device). Leaving
+  through a link waits briefly for the save; pages with Continue links reload when
+  shown from the browser's page cache. Last write wins. A deep link's target block
+  flashes (the highlight fades). The book card offers "Continue reading"
+  (`?at=b<n>&o=<offset>`; the redirect keeps `o` for `reader.js`, the fragment opens
+  the block without JS) / "Read from the start" and shows progress; an explicit
+  `?at=` always wins. A change of the window's width keeps the top line.
+  `[reader] remember_position` turns it off.
 - **Currently reading** (library page): the books with a position and no finished
   mark (whatever their progress), most recently read first, up to
   `library.reading_list_size`, only books whose content key is live in the index.

@@ -563,6 +563,12 @@ async function shelfPage() {
   };
   const redraw = async () => renderShelf(await items(), status, { head, showLibrary: showingAll, changed });
   await redraw();
+  // Back from a book (the page kept by the browser): the positions read meanwhile.
+  addEventListener("pageshow", (event) => {
+    if (event.persisted) {
+      redraw().catch((e) => console.error(e));
+    }
+  });
   status = "";
   for (const a of showingAll ? all : [p]) {
     try {
@@ -1621,8 +1627,8 @@ function ordinal(block) {
 }
 
 /**
- * Sync of this page: pushes changes made here (soon after a change; a position 30 s
- * after the last one, as on the instance), pulls on opening, when the device comes
+ * Sync of this page: pushes changes made here (soon after a change; a position 10 s
+ * after the last one, and at once when the page is hidden), pulls on opening, when the device comes
  * online and every few minutes while the page is visible; `onChange` runs when the
  * pull changed records.
  */
@@ -1726,7 +1732,12 @@ function deviceSource(book, item, p, sync) {
       let quoted;
       if (body.block) {
         quoted = JSON.parse(book.reader.bookmark(body.block));
-        anchor = { start_block: ordinal(body.block), start_offset: 0, end_block: ordinal(body.block), end_offset: 0 };
+        // The top line of the screen in the block (reader.js), at most its end.
+        const shown = document.getElementById(body.block);
+        const offset = Number.isInteger(body.offset) && body.offset > 0
+          ? Math.min(body.offset, shown ? cpLength(shown.textContent) : 0)
+          : 0;
+        anchor = { start_block: ordinal(body.block), start_offset: offset, end_block: ordinal(body.block), end_offset: offset };
       } else {
         quoted = JSON.parse(book.reader.quote(JSON.stringify({
           start_block: body.start_block,
@@ -1790,7 +1801,7 @@ function deviceSource(book, item, p, sync) {
       await store.write(p, "position", id, Object.assign({
         content_key: contentKey,
         block: ordinal(body.block),
-        offset: 0,
+        offset: Number.isInteger(body.offset) && body.offset > 0 ? body.offset : 0,
         suffix: position.suffix,
         progress: position.progress,
         updated_at: now(),
@@ -1798,10 +1809,11 @@ function deviceSource(book, item, p, sync) {
       }, snapshot));
       if (keepalive) {
         // Saved as the page is hidden or left (reader.js): pushed at once, as the
-        // reader may go on reading on another device.
-        await sync.push({ keepalive: true });
+        // reader may go on reading on another device. Not awaited: leaving through a
+        // link waits for the record on the device only (the request outlives the page).
+        sync.push({ keepalive: true });
       } else {
-        sync.later(30000);
+        sync.later(10000);
       }
     },
     async find(raw) {
@@ -2085,6 +2097,7 @@ async function readerPage(id) {
     const share = params.has("progress") ? Number(params.get("progress")) : NaN;
     let index;
     let resumeAt = null;
+    let resumeOffset = 0;
     if (Number.isFinite(share) && share >= 0 && share <= SHARE_SCALE) {
       index = partAtShare(book.summary.parts, share);
     } else if (!params.has("part") && !params.has("find") && !location.hash) {
@@ -2102,6 +2115,10 @@ async function readerPage(id) {
       const part = position && Number.isInteger(position.block) ? reader.partOf(`b${position.block}`) : undefined;
       index = part === undefined ? 0 : part;
       resumeAt = part === undefined ? null : `b${position.block}`;
+      // The line in the block (reader.js scrolls to it and drops `o`).
+      if (resumeAt && Number.isInteger(position.offset) && position.offset > 0) {
+        resumeOffset = position.offset;
+      }
     } else {
       index = Math.min(Math.max(Number(params.get("part")) || 1, 1), Math.max(count, 1)) - 1;
     }
@@ -2117,11 +2134,17 @@ async function readerPage(id) {
       const block = blockAtShare(document.querySelector("article.reader .text"), book.summary.parts[index].progress || { start: 0, end: 0 }, share);
       history.replaceState(null, "", `?part=${index + 1}${block ? `#${block.id}` : ""}`);
     } else if (resumeAt) {
-      history.replaceState(null, "", `?part=${index + 1}#${resumeAt}`);
+      history.replaceState(null, "", `?part=${index + 1}${resumeOffset ? `&o=${resumeOffset}` : ""}#${resumeAt}`);
     }
     const raw = params.get("find");
     if (raw && raw.trim() && count) {
       await showFind(book, raw, Number(params.get("hit")));
+    }
+    // The saved place, which reader.js does not save again (just opening the book
+    // here must not overwrite a newer position from another device).
+    const saved = await store.get(p, "position", await c.positionId(p.mac, c.unbase64url(book.summary.content_key)));
+    if (saved && Number.isInteger(saved.block)) {
+      document.querySelector("article.reader").dataset.savedPosition = `b${saved.block}:${Number.isInteger(saved.offset) ? saved.offset : 0}`;
     }
     startReader(book, item, p);
     if (location.hash) {

@@ -44,7 +44,7 @@ pub(crate) fn annotation_lists(
 ) -> Lists {
     let item = |a: &Annotation| ListItem {
         id: a.id.clone(),
-        href: urls.read_mark(book_id, a.anchor.start_block),
+        href: urls.read_mark(book_id, a.anchor.start_block, a.anchor.start_offset),
         label: a.label(),
         note: a.note().unwrap_or("").to_owned(),
         text: a.quote.text.clone(),
@@ -225,6 +225,9 @@ fn check_note(state: &AppState, note: Option<&str>) -> Result<(), AppError> {
 pub(crate) struct CreateRequest {
     /// A bookmark on this block (instead of a selection).
     block: Option<String>,
+    /// With `block`: the bookmark's place in it, in code points (the top line of the
+    /// screen; pages before 0.25 send none: the block's start).
+    offset: Option<u32>,
     start_block: Option<String>,
     start_offset: Option<u32>,
     end_block: Option<String>,
@@ -260,10 +263,19 @@ pub(crate) async fn create(
             let (anchor, quote) = match &request.block {
                 Some(block) => {
                     let block = parse_block(block)?;
-                    (
-                        Anchor::at_block(block),
-                        anchor::bookmark_quote(&text, block).map_err(bad)?,
-                    )
+                    let quote = anchor::bookmark_quote(&text, block).map_err(bad)?;
+                    // Past the end of the block (a stale page): its end.
+                    let length = text.text(block).map_or(0, char_len);
+                    let offset = request
+                        .offset
+                        .unwrap_or(0)
+                        .min(u32::try_from(length).unwrap_or(u32::MAX));
+                    let anchor = Anchor {
+                        start_offset: offset,
+                        end_offset: offset,
+                        ..Anchor::at_block(block)
+                    };
+                    (anchor, quote)
                 }
                 None => {
                     let field = |name: &str| AppError::BadRequest(format!("`{name}` is missing"));
@@ -473,6 +485,10 @@ pub(crate) async fn delete(
 pub(crate) struct PositionRequest {
     /// The topmost visible block.
     block: String,
+    /// Where the top line of the screen starts in the block, in code points of its
+    /// text (pages before 0.25 send none: the start of the block).
+    #[serde(default)]
+    offset: u32,
 }
 
 /// `POST /book/{id}/position` (JSON): saves the reading position; `204`. Positions in
@@ -498,12 +514,18 @@ pub(crate) async fn position(
             let Some(progress) = text.progress(block) else {
                 return Ok(()); // In the notes: not a reading position.
             };
+            // Past the end of the block (a stale page): its end.
+            let length = text.text(block).map_or(0, char_len);
+            let offset = request
+                .offset
+                .min(u32::try_from(length).unwrap_or(u32::MAX));
             store::save_position(
                 &state.userdata().lock(),
                 current.id(),
                 &ReadingPosition {
                     book: snapshot,
                     block,
+                    offset,
                     suffix: quote.suffix,
                     progress,
                     updated_at: now(),
@@ -630,7 +652,7 @@ pub(crate) fn reading_list(
             title: book.title.clone(),
             authors: attach::authors(&book),
             card_href: urls.book(book.id),
-            continue_href: urls.read_at(book.id, position.block),
+            continue_href: urls.read_resume(book.id, position.block, position.offset),
             finished_action: urls.finished(book.id),
             cover: book
                 .cover_mime

@@ -750,6 +750,14 @@ function setupKeys() {
         const link = document.querySelector(`.reader-nav a[rel="${rel}"]`);
         if (link) {
           event.preventDefault();
+          // reader.js: that page view continues the reading (its position is saved
+          // without waiting).
+          try {
+            const url = new URL(link.href, window.location.href);
+            sessionStorage.setItem("shelfgauge-sequential", url.pathname + url.search);
+          } catch (e) {
+            // Not remembered: the next part counts as a jump.
+          }
           window.location.href = link.href;
         }
         break;
@@ -792,8 +800,19 @@ function setupUploadProgress() {
   }
 }
 
+// A page with "Continue reading" links, shown again from the browser's page cache
+// (Back from the reader): loaded again, so the links lead to the place read meanwhile.
+function setupReadingPlaces() {
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted && document.querySelector("[data-reading-place]")) {
+      window.location.reload();
+    }
+  });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   setupTheme();
+  setupReadingPlaces();
   setupUploadProgress();
   setupSaveNotice();
   setupProfileMenu();

@@ -168,7 +168,7 @@ pub(crate) async fn card(
             )
         });
     render(&BookPage {
-        continue_href: position.map(|p| urls.read_at(book.id, p.block)),
+        continue_href: position.map(|p| urls.read_resume(book.id, p.block, p.offset)),
         progress: position.map(|p| progress_label(p.progress)),
         finished: position.map(|p| p.finished_at.is_some()),
         finished_action: urls.finished(book.id),

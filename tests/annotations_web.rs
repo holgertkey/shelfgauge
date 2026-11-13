@@ -347,7 +347,9 @@ async fn marks_bookmarks_notes_and_export() {
         "note escaped: {read}"
     );
     assert!(!read.contains("<b>bold</b>"));
-    assert!(read.contains(&format!("href=\"/book/{id}/read?at={p12}&#38;from=mark\"")));
+    assert!(read.contains(&format!(
+        "href=\"/book/{id}/read?at={p12}&#38;from=mark&#38;o=15\""
+    )));
     assert!(read.contains(&format!("href=\"/book/{id}/read?at={p21}&#38;from=mark\"")));
     assert!(
         read.contains("Chapter 2 — Paragraph 2.1: the brown fox"),
@@ -385,7 +387,9 @@ async fn marks_bookmarks_notes_and_export() {
     );
     assert!(!card.contains("<b>bold"));
     assert!(card.contains(&format!("action=\"/annotation/{mark}/note\"")));
-    assert!(card.contains(&format!("href=\"/book/{id}/read?at={p12}&#38;from=mark\"")));
+    assert!(card.contains(&format!(
+        "href=\"/book/{id}/read?at={p12}&#38;from=mark&#38;o=15\""
+    )));
 
     // The export: bookmarks first, the quote with its note and a `from=mark` link.
     let md = lib.export_text();
@@ -615,7 +619,7 @@ async fn reading_position() {
     let card = server.ok(&format!("/book/{id}")).await;
     assert!(
         card.contains(&format!(
-            "href=\"/book/{id}/read?at={p21}\">Continue reading"
+            "href=\"/book/{id}/read?at={p21}\" data-reading-place>Continue reading"
         )),
         "{card}"
     );
@@ -629,7 +633,7 @@ async fn reading_position() {
     assert_eq!(reply.status, StatusCode::NO_CONTENT);
     let card = server.ok(&format!("/book/{id}")).await;
     assert!(
-        card.contains(&format!("read?at={p21}\">Continue")),
+        card.contains(&format!("read?at={p21}\" data-reading-place>Continue")),
         "{card}"
     );
     // The last block of the main text: read 100 %, but not marked finished.
@@ -649,7 +653,7 @@ async fn reading_position() {
     let whole = lib.server(|c| c.reader.split = SplitMode::None);
     let card = whole.ok(&format!("/book/{id}")).await;
     assert!(
-        card.contains(&format!("read?at={last}\">Continue")),
+        card.contains(&format!("read?at={last}\" data-reading-place>Continue")),
         "{card}"
     );
 
@@ -664,6 +668,169 @@ async fn reading_position() {
         .unwrap()
         .unwrap();
     assert_eq!(saved.block.to_string(), last, "not saved while disabled");
+}
+
+/// The reading position keeps the top line of the screen (an offset in the block):
+/// saved, clamped to the block, in the "Continue reading" link, kept through the
+/// `?at=` redirect, and given to the read page as the saved place.
+#[tokio::test]
+async fn reading_position_keeps_the_line() {
+    let lib = TestLibrary::new();
+    lib.write("book.fb2", &book("The Book", "Writer", 3, false, &[]));
+    lib.scan();
+    let id = lib.id_of("book.fb2");
+    let server = lib.server(|_| {});
+    let p21 = server.block_of(id, &para(2, 1)).await;
+    let url = format!("/book/{id}/position");
+    let length = u32::try_from(para(2, 1).chars().count()).unwrap();
+    let reply = server
+        .json(&url, serde_json::json!({"block": p21, "offset": 7}))
+        .await;
+    assert_eq!(reply.status, StatusCode::NO_CONTENT, "{}", reply.body);
+    let saved = || {
+        store::position(&lib.userdata.lock(), ProfileId::OWNER, &lib.key_of(id))
+            .unwrap()
+            .unwrap()
+    };
+    assert_eq!(saved().offset, 7);
+    let card = server.ok(&format!("/book/{id}")).await;
+    assert!(
+        card.contains(&format!(
+            "href=\"/book/{id}/read?at={p21}&#38;o=7\" data-reading-place>Continue reading"
+        )),
+        "{card}"
+    );
+    let home = server.ok("/").await;
+    assert!(
+        home.contains(&format!(
+            "read?at={p21}&#38;o=7\" data-reading-place>Continue"
+        )),
+        "{home}"
+    );
+
+    // The redirect keeps the line for reader.js, with the block as the fragment.
+    let reply = server.get(&format!("/book/{id}/read?at={p21}&o=7")).await;
+    assert!(reply.status.is_redirection());
+    assert_eq!(
+        reply.location(),
+        format!("/book/{id}/read?part=2&o=7#{p21}")
+    );
+    for o in ["0", "x", "-3"] {
+        let reply = server.get(&format!("/book/{id}/read?at={p21}&o={o}")).await;
+        assert_eq!(
+            reply.location(),
+            format!("/book/{id}/read?part=2#{p21}"),
+            "o={o}"
+        );
+    }
+    // A bookmark link keeps it too.
+    let reply = server
+        .get(&format!("/book/{id}/read?at={p21}&from=mark&o=7"))
+        .await;
+    assert_eq!(
+        reply.location(),
+        format!("/book/{id}/read?part=2&from=mark&o=7#{p21}")
+    );
+
+    // The read page knows the saved place.
+    let page = server.ok(&format!("/book/{id}/read?part=2")).await;
+    assert!(
+        page.contains(&format!("data-saved-position=\"{p21}:7\"")),
+        "{page}"
+    );
+
+    // Past the end of the block: its end. Without an offset (a page of before
+    // 0.25): the block's start.
+    server
+        .json(&url, serde_json::json!({"block": p21, "offset": 100_000}))
+        .await;
+    assert_eq!(saved().offset, length);
+    server.json(&url, serde_json::json!({"block": p21})).await;
+    assert_eq!(saved().offset, 0);
+    let card = server.ok(&format!("/book/{id}")).await;
+    assert!(
+        card.contains(&format!("read?at={p21}\" data-reading-place>")),
+        "{card}"
+    );
+}
+
+/// A bookmark goes on the same place as the reading position (the top line: block
+/// and offset); its links in the lists, the reader's sidebar and the Markdown export
+/// open that line, and a quote's links open the line where it starts.
+#[tokio::test]
+async fn bookmarks_keep_their_line() {
+    let lib = TestLibrary::new();
+    lib.write("book.fb2", &book("The Book", "Writer", 3, false, &[]));
+    lib.scan();
+    let id = lib.id_of("book.fb2");
+    let server = lib.server(|_| {});
+    let p21 = server.block_of(id, &para(2, 1)).await;
+    let reply = server
+        .json(
+            &format!("/book/{id}/annotations"),
+            serde_json::json!({ "block": p21, "offset": 12 }),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+    assert_eq!(reply.json()["bookmark"], true, "{}", reply.body);
+    let card = server.ok(&format!("/book/{id}")).await;
+    assert!(
+        card.contains(&format!(
+            "href=\"/book/{id}/read?at={p21}&#38;from=mark&#38;o=12\">"
+        )),
+        "{card}"
+    );
+    let reader = server.ok(&format!("/book/{id}/read?part=2")).await;
+    assert!(
+        reader.contains(&format!("read?at={p21}&#38;from=mark&#38;o=12\"")),
+        "{reader}"
+    );
+    assert!(
+        lib.export_text()
+            .contains(&format!("/book/{id}/read?at={p21}&from=mark&o=12)")),
+        "{}",
+        lib.export_text()
+    );
+    let reply = server
+        .get(&format!("/book/{id}/read?at={p21}&from=mark&o=12"))
+        .await;
+    assert_eq!(
+        reply.location(),
+        format!("/book/{id}/read?part=2&from=mark&o=12#{p21}")
+    );
+
+    // Past the block's end: its end. Without an offset: the block's start.
+    let length = para(2, 1).chars().count();
+    let p22 = server.block_of(id, &para(2, 2)).await;
+    server
+        .json(
+            &format!("/book/{id}/annotations"),
+            serde_json::json!({ "block": p22, "offset": 100_000 }),
+        )
+        .await;
+    let p23 = server.block_of(id, &para(2, 3)).await;
+    server.bookmark(id, &p23).await;
+    let card = server.ok(&format!("/book/{id}")).await;
+    assert!(
+        card.contains(&format!(
+            "read?at={p22}&#38;from=mark&#38;o={}\"",
+            para(2, 2).chars().count()
+        )),
+        "{card}"
+    );
+    assert!(
+        card.contains(&format!("read?at={p23}&#38;from=mark\"")),
+        "{card}"
+    );
+    assert!(length > 12);
+
+    // A quote opens at its start.
+    server.mark(id, &p23, 15, 7, "kept").await;
+    let card = server.ok(&format!("/book/{id}")).await;
+    assert!(
+        card.contains(&format!("read?at={p23}&#38;from=mark&#38;o=15\"")),
+        "{card}"
+    );
 }
 
 #[tokio::test]
@@ -706,7 +873,7 @@ async fn annotations_follow_moves_and_reattach_across_containers() {
     let card = server.ok(&format!("/book/{zip_id}")).await;
     assert!(card.contains("Quotes (1)"), "{card}");
     assert!(
-        card.contains(&format!("read?at={p32}\">Continue")),
+        card.contains(&format!("read?at={p32}\" data-reading-place>Continue")),
         "position follows: {card}"
     );
     assert!(!card.contains("place not found"));
@@ -1105,7 +1272,7 @@ async fn currently_reading_list() {
     assert!(at("Book b").unwrap() < at("Book c").unwrap(), "{home}");
     assert!(at("Book a").is_none() && at("Book gone").is_none());
     assert!(home.contains(&format!(
-        "href=\"/book/{}/read?at={p}\">Continue</a>",
+        "href=\"/book/{}/read?at={p}\" data-reading-place>Continue</a>",
         ids[1]
     )));
     assert!(
@@ -1290,6 +1457,7 @@ async fn reattach_and_cleanup_cover_every_profile() {
                 &ReadingPosition {
                     book: snapshot.clone(),
                     block: mark.anchor.start_block,
+                    offset: 0,
                     suffix: mark.quote.text.clone(),
                     progress: 300,
                     updated_at: 5,

@@ -20,6 +20,9 @@
   // Until this time a scroll is a page turn, not the reader's: focus mode keeps the
   // top bar hidden.
   let pageTurnUntil = 0;
+  // Until this time a scroll comes from the layout (a reflow, the place put back), not
+  // the reader: it is no jump for the reading position.
+  let layoutScrollUntil = 0;
 
   const article = document.querySelector("article.reader");
   const text = article && article.querySelector(".text");
@@ -174,9 +177,9 @@
     return Math.max(top.getBoundingClientRect().bottom, 0) + 4;
   }
 
-  // The topmost leaf block that is (at least partly) visible below the top bar.
-  function topBlock() {
-    const limit = topLimit();
+  // The topmost leaf block that is (at least partly) visible below the top bar (or
+  // below `limit`, a height in the window).
+  function topBlock(limit = topLimit()) {
     const all = leaves();
     // Blocks are in document order, so their bottoms grow: binary search for the
     // first one below the limit.
@@ -385,9 +388,16 @@
         showTab(tab.dataset.tab);
         return;
       }
-      if (event.target.closest("[data-mark-link]")) {
-        // A jump to a bookmark or mark never moves the reading position.
-        suspendPosition();
+      const mark = event.target.closest("[data-mark-link]");
+      if (mark) {
+        // A jump to a bookmark or mark does not move the reading position until the
+        // reader reads on from there (another part holds it when it opens).
+        const url = new URL(mark.href, window.location.href);
+        if (url.pathname + url.search === here()) {
+          settle(false);
+          const id = decodeURIComponent(url.hash.slice(1));
+          holdAt(BLOCK_ID.test(id) ? document.getElementById(id) : null, 0);
+        }
       }
     });
     sidebar.addEventListener("submit", async (event) => {
@@ -704,13 +714,17 @@
 
   // ---------- Bookmarks ----------
 
+  // A bookmark goes on the place the reading position keeps: the first whole line at
+  // the top of the screen. That place is where the reader is, so it is also saved as
+  // the reading position (a hold from a bookmark opened before ends).
   async function addBookmark() {
-    const block = topBlock();
-    if (!block || !createUrl) {
+    const place = placeNow();
+    if (!place || !createUrl) {
       return;
     }
     try {
-      await source.create({ block: block.id });
+      await source.create({ block: place.block.id, offset: place.offset });
+      readHere();
       await refreshLists();
       toast("Bookmark saved.");
     } catch (e) {
@@ -793,83 +807,332 @@
 
   // ---------- Reading position ----------
 
-  // A page opened from a bookmark or quote (`from=mark`) or from a search result
-  // (`hit=`) never saves the position; prev/next links do not carry them, so reading
-  // on resumes saving.
+  // The place saved is the top line of the screen: its block and the code point offset
+  // of the line's first character in the block (0 when the block starts on the
+  // screen), so it does not depend on the font, the size or the width.
+  //
+  // When it is saved:
+  // - reading on (page turns, scrolling on by less than JUMP_SCREENS screens at once,
+  //   the next or the previous part) counts at once: the place goes out SCROLL_IDLE_MS
+  //   after the reader stops, and at once when the page is hidden or left;
+  // - after a jump (the contents, the track, a link, a long scroll, a page opened at a
+  //   place) only once the reader has stayed DWELL_MS, so a glance elsewhere does not
+  //   move the position;
+  // - a page opened from a bookmark, a quote or a search result (`from=mark`,
+  //   `hit=`), or a jump to a bookmark or quote within the part, holds the position
+  //   until the reader has read on a page past that place;
+  // - never inside notes, never while "Back to text" waits (`leftReturn`), and never
+  //   the place already saved (the page opens at the saved place: just opening a book
+  //   on one device does not overwrite a newer position from another one).
+  const JUMP_SCREENS = 2;
+  // A page past the held place releases it (a share of the screen's height).
+  const HOLD_RELEASE = 0.75;
+  // Leaving through a link waits this long at most for the position to be saved.
+  const LEAVE_WAIT_MS = 800;
+  // Set before going to the next or the previous part: that page view continues the
+  // reading.
+  const SEQUENTIAL_KEY = "shelfgauge-sequential";
   const opened = new URLSearchParams(window.location.search);
-  let suspended = opened.get("from") === "mark" || opened.has("hit");
-  let candidate = null;
-  let since = 0;
-  let lastSaved = null;
+  // Saving is off for good in this page view (leaving by "Back to text").
+  let suspended = false;
+  // The held place: `{ block, offset }`, or `{ y }` (a document height), or null.
+  let hold = null;
+  // When the last jump happened (0: none).
+  let jumpAt = 0;
+  // The window's scroll height at the last scroll event.
+  let lastY = 0;
+  // The saved place (`b<n>:<offset>`), or null.
+  let saved = null;
+  // The place the page was put at (`{ place, y }`): while the window stays there, it
+  // is the place (the top line found there may start a few characters earlier).
+  let restored = null;
+  // The place at the last scroll, for a change of the width (a turned phone).
+  let lastPlace = null;
   let timer = null;
+
+  // The next or the previous part is opened: it continues the reading.
+  function markSequential(href) {
+    const url = new URL(href, window.location.href);
+    storageSet(SEQUENTIAL_KEY, url.pathname + url.search);
+  }
 
   function suspendPosition() {
     suspended = true;
     clearTimeout(timer);
   }
 
-  function observe() {
-    const block = topBlock();
-    if (block !== candidate) {
-      candidate = block;
-      since = Date.now();
-    }
+  // Holds the position at the line with code point `offset` of `block` (the window's
+  // top without a block) until the reader has read on past it.
+  function holdAt(block, offset) {
+    hold = block ? { block, offset } : { y: window.scrollY + topLimit() };
   }
 
-  function save(keepalive) {
-    if (suspended || !positionUrl || !candidate) {
-      return;
+  // The window's height of the line with code point `offset` of `block`.
+  function lineTop(block, offset) {
+    if (offset > 0) {
+      const point = domPoint(block, offset);
+      const range = document.createRange();
+      range.setStart(point.node, point.offset);
+      range.setEnd(point.node, Math.min(point.offset + 1, point.node.nodeType === Node.TEXT_NODE ? point.node.data.length : 0));
+      const box = Array.from(range.getClientRects()).find((r) => r.height > 0);
+      if (box) {
+        return box.top;
+      }
     }
-    // Never a position inside notes.
-    if (candidate.closest(".notes") || candidate.id === lastSaved) {
-      return;
-    }
-    // While "Back to text" is shown, the position stays where the reader came from;
-    // a place past the link's target means the reader has stayed here: no way back.
-    if (!leftReturn(candidate)) {
-      return;
-    }
-    lastSaved = candidate.id;
-    Promise.resolve(source.savePosition({ block: candidate.id }, keepalive)).catch((e) => console.error(e));
+    return block.getBoundingClientRect().top;
   }
 
-  function trySave() {
-    observe();
-    if (!candidate) {
-      return;
+  function holdPassed() {
+    const top = hold.block ? lineTop(hold.block, hold.offset) + window.scrollY : hold.y;
+    return window.scrollY + topLimit() - top >= HOLD_RELEASE * window.innerHeight;
+  }
+
+  // The reader is reading here (a bookmark made): no hold, no dwell, saved now.
+  function readHere() {
+    hold = null;
+    jumpAt = 0;
+    settle(false);
+  }
+
+  function placeKey(place) {
+    return `${place.block.id}:${place.offset}`;
+  }
+
+  // The code point offset in `block` of the text line at height `y`, 0 without one
+  // (an image, or no caret APIs).
+  function lineStart(block, y) {
+    const x = block.getBoundingClientRect().left + 1;
+    let node = null;
+    let offset = 0;
+    if (document.caretPositionFromPoint) {
+      const position = document.caretPositionFromPoint(x, y);
+      node = position && position.offsetNode;
+      offset = position ? position.offset : 0;
+    } else if (document.caretRangeFromPoint) {
+      const caret = document.caretRangeFromPoint(x, y);
+      node = caret && caret.startContainer;
+      offset = caret ? caret.startOffset : 0;
     }
-    const wait = DWELL_MS - (Date.now() - since);
+    if (!node || !block.contains(node)) {
+      return 0;
+    }
+    return cpOffsetIn(block, node, offset);
+  }
+
+  // The reading place now: the first whole text line at the top (a line cut by the top
+  // edge has been read on the page before), as `{ block, offset }`, or null.
+  function placeNow() {
+    if (restored && Math.abs(window.scrollY - restored.y) < 2 && restored.place.block.isConnected) {
+      return restored.place;
+    }
+    let limit = topLimit();
+    const cut = lineAt(limit + LINE_SLOP + 1);
+    if (cut && cut.top < limit - LINE_SLOP) {
+      limit = cut.bottom + 1;
+    }
+    const block = topBlock(limit);
+    if (!block) {
+      return null;
+    }
+    const offset = block.getBoundingClientRect().top < limit - LINE_SLOP
+      ? lineStart(block, limit + LINE_SLOP + 1)
+      : 0;
+    return { block, offset };
+  }
+
+  // Puts the line with code point `offset` of `block` at the top of the reading area.
+  function scrollToPlace(block, offset) {
+    window.scrollBy({ top: lineTop(block, offset) - topLimit(), behavior: "instant" });
+    restored = { place: { block, offset }, y: window.scrollY };
+    lastPlace = restored.place;
+  }
+
+  // Saves the place now if it may be; `leaving`: the page is hidden or left (sent
+  // with `keepalive`, no later try). The promise of the save, or null.
+  function settle(leaving) {
+    clearTimeout(timer);
+    if (suspended || !positionUrl) {
+      return null;
+    }
+    if (hold && !holdPassed()) {
+      return null;
+    }
+    hold = null;
+    const wait = DWELL_MS - (Date.now() - jumpAt);
     if (wait > 0) {
-      timer = setTimeout(trySave, wait);
-      return;
+      if (!leaving) {
+        timer = setTimeout(() => settle(false), wait);
+      }
+      return null;
     }
-    save(false);
+    const place = placeNow();
+    // Never a position inside notes. While "Back to text" is shown, the position
+    // stays where the reader came from; a place past the link's target means the
+    // reader has stayed here: no way back.
+    if (!place || place.block.closest(".notes") || !leftReturn(place.block)) {
+      return null;
+    }
+    const key = placeKey(place);
+    if (key === saved) {
+      return null;
+    }
+    saved = key;
+    return Promise.resolve(
+      source.savePosition({ block: place.block.id, offset: place.offset }, leaving),
+    ).catch((e) => console.error(e));
+  }
+
+  // The place in the URL (`?o=` of a "Continue reading" link, with the block as the
+  // fragment), and `o` leaves the URL. The window goes to that line when it is given,
+  // or when the fragment is the saved place (as the browser puts a fragment, the top
+  // line found there could differ from it and be saved again). The offset the window
+  // was put at, or null (a fragment left to the browser, or none).
+  function restoreOffset() {
+    const offset = Number(opened.get("o"));
+    const id = decodeURIComponent(window.location.hash.slice(1));
+    const block = BLOCK_ID.test(id) && document.getElementById(id);
+    if (opened.has("o")) {
+      const params = new URLSearchParams(window.location.search);
+      params.delete("o");
+      const search = params.toString();
+      history.replaceState(history.state, "", `${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`);
+    }
+    if (!block) {
+      return null;
+    }
+    if (Number.isInteger(offset) && offset > 0) {
+      scrollToPlace(block, offset);
+      return offset;
+    }
+    if (positionUrl && article.dataset.savedPosition === `${id}:0`) {
+      scrollToPlace(block, 0);
+      return 0;
+    }
+    return null;
   }
 
   function setupPosition() {
+    const offset = restoreOffset();
+    setupRescroll(offset);
+    // Going on to the next or the previous part.
+    document.addEventListener("click", (event) => {
+      const link = event.target.closest(".reader-nav a[rel='next'], .reader-nav a[rel='prev']");
+      if (link) {
+        markSequential(link.href);
+      }
+    });
     if (!positionUrl) {
       return;
     }
-    observe();
-    timer = setTimeout(trySave, DWELL_MS);
+    saved = article.dataset.savedPosition || null;
+    const sequential = storageGet(SEQUENTIAL_KEY) === here() || window.location.hash === "#end";
+    storageSet(SEQUENTIAL_KEY, "");
+    // Opened at the saved place (Continue reading, the hub's Bookshelf): reading on
+    // from there counts at once, as after a page turn.
+    const atSaved = restored && placeKey(restored.place) === saved;
+    jumpAt = sequential || atSaved ? 0 : Date.now();
+    if (opened.get("from") === "mark" || opened.has("hit")) {
+      const id = decodeURIComponent(window.location.hash.slice(1));
+      holdAt(BLOCK_ID.test(id) ? document.getElementById(id) : null, offset || 0);
+    }
+    lastY = window.scrollY;
+    lastPlace = placeNow();
+    // The place kept over a change of the width (set while it settles).
+    let resizePlace = null;
+    timer = setTimeout(() => settle(false), sequential ? SCROLL_IDLE_MS : DWELL_MS);
+    let frame = 0;
     window.addEventListener(
       "scroll",
       () => {
-        if (suspended) {
-          return;
+        const y = window.scrollY;
+        // A page turn is reading on, however far it goes (`#end`: the end of the part).
+        if (
+          Math.abs(y - lastY) > JUMP_SCREENS * window.innerHeight &&
+          Date.now() >= pageTurnUntil &&
+          Date.now() >= layoutScrollUntil
+        ) {
+          jumpAt = Date.now();
         }
-        observe();
-        clearTimeout(timer);
-        timer = setTimeout(trySave, SCROLL_IDLE_MS);
+        lastY = y;
+        if (!frame) {
+          frame = requestAnimationFrame(() => {
+            frame = 0;
+            if (!resizePlace) {
+              lastPlace = placeNow();
+            }
+          });
+        }
+        if (!suspended) {
+          clearTimeout(timer);
+          timer = setTimeout(() => settle(false), SCROLL_IDLE_MS);
+        }
       },
       { passive: true },
     );
-    const leave = () => {
-      observe();
-      if (Date.now() - since >= DWELL_MS) {
-        save(true);
+    // A turned phone or a narrower window: the same line stays at the top (browsers
+    // keep the place on their own only roughly, some not at all). Put again after
+    // the layout has settled: a turned phone may leave the phone-sized screen, and
+    // the top bar slides in or out (a transition), which moves the top of the
+    // reading area. Not once the reader scrolls on their own.
+    let width = window.innerWidth;
+    let resizeTimers = [];
+    let resizeMoved = false;
+    for (const type of ["wheel", "touchstart", "keydown", "mousedown"]) {
+      window.addEventListener(type, () => {
+        resizeMoved = true;
+      }, { passive: true });
+    }
+    window.addEventListener("resize", () => {
+      if (window.innerWidth === width) {
+        return; // A browser toolbar shown or hidden.
       }
-    };
+      width = window.innerWidth;
+      // The reflow's own scroll is no jump.
+      layoutScrollUntil = Date.now() + 1500;
+      resizePlace = resizePlace || lastPlace;
+      resizeMoved = false;
+      resizeTimers.forEach(clearTimeout);
+      resizeTimers = [100, 450, 900].map((delay, i, all) => setTimeout(() => {
+        const place = resizePlace;
+        if (i === all.length - 1) {
+          resizePlace = null;
+        }
+        if (place && place.block.isConnected && !resizeMoved) {
+          layoutScrollUntil = Date.now() + 400;
+          scrollToPlace(place.block, place.offset);
+        }
+      }, delay));
+    });
+    // Leaving through a link (to the book card, the library, the shelf): the place
+    // is saved first, so the page that opens shows it.
+    document.addEventListener("click", (event) => {
+      const a = event.target.closest("a[href]");
+      if (
+        event.defaultPrevented ||
+        !a ||
+        event.button !== 0 ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        event.altKey ||
+        (a.target && a.target !== "_self") ||
+        a.hasAttribute("download")
+      ) {
+        return;
+      }
+      const url = new URL(a.href, window.location.href);
+      if (url.origin !== window.location.origin || url.pathname + url.search === here()) {
+        return;
+      }
+      const saving = settle(true);
+      if (saving) {
+        event.preventDefault();
+        Promise.race([saving, new Promise((resolve) => setTimeout(resolve, LEAVE_WAIT_MS))]).then(() => {
+          window.location.href = a.href;
+        });
+      }
+    });
+    const leave = () => settle(true);
     window.addEventListener("pagehide", leave);
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "hidden") {
@@ -879,8 +1142,9 @@
   }
 
   // Late images or fonts above the target block shift the layout: scroll to the block
-  // again unless the reader has scrolled meanwhile.
-  function setupRescroll() {
+  // (to the line at `offset` in it, unless null) again unless the reader has scrolled
+  // meanwhile.
+  function setupRescroll(offset) {
     const id = decodeURIComponent(window.location.hash.slice(1));
     const target = BLOCK_ID.test(id) && document.getElementById(id);
     if (!target) {
@@ -893,21 +1157,26 @@
     for (const type of ["wheel", "touchstart", "keydown", "mousedown"]) {
       window.addEventListener(type, stop, { once: true, passive: true });
     }
+    const again = () => {
+      if (moved) {
+        return;
+      }
+      if (offset !== null) {
+        layoutScrollUntil = Date.now() + 400;
+        scrollToPlace(target, offset);
+      } else {
+        target.scrollIntoView();
+      }
+    };
+    // The browser may put the fragment again as the page completes.
+    window.addEventListener("load", again, { once: true });
     for (const img of text.querySelectorAll("img")) {
       if (!img.complete) {
-        img.addEventListener("load", () => {
-          if (!moved) {
-            target.scrollIntoView();
-          }
-        });
+        img.addEventListener("load", again);
       }
     }
     // A bundled reading font arrives after the first layout (`font-display: swap`).
-    document.fonts?.addEventListener("loadingdone", () => {
-      if (!moved) {
-        target.scrollIntoView();
-      }
-    });
+    document.fonts?.addEventListener("loadingdone", again);
   }
 
   // ---------- Reading fonts ----------
@@ -1147,6 +1416,7 @@
     if (forward && rect.bottom <= bottom + 2) {
       const next = partLink("next");
       if (next) {
+        markSequential(next.href);
         window.location.href = next.href;
       } else {
         toast("The end of the book.");
@@ -1156,6 +1426,7 @@
     if (!forward && rect.top >= top - 2) {
       const prev = partLink("prev");
       if (prev) {
+        markSequential(prev.href);
         window.location.href = `${prev.href.split("#")[0]}#end`;
       }
       return;
@@ -2142,6 +2413,8 @@
   // block at the top of the screen, at the same share of its height (or at the same
   // distance below the top bar when it starts below it).
   function keepPlace(change) {
+    // The scroll back is no jump of the reader's (the reading position).
+    layoutScrollUntil = Date.now() + 500;
     const block = topBlock();
     let share = null;
     let offset = 0;
@@ -3119,7 +3392,6 @@
   setupMarks();
   setupBookmarks();
   setupPosition();
-  setupRescroll();
   setupPaging();
   setupCut();
   setupNotes();

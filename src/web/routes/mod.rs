@@ -53,6 +53,9 @@ pub(crate) struct Params {
     part: Option<String>,
     /// A block id to open (reading mode), e.g. `b12`.
     at: Option<String>,
+    /// With `at`: the place in the block to open, in code points (the reading
+    /// position's top line); kept through the redirect for `reader.js`.
+    o: Option<String>,
     /// A place to open (reading mode): a share of the main text in ten-thousandths.
     progress: Option<String>,
     /// `mark` when the page is opened from a bookmark or mark (reading mode): the

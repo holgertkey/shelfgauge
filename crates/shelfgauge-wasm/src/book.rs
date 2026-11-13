@@ -289,7 +289,17 @@ impl Book {
             let part = self.part_of(anchor.start_block).unwrap_or(0);
             Some(ListItem {
                 id: a.id.clone(),
-                href: format!("?part={}&from=mark#{}", part + 1, anchor.start_block),
+                // The place in the block, for reader.js (`o=`, code points).
+                href: if anchor.start_offset > 0 {
+                    format!(
+                        "?part={}&from=mark&o={}#{}",
+                        part + 1,
+                        anchor.start_offset,
+                        anchor.start_block
+                    )
+                } else {
+                    format!("?part={}&from=mark#{}", part + 1, anchor.start_block)
+                },
                 label: label(a.note.as_deref(), &quote, a.section_title.as_deref()),
                 note: a
                     .note

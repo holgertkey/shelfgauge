@@ -37,7 +37,7 @@
         <div class="progress-bar" aria-hidden="true"><span class="{{ item.bar }}"></span></div>
         <div class="reading-meta muted">{{ item.progress }} · {{ item.date }}</div>
         <div class="reading-actions">
-          <a class="button primary" href="{{ item.continue_href }}">Continue</a>
+          <a class="button primary" href="{{ item.continue_href }}" data-reading-place>Continue</a>
           <form method="post" action="{{ item.finished_action }}">
             <input type="hidden" name="finished" value="1">
             <button type="submit" class="icon-button finished-toggle" aria-pressed="false" title="Mark as finished" aria-label="Mark as finished"><svg class="icon" aria-hidden="true"><use href="#i-done"></use></svg></button>

@@ -295,9 +295,14 @@ fn sanitize(name: &str) -> String {
 /// marks grouped by section, each a quote with its note and a link to the reader.
 /// Quotes and notes are plain text paragraphs, not Markdown block quotes.
 pub fn render(book: &ExportBook, annotations: &[Annotation], base_url: &str) -> String {
-    let link = |block: BlockId| {
+    let link = |block: BlockId, offset: u32| {
+        let o = if offset > 0 {
+            format!("&o={offset}")
+        } else {
+            String::new()
+        };
         format!(
-            "{}/book/{}/read?at={block}&from=mark",
+            "{}/book/{}/read?at={block}&from=mark{o}",
             base_url.trim_end_matches('/'),
             book.id
         )
@@ -324,7 +329,7 @@ pub fn render(book: &ExportBook, annotations: &[Annotation], base_url: &str) -> 
                 out,
                 "- [{}]({})",
                 inline(&bookmark.label()).replace(']', "\\]"),
-                link(bookmark.anchor.start_block)
+                link(bookmark.anchor.start_block, bookmark.anchor.start_offset)
             );
         }
         out.push('\n');
@@ -349,7 +354,11 @@ pub fn render(book: &ExportBook, annotations: &[Annotation], base_url: &str) -> 
             } else {
                 "open"
             };
-            let _ = writeln!(out, "[{place}]({})\n", link(mark.anchor.start_block));
+            let _ = writeln!(
+                out,
+                "[{place}]({})\n",
+                link(mark.anchor.start_block, mark.anchor.start_offset)
+            );
         }
     }
     let trimmed = out.trim_end().len();

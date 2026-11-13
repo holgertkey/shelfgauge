@@ -93,6 +93,9 @@ struct ReadPage {
     annotations_href: String,
     /// URL to save the reading position; empty when positions are not remembered.
     position_href: String,
+    /// The saved reading position as `b<n>:<offset>` (empty without one): what
+    /// `reader.js` does not save again.
+    saved_position: String,
     max_text: u32,
     max_note: u32,
     /// The Search tab.
@@ -185,8 +188,19 @@ fn page(
         let block: BlockId = at.parse().map_err(|_| AppError::NotFound)?;
         let part = part_of(&parts, block).ok_or(AppError::NotFound)?;
         // `from=mark` survives the redirect: that page view must not move the position.
+        let offset = params
+            .o
+            .as_deref()
+            .and_then(|o| o.parse::<u32>().ok())
+            .filter(|&o| o > 0);
         let url = if params.from.as_deref() == Some("mark") {
-            format!("{}#{block}", urls.read_from_mark(book.id, part + 1))
+            let o = offset.map_or_else(String::new, |o| format!("&o={o}"));
+            format!("{}{o}#{block}", urls.read_from_mark(book.id, part + 1))
+        } else if let Some(offset) = offset {
+            // Without JS the fragment still opens the block.
+            let page = urls.read(book.id, part + 1);
+            let sep = if page.contains('?') { '&' } else { '?' };
+            format!("{page}{sep}o={offset}#{block}")
         } else {
             links.block(part, block)
         };
@@ -211,7 +225,7 @@ fn page(
     let part_title = parts
         .get(index)
         .map_or_else(String::new, |part| part.title.clone());
-    let annotations = {
+    let (annotations, saved) = {
         let index = state.pool().get()?;
         book_annotations(
             state,
@@ -221,7 +235,7 @@ fn page(
             book,
             Some(&content),
         )?
-        .map_or_else(Vec::new, |a| a.annotations)
+        .map_or_else(|| (Vec::new(), None), |a| (a.annotations, a.position))
     };
     let current = urls.read(book.id, index + 1);
     let title = if count > 1 {
@@ -255,6 +269,7 @@ fn page(
         } else {
             String::new()
         },
+        saved_position: saved.map_or_else(String::new, |p| format!("{}:{}", p.block, p.offset)),
         max_text: config.annotations.max_text_length,
         max_note: config.annotations.max_note_length,
         find: FindPanel {
