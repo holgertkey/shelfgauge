@@ -11,7 +11,8 @@ use crate::format::model::BlockId;
 /// Code points of context kept before and after a selection.
 pub const CONTEXT_CHARS: usize = 32;
 
-/// Code points of a block's start kept as a bookmark's fingerprint and label.
+/// Code points after a bookmark's place (the start of its line) kept as its
+/// fingerprint and label.
 pub const BOOKMARK_CHARS: usize = 64;
 
 /// The shortest quote that is searched for without its context when the full
@@ -49,10 +50,11 @@ impl Anchor {
 pub struct Quote {
     /// The selected text (blocks separated by `\n`); empty for a bookmark.
     pub text: String,
-    /// Up to [`CONTEXT_CHARS`] code points before the text (empty for a bookmark).
+    /// Up to [`CONTEXT_CHARS`] code points before the text; for a bookmark, before its
+    /// place in the block (empty at the block's start).
     pub prefix: String,
     /// Up to [`CONTEXT_CHARS`] code points after the text; for a bookmark, the first
-    /// [`BOOKMARK_CHARS`] code points of the block.
+    /// [`BOOKMARK_CHARS`] code points of the block from its place.
     pub suffix: String,
 }
 
@@ -130,6 +132,32 @@ pub fn bookmark_quote(book: &BookText, block: BlockId) -> Result<Quote, AnchorEr
     })
 }
 
+/// The quote of a bookmark at code point `offset` of `block` (the start of the line
+/// at the top of the screen): no text, up to [`CONTEXT_CHARS`] code points of the
+/// block before the place as `prefix` and up to [`BOOKMARK_CHARS`] from it as
+/// `suffix`. At offset 0 it is [`bookmark_quote`].
+///
+pub fn bookmark_quote_at(
+    book: &BookText,
+    block: BlockId,
+    offset: u32,
+) -> Result<Quote, AnchorError> {
+    let text = book
+        .text(block)
+        .filter(|_| book.is_leaf(block))
+        .ok_or(AnchorError::NoSuchBlock(block))?;
+    let offset_cp = offset as usize;
+    if offset_cp > char_len(text) {
+        return Err(AnchorError::BadOffset { block, offset });
+    }
+    let at = text::byte_index(text, offset_cp);
+    Ok(Quote {
+        text: String::new(),
+        prefix: text::last_chars(&text[..at], CONTEXT_CHARS).to_owned(),
+        suffix: text::first_chars(&text[at..], BOOKMARK_CHARS).to_owned(),
+    })
+}
+
 fn position(book: &BookText, block: BlockId, offset: u32) -> Result<usize, AnchorError> {
     if !book.is_leaf(block) {
         return Err(AnchorError::NoSuchBlock(block));
@@ -143,11 +171,32 @@ fn position(book: &BookText, block: BlockId, offset: u32) -> Result<usize, Ancho
 ///
 /// A selection is searched for as `prefix + text + suffix`, and if that is not found
 /// and the text is long enough, as the text alone. A bookmark (empty text) is found as
-/// a leaf block that starts with its `suffix`. Returns `None` if nothing matches.
+/// a leaf block that starts with its `suffix`, or, with a `prefix` (a place inside the
+/// block), as a leaf block that holds `prefix + suffix`, at the end of the prefix.
+/// Returns `None` if nothing matches.
 pub fn find(book: &BookText, quote: &Quote, near: BlockId) -> Option<Anchor> {
     if quote.text.is_empty() {
         if quote.suffix.is_empty() {
             return None;
+        }
+        if !quote.prefix.is_empty() {
+            let needle = format!("{}{}", quote.prefix, quote.suffix);
+            return book
+                .leaves()
+                .iter()
+                .copied()
+                .filter_map(|id| {
+                    let at = book.text(id)?.find(&needle)?;
+                    let text = book.text(id)?;
+                    let offset = char_len(&text[..at]) + char_len(&quote.prefix);
+                    let offset = u32::try_from(offset).ok()?;
+                    Some(Anchor {
+                        start_offset: offset,
+                        end_offset: offset,
+                        ..Anchor::at_block(id)
+                    })
+                })
+                .min_by_key(|anchor| distance(anchor.start_block, near));
         }
         return book
             .leaves()
@@ -308,6 +357,41 @@ mod tests {
         assert_eq!(find(&new, &q, b(2)), Some(Anchor::at_block(b(3))));
         assert_eq!(find(&book(&["x"]), &q, b(2)), None);
         assert_eq!(find(&new, &Quote::default(), b(1)), None);
+    }
+
+    #[test]
+    fn bookmarks_inside_a_block_keep_their_place() {
+        let old = book(&["Chapter", "It was a dark night. The ship sailed on."]);
+        assert_eq!(
+            bookmark_quote_at(&old, b(2), 0).unwrap(),
+            bookmark_quote(&old, b(2)).unwrap()
+        );
+        let q = bookmark_quote_at(&old, b(2), 21).unwrap();
+        assert!(q.text.is_empty());
+        assert_eq!(
+            (q.prefix.as_str(), q.suffix.as_str()),
+            ("It was a dark night. ", "The ship sailed on.")
+        );
+        assert!(bookmark_quote_at(&old, b(2), 99).is_err());
+        assert!(bookmark_quote_at(&old, b(9), 0).is_err());
+        // Found again at the same place in a changed book, also with other text before.
+        let new = book(&[
+            "Preface",
+            "Chapter",
+            "Oh. It was a dark night. The ship sailed on.",
+        ]);
+        let at = |block, offset| Anchor {
+            start_offset: offset,
+            end_offset: offset,
+            ..Anchor::at_block(b(block))
+        };
+        assert_eq!(find(&new, &q, b(2)), Some(at(3, 25)));
+        assert_eq!(find(&book(&["The ship sailed on."]), &q, b(2)), None);
+        // Code points, not bytes.
+        let cyr = book(&["Жили-были дед и баба."]);
+        let q = bookmark_quote_at(&cyr, b(1), 10).unwrap();
+        assert_eq!(q.suffix, "дед и баба.");
+        assert_eq!(find(&cyr, &q, b(1)), Some(at(1, 10)));
     }
 
     #[test]

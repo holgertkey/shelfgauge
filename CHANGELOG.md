@@ -111,7 +111,12 @@ Build numbers (`+NNN`) do not get their own sections.
   screen (they used to go on the paragraph, which could start a page or more before),
   and making one saves the reading position there. A bookmark or quote link (the
   reader's sidebar, the book card, the Markdown export) opens its line, not the start
-  of its paragraph.
+  of its paragraph. On a phone the top bar shown to reach the bookmark button no
+  longer moves the place a line or two down (it is measured from the page's top, with
+  the header and status line on or off).
+- A bookmark without a note is named by the text it points to alone, from its line;
+  the section's title (for a text file, often the book's title) is no longer put in
+  front of it.
 
 
 ## [0.24.0] - 2026-11-06

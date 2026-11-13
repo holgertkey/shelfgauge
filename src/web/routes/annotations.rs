@@ -263,13 +263,13 @@ pub(crate) async fn create(
             let (anchor, quote) = match &request.block {
                 Some(block) => {
                     let block = parse_block(block)?;
-                    let quote = anchor::bookmark_quote(&text, block).map_err(bad)?;
                     // Past the end of the block (a stale page): its end.
                     let length = text.text(block).map_or(0, char_len);
                     let offset = request
                         .offset
                         .unwrap_or(0)
                         .min(u32::try_from(length).unwrap_or(u32::MAX));
+                    let quote = anchor::bookmark_quote_at(&text, block, offset).map_err(bad)?;
                     let anchor = Anchor {
                         start_offset: offset,
                         end_offset: offset,

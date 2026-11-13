@@ -242,18 +242,20 @@ export class Reader {
         }
     }
     /**
-     * The quote of a bookmark on `block`, as JSON (see [`Reader::quote`]).
+     * The quote of a bookmark at code point `offset` of `block` (0, or left out: the
+     * block's start), as JSON (see [`Reader::quote`]).
      * @param {string} block
+     * @param {number | null} [offset]
      * @returns {string}
      */
-    bookmark(block) {
+    bookmark(block, offset) {
         let deferred3_0;
         let deferred3_1;
         try {
             const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
             const ptr0 = passStringToWasm0(block, wasm.__wbindgen_export, wasm.__wbindgen_export3);
             const len0 = WASM_VECTOR_LEN;
-            wasm.reader_bookmark(retptr, this.__wbg_ptr, ptr0, len0);
+            wasm.reader_bookmark(retptr, this.__wbg_ptr, ptr0, len0, isLikeNone(offset) ? Number.MAX_SAFE_INTEGER : (offset) >>> 0);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
             var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);

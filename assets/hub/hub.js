@@ -1731,12 +1731,12 @@ function deviceSource(book, item, p, sync) {
       let anchor;
       let quoted;
       if (body.block) {
-        quoted = JSON.parse(book.reader.bookmark(body.block));
         // The top line of the screen in the block (reader.js), at most its end.
         const shown = document.getElementById(body.block);
         const offset = Number.isInteger(body.offset) && body.offset > 0
           ? Math.min(body.offset, shown ? cpLength(shown.textContent) : 0)
           : 0;
+        quoted = JSON.parse(book.reader.bookmark(body.block, offset));
         anchor = { start_block: ordinal(body.block), start_offset: offset, end_block: ordinal(body.block), end_offset: offset };
       } else {
         quoted = JSON.parse(book.reader.quote(JSON.stringify({

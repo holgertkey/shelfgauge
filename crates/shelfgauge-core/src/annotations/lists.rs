@@ -72,8 +72,8 @@ impl Lists {
 }
 
 /// The label of an annotation in lists: the note's first line, else the start of the
-/// quoted text; for a bookmark without a note, "`<section title> — <start of the
-/// block>`".
+/// quoted text; for a bookmark without a note, the text from its place (the line it
+/// points to), else the section's title.
 ///
 /// # Examples
 ///
@@ -82,7 +82,9 @@ impl Lists {
 /// use shelfgauge_core::annotations::lists::label;
 ///
 /// let bookmark = Quote { text: String::new(), prefix: String::new(), suffix: "It was".into() };
-/// assert_eq!(label(None, &bookmark, Some("Chapter 1")), "Chapter 1 — It was");
+/// assert_eq!(label(None, &bookmark, Some("Chapter 1")), "It was");
+/// let empty = Quote { suffix: String::new(), ..bookmark.clone() };
+/// assert_eq!(label(None, &empty, Some("Chapter 1")), "Chapter 1");
 /// let quote = Quote { text: "a  dark\nnight".into(), ..bookmark.clone() };
 /// assert_eq!(label(Some("\n mine \n"), &quote, None), "mine");
 /// assert_eq!(label(None, &quote, None), "a dark night");
@@ -94,11 +96,8 @@ pub fn label(note: Option<&str>, quote: &Quote, section_title: Option<&str>) -> 
     if quote.text.is_empty() {
         let start = one_line(&words(&quote.suffix));
         return match (section_title, start.is_empty()) {
-            // A bookmark on the section's title: the title alone.
-            (Some(section), false) if start == one_line(section) => section.to_owned(),
-            (Some(section), false) => format!("{section} — {start}"),
+            (_, false) => start,
             (Some(section), true) => section.to_owned(),
-            (None, false) => start,
             (None, true) => "Bookmark".to_owned(),
         };
     }

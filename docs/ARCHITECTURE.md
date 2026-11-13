@@ -319,10 +319,13 @@ in the core crate), `src/web/routes/annotations.rs`, `assets/reader.js`/`reader.
   fingerprint), a separate **note** is editable and optional (bookmark name / note
   body). An annotation with no selection is a **bookmark** on the place the reading
   position keeps (the first whole line at the top: block and offset, a point anchor;
-  making one also saves the reading position there; note optional; the automatic label
-  is the section title and the start of the block, also its re-attaching fingerprint,
-  so a re-attached bookmark starts its block over). Links to bookmarks and quotes
-  carry the place in the block (`o=`) and open that line.
+  making one also saves the reading position there; both are measured from the page's
+  top at rest, so a top bar shown for a moment does not count; note optional; the
+  automatic label is the text from the bookmark's place, the section title only when
+  there is none; the quote keeps up to 32 code points before the place as `prefix`
+  and 64 from it as `suffix`, found again as `prefix + suffix` in a leaf, a bookmark at
+  a block's start by its start as before). Links to bookmarks and quotes carry the
+  place in the block (`o=`) and open that line.
   No `kind` field: bookmarks (empty text) and quotes (non-empty text) are one model
   shown as two lists.
 - **The server owns annotations.** They live in a separate SQLite file,

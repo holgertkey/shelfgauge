@@ -211,10 +211,11 @@ impl Book {
         Ok(Quoted::new(text, anchor.start_block, quote))
     }
 
-    /// The quote of a bookmark on `block`.
-    pub fn bookmark(&self, block: BlockId) -> Result<Quoted, BookError> {
+    /// The quote of a bookmark at code point `offset` of `block`.
+    pub fn bookmark(&self, block: BlockId, offset: u32) -> Result<Quoted, BookError> {
         let text = self.text()?;
-        let quote = anchor::bookmark_quote(text, block).map_err(|e| BookError(e.to_string()))?;
+        let quote =
+            anchor::bookmark_quote_at(text, block, offset).map_err(|e| BookError(e.to_string()))?;
         Ok(Quoted::new(text, block, quote))
     }
 

@@ -170,7 +170,8 @@ mod tests {
     fn labels() {
         assert_eq!(
             sample("", None).label(),
-            "Chapter 1 — It was a dark and stormy night; the rain fell in torrents, except…"
+            "It was a dark and stormy night; the rain fell in torrents, except…",
+            "a bookmark: the text it points to, without the section"
         );
         assert_eq!(sample("", Some("\n  My place \nmore")).label(), "My place");
         assert_eq!(sample("", Some("   ")).label(), sample("", None).label());
@@ -187,6 +188,9 @@ mod tests {
         assert_eq!(bare.label(), "Short");
         bare.quote.suffix.clear();
         assert_eq!(bare.label(), "Bookmark");
+        let mut empty = sample("", None);
+        empty.quote.suffix.clear();
+        assert_eq!(empty.label(), "Chapter 1", "no text there: the section");
         let mut heading = sample("", None);
         heading.quote.suffix = "Chapter 1".into();
         assert_eq!(heading.label(), "Chapter 1");

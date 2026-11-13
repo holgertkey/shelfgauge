@@ -352,8 +352,8 @@ async fn marks_bookmarks_notes_and_export() {
     )));
     assert!(read.contains(&format!("href=\"/book/{id}/read?at={p21}&#38;from=mark\"")));
     assert!(
-        read.contains("Chapter 2 — Paragraph 2.1: the brown fox"),
-        "bookmark label"
+        read.contains(">Paragraph 2.1: the brown fox") && !read.contains("Chapter 2 — Paragraph"),
+        "bookmark label: the text it points to, without the section"
     );
     assert!(read.contains("data-max-text=\"10000\" data-max-note=\"10000\""));
     assert!(read.contains("assets/reader.js?v=") && read.contains("assets/reader.css?v="));
@@ -773,6 +773,16 @@ async fn bookmarks_keep_their_line() {
         .await;
     assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
     assert_eq!(reply.json()["bookmark"], true, "{}", reply.body);
+    let from_offset: String = para(2, 1).chars().skip(12).collect();
+    let first_word = from_offset.split_whitespace().next().unwrap();
+    assert!(
+        reply.json()["label"]
+            .as_str()
+            .unwrap()
+            .starts_with(first_word),
+        "the label starts at the bookmark's line: {}",
+        reply.body
+    );
     let card = server.ok(&format!("/book/{id}")).await;
     assert!(
         card.contains(&format!(

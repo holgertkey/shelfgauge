@@ -103,9 +103,15 @@ impl Reader {
         json(&self.0.quote(&anchor).map_err(book_error)?)
     }
 
-    /// The quote of a bookmark on `block`, as JSON (see [`Reader::quote`]).
-    pub fn bookmark(&self, block: &str) -> Result<String, JsError> {
-        json(&self.0.bookmark(block_id(block)?).map_err(book_error)?)
+    /// The quote of a bookmark at code point `offset` of `block` (0, or left out: the
+    /// block's start), as JSON (see [`Reader::quote`]).
+    pub fn bookmark(&self, block: &str, offset: Option<u32>) -> Result<String, JsError> {
+        json(
+            &self
+                .0
+                .bookmark(block_id(block)?, offset.unwrap_or(0))
+                .map_err(book_error)?,
+        )
     }
 
     /// A reading position at `block` as JSON `{suffix, progress}`; `null` in the notes.

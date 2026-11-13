@@ -416,7 +416,7 @@ mod tests {
         assert!(bookmarks < marks, "{md}");
         assert!(
             md.contains(
-                "- [Chapter 1 — It was a dark and stormy night; the rain fell in torrents, except…]\
+                "- [It was a dark and stormy night; the rain fell in torrents, except…]\
                  (http://127.0.0.1:8742/book/12/read?at=b3&from=mark)"
             ),
             "{md}"

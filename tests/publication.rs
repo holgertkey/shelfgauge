@@ -1015,7 +1015,7 @@ fn the_reader_app_rendering_vector_is_stable() {
         (&expected.text, &expected.prefix, &expected.suffix)
     );
     assert_eq!(quote.section_title.as_deref(), full.section_title(b(2)));
-    let bookmark = book.bookmark(b(3)).unwrap();
+    let bookmark = book.bookmark(b(3), 0).unwrap();
     assert!(bookmark.text.is_empty() && !bookmark.suffix.is_empty());
     let position = book.position(b(3)).unwrap().unwrap();
     assert_eq!(Some(position.progress), full.progress(b(3)));

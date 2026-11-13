@@ -177,6 +177,17 @@
     return Math.max(top.getBoundingClientRect().bottom, 0) + 4;
   }
 
+  // The top of the page at rest: like topLimit, but a top bar shown for a moment in
+  // focus mode (a tap, the sidebar, the bookmark button) does not count. The reading
+  // position and bookmarks are measured from it, as page turns leave the page.
+  function pageTop() {
+    const root = document.documentElement;
+    if (root.classList.contains("reading-focus") && !root.classList.contains("page-fits")) {
+      return readingTop();
+    }
+    return topLimit();
+  }
+
   // The topmost leaf block that is (at least partly) visible below the top bar (or
   // below `limit`, a height in the window).
   function topBlock(limit = topLimit()) {
@@ -864,7 +875,7 @@
   // Holds the position at the line with code point `offset` of `block` (the window's
   // top without a block) until the reader has read on past it.
   function holdAt(block, offset) {
-    hold = block ? { block, offset } : { y: window.scrollY + topLimit() };
+    hold = block ? { block, offset } : { y: window.scrollY + pageTop() };
   }
 
   // The window's height of the line with code point `offset` of `block`.
@@ -884,7 +895,7 @@
 
   function holdPassed() {
     const top = hold.block ? lineTop(hold.block, hold.offset) + window.scrollY : hold.y;
-    return window.scrollY + topLimit() - top >= HOLD_RELEASE * window.innerHeight;
+    return window.scrollY + pageTop() - top >= HOLD_RELEASE * window.innerHeight;
   }
 
   // The reader is reading here (a bookmark made): no hold, no dwell, saved now.
@@ -898,25 +909,57 @@
     return `${place.block.id}:${place.offset}`;
   }
 
-  // The code point offset in `block` of the text line at height `y`, 0 without one
-  // (an image, or no caret APIs).
-  function lineStart(block, y) {
-    const x = block.getBoundingClientRect().left + 1;
-    let node = null;
-    let offset = 0;
-    if (document.caretPositionFromPoint) {
-      const position = document.caretPositionFromPoint(x, y);
-      node = position && position.offsetNode;
-      offset = position ? position.offset : 0;
-    } else if (document.caretRangeFromPoint) {
-      const caret = document.caretRangeFromPoint(x, y);
-      node = caret && caret.startContainer;
-      offset = caret ? caret.startOffset : 0;
+  // The top of character `k` of text node `node` in the window, or null when it has
+  // no box (collapsed white space).
+  function charTop(node, k) {
+    const range = document.createRange();
+    range.setStart(node, k);
+    range.setEnd(node, Math.min(k + 1, node.data.length));
+    const box = Array.from(range.getClientRects()).find((r) => r.height > 0);
+    return box ? box.top : null;
+  }
+
+  // The code point offset in `block` of the first character on the text line whose
+  // top is `top` (or below it), 0 without one. Found from the characters' boxes, not
+  // by a probe at a point: a top bar shown over the text must not hide the line.
+  function lineStart(block, top) {
+    const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+    let cp = 0;
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const len = node.data.length;
+      let last = null;
+      for (let k = len - 1; k >= 0 && last === null; k--) {
+        last = charTop(node, k);
+      }
+      if (last === null || last < top - LINE_SLOP) {
+        cp += cpLength(node.data);
+        continue;
+      }
+      // Character tops grow along the text: the first one on the line or below it.
+      let lo = 0;
+      let hi = len - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        let k = mid;
+        let t = charTop(node, k);
+        while (t === null && k < hi) {
+          k += 1;
+          t = charTop(node, k);
+        }
+        if (t === null || t >= top - LINE_SLOP) {
+          hi = mid;
+        } else {
+          lo = k + 1;
+        }
+      }
+      // Not inside a surrogate pair.
+      const c = node.data.charCodeAt(lo);
+      if (lo > 0 && c >= 0xdc00 && c <= 0xdfff) {
+        lo -= 1;
+      }
+      return cp + cpLength(node.data.slice(0, lo));
     }
-    if (!node || !block.contains(node)) {
-      return 0;
-    }
-    return cpOffsetIn(block, node, offset);
+    return 0;
   }
 
   // The reading place now: the first whole text line at the top (a line cut by the top
@@ -925,7 +968,7 @@
     if (restored && Math.abs(window.scrollY - restored.y) < 2 && restored.place.block.isConnected) {
       return restored.place;
     }
-    let limit = topLimit();
+    let limit = pageTop();
     const cut = lineAt(limit + LINE_SLOP + 1);
     if (cut && cut.top < limit - LINE_SLOP) {
       limit = cut.bottom + 1;
@@ -934,15 +977,17 @@
     if (!block) {
       return null;
     }
-    const offset = block.getBoundingClientRect().top < limit - LINE_SLOP
-      ? lineStart(block, limit + LINE_SLOP + 1)
-      : 0;
+    let offset = 0;
+    if (block.getBoundingClientRect().top < limit - LINE_SLOP) {
+      const line = lineAt(limit + LINE_SLOP + 1);
+      offset = line ? lineStart(block, line.top) : 0;
+    }
     return { block, offset };
   }
 
   // Puts the line with code point `offset` of `block` at the top of the reading area.
   function scrollToPlace(block, offset) {
-    window.scrollBy({ top: lineTop(block, offset) - topLimit(), behavior: "instant" });
+    window.scrollBy({ top: lineTop(block, offset) - pageTop(), behavior: "instant" });
     restored = { place: { block, offset }, y: window.scrollY };
     lastPlace = restored.place;
   }
