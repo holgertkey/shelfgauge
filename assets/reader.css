@@ -269,7 +269,8 @@ mark.sg-find.current {
 :root[data-theme="dusk"],
 :root[data-theme="dark"],
 :root[data-theme="navy"],
-:root[data-theme="black"] {
+:root[data-theme="forest"],
+:root[data-theme="wine"] {
   --find-bg: rgb(80 160 255 / 0.32);
   --find-current-bg: rgb(255 150 50 / 0.5);
 }
@@ -1229,10 +1230,6 @@ mark.sg-find.current {
   background: #e6e7e3;
 }
 
-.settings-form .swatches .swatch-stone input + span {
-  background: #cdcfca;
-}
-
 .settings-form .swatches .swatch-dusk input + span {
   background: #4a4f57;
 }
@@ -1245,8 +1242,12 @@ mark.sg-find.current {
   background: #161f30;
 }
 
-.settings-form .swatches .swatch-black input + span {
-  background: #000000;
+.settings-form .swatches .swatch-forest input + span {
+  background: #15261d;
+}
+
+.settings-form .swatches .swatch-wine input + span {
+  background: #2a171b;
 }
 
 .settings-form .swatch span:hover {

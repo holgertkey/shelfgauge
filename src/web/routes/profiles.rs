@@ -476,11 +476,11 @@ const THEMES: &[(&str, &str)] = &[
     ("light", "Light"),
     ("sepia", "Sepia"),
     ("mist", "Mist"),
-    ("stone", "Stone"),
     ("dusk", "Dusk"),
     ("dark", "Dark"),
     ("navy", "Navy"),
-    ("black", "Black"),
+    ("forest", "Forest"),
+    ("wine", "Wine"),
 ];
 
 /// The name of a reader font (a value of the `font` setting) as the panel shows it.

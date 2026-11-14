@@ -1,5 +1,5 @@
 {
-  "theme": ["", "light", "sepia", "mist", "stone", "dusk", "dark", "navy", "black"],
+  "theme": ["", "light", "sepia", "mist", "dusk", "dark", "navy", "forest", "wine"],
   "font": ["sans", "serif", "literata", "pt-serif", "merriweather", "lora", "inter", "jetbrains-mono"],
   "size": ["3", "0", "1", "2", "4", "5", "6", "7"],
   "leading": ["4", "0", "1", "2", "3", "5", "6", "7"],

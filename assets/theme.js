@@ -33,7 +33,7 @@ const shelfgaugeReader = (() => {
     // Minutes the screen stays on after the last page turn (reader.js).
     awake: ["10", "off", "5", "30"],
   };
-  const THEMES = ["", "light", "sepia", "mist", "stone", "dusk", "dark", "navy", "black"];
+  const THEMES = ["", "light", "sepia", "mist", "dusk", "dark", "navy", "forest", "wine"];
   const ATTRS = {
     font: "rfont",
     size: "rsize",
@@ -47,9 +47,11 @@ const shelfgaugeReader = (() => {
   const SAVE_DELAY = 400;
   let timer = null;
 
-  // The values of earlier versions that a setting with steps replaced; the
-  // same as `RENAMED_VALUES` in src/profiles/mod.rs.
+  // The values of earlier versions that were replaced (the steps of line spacing and
+  // width, the themes that were removed); the same as `RENAMED_VALUES` in
+  // src/profiles/mod.rs.
   const RENAMED = {
+    theme: { stone: "mist", black: "dark" },
     leading: { tight: "2", normal: "4", loose: "6" },
     width: { narrow: "1", medium: "3", wide: "5", full: "7" },
   };
@@ -149,6 +151,13 @@ const shelfgaugeReader = (() => {
     return value;
   }
 
+  // A theme kept by this browser as it is now: a removed one as the closest one left,
+  // an unknown one as "" (the system theme).
+  function adoptedTheme(theme) {
+    const value = (theme && RENAMED.theme[theme]) || theme;
+    return THEMES.includes(value) ? value : "";
+  }
+
   // Applies and saves a theme ("" for the system theme).
   function setTheme(theme) {
     const value = THEMES.includes(theme) ? theme : "";
@@ -168,12 +177,12 @@ const shelfgaugeReader = (() => {
     let theme = null;
     try {
       saved = clean(JSON.parse(localStorage.getItem(KEY)));
-      theme = localStorage.getItem(THEME_KEY);
+      theme = adoptedTheme(localStorage.getItem(THEME_KEY));
     } catch (e) {
       return;
     }
     apply(saved);
-    if (theme && THEMES.includes(theme)) {
+    if (theme) {
       root.dataset.theme = theme;
     }
     send().then((ok) => {
@@ -228,8 +237,9 @@ const shelfgaugeReader = (() => {
     try {
       const saved = JSON.parse(localStorage.getItem(LOCAL_KEY));
       apply(clean(saved));
-      if (saved && THEMES.includes(saved.theme) && saved.theme) {
-        root.dataset.theme = saved.theme;
+      const theme = adoptedTheme(saved && saved.theme);
+      if (theme) {
+        root.dataset.theme = theme;
       }
     } catch (e) {
       // Nothing saved, or storage unavailable: the defaults.

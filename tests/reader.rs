@@ -695,7 +695,7 @@ const READER_SETTINGS: [(&str, &[&str], &str); 4] = [
 const STEPPED: [&str; 2] = ["leading", "width"];
 
 const THEMES: [&str; 9] = [
-    "", "light", "sepia", "mist", "stone", "dusk", "dark", "navy", "black",
+    "", "light", "sepia", "mist", "dusk", "dark", "navy", "forest", "wine",
 ];
 
 #[tokio::test]

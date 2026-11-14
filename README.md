@@ -176,7 +176,7 @@ WantedBy=multi-user.target
 - The border between the sidebar and the main area can be dragged (or moved with `←`/`→`
   when focused) to resize the sidebar; double-click restores the default width. The
   width is remembered per browser.
-- Themes: auto (system), light, sepia, mist, stone, dusk, dark, navy, black.
+- Themes: auto (system), light, sepia, mist, dusk, dark, navy, forest, wine.
 - While reading, the **Aa** button (top bar) sets the theme, the font (sans or serif
   from the fonts installed on your system, or one of the bundled Literata, PT Serif,
   Merriweather, Lora, Inter and JetBrains Mono), the text size, line spacing, column width

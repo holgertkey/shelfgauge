@@ -187,7 +187,7 @@ pub const SETTINGS: &[(&str, &[&str])] = &[
     (
         "theme",
         &[
-            "", "light", "sepia", "mist", "stone", "dusk", "dark", "navy", "black",
+            "", "light", "sepia", "mist", "dusk", "dark", "navy", "forest", "wine",
         ],
     ),
     (
@@ -211,9 +211,12 @@ pub const SETTINGS: &[(&str, &[&str])] = &[
     ("awake", &["10", "off", "5", "30"]),
 ];
 
-/// The values of earlier versions that a setting with steps replaced: name,
-/// old value, its step. Stored settings may still hold them; they are read as their step.
+/// The values of earlier versions that were replaced: name, old value, the value now.
+/// Stored settings may still hold them; they are read as the value now (the steps of
+/// line spacing and width, and the themes that were removed as the closest one left).
 pub const RENAMED_VALUES: &[(&str, &str, &str)] = &[
+    ("theme", "stone", "mist"),
+    ("theme", "black", "dark"),
     ("leading", "tight", "2"),
     ("leading", "normal", "4"),
     ("leading", "loose", "6"),
@@ -324,6 +327,19 @@ mod tests {
             let s = ProfileSettings::parse(&format!(r#"{{"awake":"{value}"}}"#));
             assert_eq!(s.get("awake"), Some(value));
         }
+    }
+
+    /// A theme that was removed is read as the closest one left, here and in theme.js.
+    #[test]
+    fn removed_themes_become_the_closest_one_left() {
+        let s = ProfileSettings::parse(r#"{"theme":"stone","size":"5"}"#);
+        assert_eq!(s.to_json(), r#"{"size":"5","theme":"mist"}"#);
+        let s = ProfileSettings::parse(r#"{"theme":"black"}"#);
+        assert_eq!(s.get("theme"), Some("dark"));
+        let js = include_str!("../../assets/theme.js");
+        assert!(js.contains("theme: { stone: \"mist\", black: \"dark\" },"));
+        assert!(js.contains("adoptedTheme(localStorage.getItem(THEME_KEY))"));
+        assert!(js.contains("adoptedTheme(saved && saved.theme)"));
     }
 
     /// Settings saved by earlier versions keep their line spacing and width: each old
