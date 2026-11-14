@@ -1261,8 +1261,7 @@ mark.sg-find.current {
   filter: brightness(0.92);
 }
 
-.settings-form .setting[hidden],
-.settings-form .swatch[hidden] {
+.settings-form .setting[hidden] {
   display: none;
 }
 
@@ -1276,25 +1275,38 @@ mark.sg-find.current {
   gap: inherit;
 }
 
-/* Auto's day and night themes: a row of smaller circles each. */
-.settings-form .pair-row {
+/* Auto's day and night themes: a menu each, its name beside it. */
+.settings-form .pair-field {
   display: flex;
   flex-basis: 100%;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 0.25rem;
+  gap: 0.5rem;
   margin-bottom: 0.25rem;
 }
 
-.settings-form .pair-label {
+.settings-form .pair-field label {
+  flex: none;
   width: 3rem;
   color: var(--muted);
   font-size: 0.85rem;
 }
 
-.settings-form .pair-row label span {
-  width: 1.5rem;
-  height: 1.5rem;
+.settings-form .pair-field select {
+  flex: 1;
+  min-width: 0;
+  padding: 0.25rem 0.5rem;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--fg);
+  background: var(--sidebar-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.settings-form .pair-field select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 /* Custom's two colors: the browser's color picker, shown (not the hidden input of
@@ -1398,7 +1410,8 @@ mark.sg-find.current {
 
 @media (pointer: coarse) {
   .settings-form .setting label span,
-  .settings-form .stepper button {
+  .settings-form .stepper button,
+  .settings-form .pair-field select {
     display: flex;
     align-items: center;
     justify-content: center;

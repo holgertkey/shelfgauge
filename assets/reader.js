@@ -2544,6 +2544,10 @@
       syncTheme();
     }
 
+    // Custom in the Day and Night menus: taken out of the menu of the other scheme
+    // (`hidden` on an option is ignored by iOS Safari), put back when it fits.
+    const customOptions = {};
+
     // The theme's extra rows (theme.js): Auto's day and night themes while Auto is
     // chosen, Custom's two colors while Custom is shown (chosen, or Auto's side); the
     // circles of Auto and Custom in their colors.
@@ -2570,19 +2574,27 @@
         for (const [name, allowed] of Object.entries(settings.AUTO)) {
           const value = allowed.includes(data[name]) ? data[name] : allowed[0];
           const side = name === "tdark" ? "dark" : "light";
-          for (const input of pairSet.querySelectorAll(`input[name="${name}"]`)) {
-            input.checked = input.value === value;
-            if (input.value === "custom") {
-              // Custom on the side of its scheme (or where it was chosen).
-              input.closest("label").hidden = scheme !== side && value !== "custom";
-            }
+          const select = pairSet.querySelector(`select[name="${name}"]`);
+          if (!(name in customOptions)) {
+            customOptions[name] = select.querySelector('option[value="custom"]');
+          }
+          // Custom on the side of its scheme (or where it was chosen).
+          const custom = customOptions[name];
+          const offered = scheme === side || value === "custom";
+          if (custom && offered && !custom.parentNode) {
+            select.append(custom);
+          } else if (custom && !offered && custom.parentNode) {
+            custom.remove();
+          }
+          if (select.value !== value) {
+            select.value = value;
           }
           if (value === "custom" && scheme && scheme !== side) {
             notes.push(
               `Custom is ${scheme} now, so ${side === "dark" ? "the night shows Dark" : "the day shows Light"}.`,
             );
           }
-          const circle = form.querySelector(`.swatches:not(.pair-row) .swatch-${value} span`);
+          const circle = form.querySelector(`.swatch-row .swatch-${value} span`);
           backgrounds.push(
             value === "custom" && derived
               ? derived.bg

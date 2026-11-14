@@ -775,16 +775,28 @@ async fn reader_settings_panel_is_on_read_pages_only() {
             );
         }
     }
-    // Auto's day and night rows and Custom's colors, hidden until their theme.
+    // Auto's day and night menus and Custom's colors, hidden until their theme.
     for (name, values) in [
         ("tlight", &["light", "sepia", "mist", "sage", "custom"][..]),
         ("tdark", &["dark", "navy", "forest", "wine", "custom"][..]),
     ] {
-        for value in values {
-            let radio = format!("name=\"{name}\" value=\"{value}\"");
-            assert!(read.body.contains(&radio), "{radio} missing");
-        }
+        let select = read
+            .body
+            .split(&format!("<select id=\"theme-{name}\" name=\"{name}\">"))
+            .nth(1)
+            .and_then(|rest| rest.split("</select>").next())
+            .unwrap_or_else(|| panic!("the {name} menu"));
+        let options: Vec<&str> = select
+            .split("<option value=\"")
+            .skip(1)
+            .map(|o| o.split('"').next().unwrap())
+            .collect();
+        assert_eq!(options, values, "{name}");
     }
+    assert!(
+        !read.body.contains("name=\"tlight\" value="),
+        "no circles for Day"
+    );
     for part in [
         "<fieldset class=\"setting theme-pair\" hidden>",
         "<fieldset class=\"setting theme-colors\" hidden>",
