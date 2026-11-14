@@ -695,7 +695,7 @@ const READER_SETTINGS: [(&str, &[&str], &str); 4] = [
 const STEPPED: [&str; 2] = ["leading", "width"];
 
 const THEMES: [&str; 10] = [
-    "", "light", "sepia", "mist", "dusk", "dark", "navy", "forest", "wine", "custom",
+    "", "light", "sepia", "mist", "sage", "dark", "navy", "forest", "wine", "custom",
 ];
 
 #[tokio::test]
@@ -751,14 +751,34 @@ async fn reader_settings_panel_is_on_read_pages_only() {
     for theme in THEMES {
         let radio = format!("name=\"theme\" value=\"{theme}\"");
         assert!(read.body.contains(&radio), "{radio} missing");
+        // Each circle has its theme's class (reader.css colors it, reader.js reads it).
+        let class = if theme.is_empty() { "auto" } else { theme };
+        let label = format!(
+            "<label class=\"swatch swatch-{class}\" title=\"{}\"><input type=\"radio\" name=\"theme\" value=\"{theme}\">",
+            class[..1].to_uppercase() + &class[1..]
+        );
+        assert!(read.body.contains(&label), "{label} missing");
+    }
+    // Two rows of circles: Auto and the light themes, then the dark ones and Custom.
+    let rows: Vec<&str> = read
+        .body
+        .split("<div class=\"swatch-row\">")
+        .skip(1)
+        .map(|r| r.split("</div>").next().unwrap())
+        .collect();
+    assert_eq!(rows.len(), 2);
+    for (row, themes) in rows.iter().zip([&THEMES[..5], &THEMES[5..]]) {
+        for theme in themes {
+            assert!(
+                row.contains(&format!("name=\"theme\" value=\"{theme}\"")),
+                "{theme} in {row}"
+            );
+        }
     }
     // Auto's day and night rows and Custom's colors, hidden until their theme.
     for (name, values) in [
-        ("tlight", &["light", "sepia", "mist", "custom"][..]),
-        (
-            "tdark",
-            &["dark", "dusk", "navy", "forest", "wine", "custom"][..],
-        ),
+        ("tlight", &["light", "sepia", "mist", "sage", "custom"][..]),
+        ("tdark", &["dark", "navy", "forest", "wine", "custom"][..]),
     ] {
         for value in values {
             let radio = format!("name=\"{name}\" value=\"{value}\"");
@@ -880,7 +900,7 @@ async fn reader_settings_assets_agree_on_the_values() {
         assert!(!js.contains("dataset.theme"), "{name} reads dataset.theme");
         assert!(js.contains(".choice()"), "{name} without choice()");
     }
-    assert!(theme_js.contains("tlight: [\"light\", \"sepia\", \"mist\", \"custom\"],"));
+    assert!(theme_js.contains("tlight: [\"light\", \"sepia\", \"mist\", \"sage\", \"custom\"],"));
     // Buttons that need JavaScript stay hidden without it.
     assert!(style_css.contains(".icon-button[hidden] {\n  display: none;"));
     // Focus mode is styled in reader.css only, so it never touches library pages.

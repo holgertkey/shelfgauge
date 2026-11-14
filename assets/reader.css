@@ -266,7 +266,6 @@ mark.sg-find.current {
   }
 }
 
-:root[data-theme="dusk"],
 :root[data-theme="dark"],
 :root[data-theme="navy"],
 :root[data-theme="forest"],
@@ -1232,8 +1231,8 @@ mark.sg-find.current {
   background: #e6e7e3;
 }
 
-.settings-form .swatches .swatch-dusk input + span {
-  background: #4a4f57;
+.settings-form .swatches .swatch-sage input + span {
+  background: #dde8d8;
 }
 
 .settings-form .swatches .swatch-dark input + span {
@@ -1265,6 +1264,16 @@ mark.sg-find.current {
 .settings-form .setting[hidden],
 .settings-form .swatch[hidden] {
   display: none;
+}
+
+/* The theme circles in two rows: Auto and the light themes, then the dark ones and
+   Custom. */
+.settings-form .swatch-row {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: inherit;
 }
 
 /* Auto's day and night themes: a row of smaller circles each. */

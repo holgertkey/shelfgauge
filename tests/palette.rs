@@ -144,7 +144,7 @@ fn the_built_in_themes_keep_their_two_colors() {
         (get("--bg"), get("--accent"))
     };
     let mut themes = vec![theme_vars(":root {")];
-    for theme in ["sepia", "mist", "dusk", "dark", "navy", "forest", "wine"] {
+    for theme in ["sepia", "mist", "sage", "dark", "navy", "forest", "wine"] {
         themes.push(theme_vars(&format!(":root[data-theme=\"{theme}\"] {{")));
     }
     let vectors = vectors();

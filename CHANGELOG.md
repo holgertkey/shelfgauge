@@ -15,11 +15,12 @@ Build numbers (`+NNN`) do not get their own sections.
   `assets/fonts/`), next to the system Sans and Serif. The reading settings show each
   font's name in that font, in two columns. A font is downloaded only when it is used;
   the hub reader keeps it on the device for reading offline.
-- Two themes between light and dark: Mist (light gray) and Dusk (graphite, softer
-  than Dark); and two dark themes like Navy: Forest (dark green) and Wine (dark red).
-  The theme menu and the theme circles in the reading settings go from light to
-  dark: Auto, Light, Sepia, Mist, Dusk, Dark, Navy, Forest, Wine, Custom (`t` cycles
-  in this order).
+- Two light themes with a tint: Mist (light gray) and Sage (light green); and two
+  dark themes like Navy: Forest (dark green) and Wine (dark red). Four light and four
+  dark themes: the theme circles in the reading settings show Auto and the light ones
+  in the first row, the dark ones and Custom in the second. The theme menu goes in the
+  same order: Auto, Light, Sepia, Mist, Sage, Dark, Navy, Forest, Wine, Custom (`t`
+  cycles in this order).
 - Custom theme: choose a background and an accent, and the rest of the theme (text,
   panels, borders, the selection, the profile colors) is made from them. It always
   stays readable: a color with too little contrast keeps its hue and is made lighter or

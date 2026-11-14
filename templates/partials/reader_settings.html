@@ -2,16 +2,20 @@
 <form class="settings-form">
   <fieldset class="setting swatches">
     <legend>Theme</legend>
-    <label class="swatch swatch-auto" title="Auto"><input type="radio" name="theme" value=""><span>Auto</span></label>
-    <label class="swatch swatch-light" title="Light"><input type="radio" name="theme" value="light"><span>Light</span></label>
-    <label class="swatch swatch-sepia" title="Sepia"><input type="radio" name="theme" value="sepia"><span>Sepia</span></label>
-    <label class="swatch swatch-mist" title="Mist"><input type="radio" name="theme" value="mist"><span>Mist</span></label>
-    <label class="swatch swatch-dusk" title="Dusk"><input type="radio" name="theme" value="dusk"><span>Dusk</span></label>
-    <label class="swatch swatch-dark" title="Dark"><input type="radio" name="theme" value="dark"><span>Dark</span></label>
-    <label class="swatch swatch-navy" title="Navy"><input type="radio" name="theme" value="navy"><span>Navy</span></label>
-    <label class="swatch swatch-forest" title="Forest"><input type="radio" name="theme" value="forest"><span>Forest</span></label>
-    <label class="swatch swatch-wine" title="Wine"><input type="radio" name="theme" value="wine"><span>Wine</span></label>
-    <label class="swatch swatch-custom" title="Custom"><input type="radio" name="theme" value="custom"><span>Custom</span></label>
+    <div class="swatch-row">
+      <label class="swatch swatch-auto" title="Auto"><input type="radio" name="theme" value=""><span>Auto</span></label>
+      <label class="swatch swatch-light" title="Light"><input type="radio" name="theme" value="light"><span>Light</span></label>
+      <label class="swatch swatch-sepia" title="Sepia"><input type="radio" name="theme" value="sepia"><span>Sepia</span></label>
+      <label class="swatch swatch-mist" title="Mist"><input type="radio" name="theme" value="mist"><span>Mist</span></label>
+      <label class="swatch swatch-sage" title="Sage"><input type="radio" name="theme" value="sage"><span>Sage</span></label>
+    </div>
+    <div class="swatch-row">
+      <label class="swatch swatch-dark" title="Dark"><input type="radio" name="theme" value="dark"><span>Dark</span></label>
+      <label class="swatch swatch-navy" title="Navy"><input type="radio" name="theme" value="navy"><span>Navy</span></label>
+      <label class="swatch swatch-forest" title="Forest"><input type="radio" name="theme" value="forest"><span>Forest</span></label>
+      <label class="swatch swatch-wine" title="Wine"><input type="radio" name="theme" value="wine"><span>Wine</span></label>
+      <label class="swatch swatch-custom" title="Custom"><input type="radio" name="theme" value="custom"><span>Custom</span></label>
+    </div>
   </fieldset>
   <fieldset class="setting theme-pair" hidden>
     <legend>Auto follows the system: by day and at night</legend>
@@ -20,12 +24,12 @@
       <label class="swatch swatch-light" title="Light"><input type="radio" name="tlight" value="light"><span>Light</span></label>
       <label class="swatch swatch-sepia" title="Sepia"><input type="radio" name="tlight" value="sepia"><span>Sepia</span></label>
       <label class="swatch swatch-mist" title="Mist"><input type="radio" name="tlight" value="mist"><span>Mist</span></label>
+      <label class="swatch swatch-sage" title="Sage"><input type="radio" name="tlight" value="sage"><span>Sage</span></label>
       <label class="swatch swatch-custom" title="Custom"><input type="radio" name="tlight" value="custom"><span>Custom</span></label>
     </div>
     <div class="swatches pair-row">
       <span class="pair-label">Night</span>
       <label class="swatch swatch-dark" title="Dark"><input type="radio" name="tdark" value="dark"><span>Dark</span></label>
-      <label class="swatch swatch-dusk" title="Dusk"><input type="radio" name="tdark" value="dusk"><span>Dusk</span></label>
       <label class="swatch swatch-navy" title="Navy"><input type="radio" name="tdark" value="navy"><span>Navy</span></label>
       <label class="swatch swatch-forest" title="Forest"><input type="radio" name="tdark" value="forest"><span>Forest</span></label>
       <label class="swatch swatch-wine" title="Wine"><input type="radio" name="tdark" value="wine"><span>Wine</span></label>

@@ -33,7 +33,7 @@ const shelfgaugeReader = (() => {
     // Minutes the screen stays on after the last page turn (reader.js).
     awake: ["10", "off", "5", "30"],
   };
-  const THEMES = ["", "light", "sepia", "mist", "dusk", "dark", "navy", "forest", "wine", "custom"];
+  const THEMES = ["", "light", "sepia", "mist", "sage", "dark", "navy", "forest", "wine", "custom"];
   // The Custom theme's background and accent (`data-cbg`, `data-caccent`; the same
   // as `COLOR_SETTINGS` in src/profiles/mod.rs), kept with any theme. palette.js
   // derives the rest of the theme from them.
@@ -42,8 +42,8 @@ const shelfgaugeReader = (() => {
   // Auto's day and night themes (`data-tlight`, `data-tdark`), the default first; the
   // same as `tlight` and `tdark` in `SETTINGS` of src/profiles/mod.rs.
   const AUTO = {
-    tlight: ["light", "sepia", "mist", "custom"],
-    tdark: ["dark", "dusk", "navy", "forest", "wine", "custom"],
+    tlight: ["light", "sepia", "mist", "sage", "custom"],
+    tdark: ["dark", "navy", "forest", "wine", "custom"],
   };
   // With Auto chosen, `data-auto` is set and `data-theme` is the theme shown: the
   // night's under a dark system setting, else the day's (without JavaScript,
@@ -70,7 +70,7 @@ const shelfgaugeReader = (() => {
   // width, the themes that were removed); the same as `RENAMED_VALUES` in
   // src/profiles/mod.rs.
   const RENAMED = {
-    theme: { stone: "mist", black: "dark" },
+    theme: { stone: "mist", black: "dark", dusk: "dark" },
     leading: { tight: "2", normal: "4", loose: "6" },
     width: { narrow: "1", medium: "3", wide: "5", full: "7" },
   };

@@ -187,16 +187,13 @@ pub const SETTINGS: &[(&str, &[&str])] = &[
     (
         "theme",
         &[
-            "", "light", "sepia", "mist", "dusk", "dark", "navy", "forest", "wine", "custom",
+            "", "light", "sepia", "mist", "sage", "dark", "navy", "forest", "wine", "custom",
         ],
     ),
     // Auto's day and night themes (the system's light and dark setting), the same as
     // `AUTO` in theme.js; Custom on the side of its scheme.
-    ("tlight", &["light", "sepia", "mist", "custom"]),
-    (
-        "tdark",
-        &["dark", "dusk", "navy", "forest", "wine", "custom"],
-    ),
+    ("tlight", &["light", "sepia", "mist", "sage", "custom"]),
+    ("tdark", &["dark", "navy", "forest", "wine", "custom"]),
     (
         "font",
         &[
@@ -224,6 +221,7 @@ pub const SETTINGS: &[(&str, &[&str])] = &[
 pub const RENAMED_VALUES: &[(&str, &str, &str)] = &[
     ("theme", "stone", "mist"),
     ("theme", "black", "dark"),
+    ("theme", "dusk", "dark"),
     ("leading", "tight", "2"),
     ("leading", "normal", "4"),
     ("leading", "loose", "6"),
@@ -544,7 +542,9 @@ mod tests {
         let s = ProfileSettings::parse(r#"{"theme":"black"}"#);
         assert_eq!(s.get("theme"), Some("dark"));
         let js = include_str!("../../assets/theme.js");
-        assert!(js.contains("theme: { stone: \"mist\", black: \"dark\" },"));
+        assert!(js.contains("theme: { stone: \"mist\", black: \"dark\", dusk: \"dark\" },"));
+        let s = ProfileSettings::parse(r#"{"theme":"dusk","tdark":"dusk"}"#);
+        assert_eq!(s.to_json(), r#"{"theme":"dark"}"#);
         assert!(js.contains("adoptedTheme(localStorage.getItem(THEME_KEY))"));
         assert!(js.contains("adoptedTheme(saved && saved.theme)"));
     }

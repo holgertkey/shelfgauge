@@ -177,7 +177,7 @@ WantedBy=multi-user.target
   when focused) to resize the sidebar; double-click restores the default width. The
   width is remembered per browser.
 - Themes: auto (follows the system, with a day and a night theme of your choice),
-  light, sepia, mist, dusk, dark, navy, forest, wine, and custom (a background and an
+  light, sepia, mist, sage, dark, navy, forest, wine, and custom (a background and an
   accent of your choice; the rest is made from them, always readable).
 - While reading, the **Aa** button (top bar) sets the theme, the font (sans or serif
   from the fonts installed on your system, or one of the bundled Literata, PT Serif,

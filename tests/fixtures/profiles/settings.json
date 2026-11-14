@@ -1,8 +1,8 @@
 {
-  "theme": ["", "light", "sepia", "mist", "dusk", "dark", "navy", "forest", "wine", "custom"],
+  "theme": ["", "light", "sepia", "mist", "sage", "dark", "navy", "forest", "wine", "custom"],
   "colors": ["cbg", "caccent"],
-  "tlight": ["light", "sepia", "mist", "custom"],
-  "tdark": ["dark", "dusk", "navy", "forest", "wine", "custom"],
+  "tlight": ["light", "sepia", "mist", "sage", "custom"],
+  "tdark": ["dark", "navy", "forest", "wine", "custom"],
   "font": ["sans", "serif", "literata", "pt-serif", "merriweather", "lora", "inter", "jetbrains-mono"],
   "size": ["3", "0", "1", "2", "4", "5", "6", "7"],
   "leading": ["4", "0", "1", "2", "3", "5", "6", "7"],
