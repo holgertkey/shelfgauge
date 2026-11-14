@@ -269,6 +269,10 @@
     remove(form) {
       return postJson(form.action, {});
     },
+    // Replaces the note of a list's note form (blank removes it).
+    setNote(form, note) {
+      return postJson(form.action, { note });
+    },
     // Saves the reading position (`{block}`).
     savePosition(body, keepalive) {
       return postJson(positionUrl, body, keepalive);
@@ -412,6 +416,26 @@
       }
     });
     sidebar.addEventListener("submit", async (event) => {
+      const noteForm = event.target.closest(".note-form");
+      if (noteForm) {
+        event.preventDefault();
+        const note = noteForm.elements.note.value;
+        if (cpLength(note) > maxNote) {
+          toast(`The note is too long; the limit is ${maxNote} characters.`);
+          return;
+        }
+        const save = noteForm.querySelector("[type=submit]");
+        save.disabled = true;
+        try {
+          await source.setNote(noteForm, note);
+          await refreshLists();
+          toast("Note saved.");
+        } catch (e) {
+          save.disabled = false;
+          toast(`Could not save: ${e.message}`);
+        }
+        return;
+      }
       const form = event.target.closest(".delete-form");
       if (!form) {
         return;
@@ -564,24 +588,94 @@
 
   // ---------- Creating marks ----------
 
+  // A selection in the text offers Quote (saved at once) and Note (a form for the
+  // note). On a touch screen they sit in a bar fixed at the bottom of the visible
+  // area, in place of the status line, clear of the selection handles and of the
+  // browser's own menu above the selection; on a desktop in a popup below the
+  // selection, shown once the mouse button is up. Either is made once per selection
+  // and only updated while the selection changes. The range is cached on every change:
+  // a tap on the bar may collapse the browser's selection before its click.
+  //
+  // While a selection exists (or the form is open) the reader holds still
+  // (`selecting()`): no top bar sliding in, no cover of the cut line, no page turns,
+  // and a tap on the text does nothing (the browser does not clear the selection
+  // either); ✕ on the bar clears it.
+
   let popup = null;
-  let pending = null;
+  // The latest selection in the text (a copy), and whether the note form is open.
+  let held = null;
+  let formOpen = false;
+  // Desktop: a mouse button is down (a selection being dragged).
+  let mouseDown = false;
+  // Until this time a collapse of the selection is the browser's answer to a tap that
+  // was meant to do nothing: the selection is put back.
+  let keepSelectionUntil = 0;
+  // Set by setupCut: the cut cover follows the start and end of a selection.
+  let marksChanged = () => {};
+
+  const coarse = window.matchMedia("(pointer: coarse)");
+
+  // The selection's range when it lies in the text and is not collapsed.
+  function textSelection() {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+      return null;
+    }
+    const range = selection.getRangeAt(0);
+    return text.contains(range.commonAncestorContainer) ? range : null;
+  }
+
+  // Whether a selection for a quote is being made: the reader holds still.
+  function selecting() {
+    return formOpen || textSelection() !== null;
+  }
+
+  function clearSelection() {
+    const selection = window.getSelection();
+    if (selection) {
+      selection.removeAllRanges();
+    }
+  }
+
+  // The selected text shown while the note form is open (the form's focus clears the
+  // browser's selection).
+  function showPending(range) {
+    if (canHighlight) {
+      CSS.highlights.set("sg-pending", new Highlight(range));
+    } else {
+      wrapRange(range, "sg-pending");
+    }
+  }
+
+  function clearPending() {
+    if (canHighlight) {
+      CSS.highlights.delete("sg-pending");
+      return;
+    }
+    const marks = text.querySelectorAll("mark.sg-pending");
+    for (const mark of marks) {
+      mark.replaceWith(...mark.childNodes);
+    }
+    if (marks.length) {
+      text.normalize();
+    }
+  }
 
   function hidePopup() {
     if (popup) {
       popup.remove();
       popup = null;
     }
-    pending = null;
+    formOpen = false;
+    clearPending();
+    document.documentElement.classList.remove("marking");
+    document.documentElement.style.removeProperty("--mark-bar-height");
+    marksChanged();
   }
 
-  const coarse = window.matchMedia("(pointer: coarse)");
-
-  // Below the selection, inside the viewport. On a touch screen the selection handles
-  // hang below the text, so the popup keeps clear of them; when there is no room
-  // below, it goes above the selection.
+  // Below the selection, inside the viewport; when there is no room below, above it.
   function place(el, rect) {
-    const gap = coarse.matches ? 32 : 8;
+    const gap = 8;
     const view = window.visualViewport;
     const viewHeight = view ? view.height : window.innerHeight;
     let top = rect.bottom + gap;
@@ -593,118 +687,280 @@
     el.style.left = `${window.scrollX + left}px`;
   }
 
-  function showMarkButton(range, anchor) {
-    hidePopup();
-    pending = anchor;
-    popup = document.createElement("div");
-    popup.className = "mark-popup";
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "mark-button";
-    button.textContent = "Quote";
-    button.title = "Keep this text as a quote (with a note if you like)";
-    // Keep the selection: a mousedown on the button would collapse it.
-    button.addEventListener("mousedown", (e) => e.preventDefault());
-    button.addEventListener("click", () => showNoteForm(range));
-    popup.append(button);
-    document.body.append(popup);
-    place(popup, range.getBoundingClientRect());
-  }
-
-  function showNoteForm(range) {
-    if (!popup || !pending) {
+  // The bar sits at the bottom of the screen by CSS (`bottom: 0`), which the browser
+  // keeps in place while its toolbar slides away during a scroll. Only while the note
+  // is typed is it lifted above a phone's keyboard: Chrome shrinks just the visual
+  // viewport for it, and a fixed element keeps to the layout viewport. The document gets
+  // room for the bar below the text, so the last lines can be scrolled above it.
+  function placeBar() {
+    if (!popup || !popup.classList.contains("mark-bar")) {
       return;
     }
-    const anchor = pending;
+    const view = window.visualViewport;
+    const lift = formOpen && view
+      ? Math.max(0, window.innerHeight - (view.offsetTop + view.height))
+      : 0;
+    if (lift > 0) {
+      popup.style.bottom = `${lift}px`;
+    } else {
+      popup.style.removeProperty("bottom");
+    }
+    document.documentElement.style.setProperty("--mark-bar-height", `${popup.offsetHeight}px`);
+  }
+
+  // A button that keeps the selection: a press on it would collapse it.
+  function popupButton(label, title, onClick) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.title = title;
+    for (const type of ["pointerdown", "mousedown"]) {
+      button.addEventListener(type, (e) => e.preventDefault());
+    }
+    button.addEventListener("click", onClick);
+    return button;
+  }
+
+  function lengthNote(length) {
+    return length > maxText
+      ? `${length} characters, the limit is ${maxText}`
+      : `${length} ${length === 1 ? "character" : "characters"}`;
+  }
+
+  // The bar (touch) or the popup (desktop) with Quote and Note, made once and then
+  // updated for the cached selection.
+  function showActions() {
+    const bar = coarse.matches;
+    if (!popup) {
+      popup = document.createElement("div");
+      popup.className = bar ? "mark-popup mark-bar" : "mark-popup";
+      fillActions();
+      document.body.append(popup);
+    }
+    const length = cpLength(held.range.toString());
+    const count = popup.querySelector(".mark-count");
+    if (count) {
+      count.textContent = lengthNote(length);
+    }
+    for (const button of popup.querySelectorAll(".mark-button")) {
+      button.disabled = length > maxText;
+    }
+    if (bar) {
+      document.documentElement.classList.add("marking");
+      placeBar();
+    } else {
+      place(popup, held.range.getBoundingClientRect());
+    }
+  }
+
+  function fillActions() {
+    popup.textContent = "";
+    popup.classList.remove("form");
+    const quote = popupButton("Quote", "Keep this text as a quote", () => saveQuote(null));
+    const note = popupButton("Note", "Keep this text as a quote with a note", showNoteForm);
+    quote.className = "mark-button mark-quote";
+    note.className = "mark-button mark-note";
+    if (popup.classList.contains("mark-bar")) {
+      const count = document.createElement("span");
+      count.className = "mark-count";
+      const close = popupButton("✕", "Clear the selection", () => {
+        held = null;
+        clearSelection();
+        hidePopup();
+      });
+      close.className = "mark-close";
+      close.setAttribute("aria-label", "Clear the selection");
+      popup.append(count, quote, note, close);
+    } else {
+      popup.append(quote, note);
+    }
+  }
+
+  // Saves the cached selection as a quote with `note` (or none). Errors go to `info`
+  // (the form) or a toast.
+  async function saveQuote(note, info) {
+    const range = held && held.range;
+    const anchor = range && anchorOf(range);
+    if (!anchor) {
+      return false;
+    }
+    const buttons = popup ? Array.from(popup.querySelectorAll("button")) : [];
+    for (const button of buttons) {
+      button.disabled = true;
+    }
+    try {
+      await source.create({
+        start_block: anchor.start.block.id,
+        start_offset: anchor.start.offset,
+        end_block: anchor.end.block.id,
+        end_offset: anchor.end.offset,
+        note: note || "",
+      });
+    } catch (e) {
+      for (const button of buttons) {
+        button.disabled = false;
+      }
+      if (info) {
+        info.textContent = `Could not save: ${e.message}`;
+      } else {
+        toast(`Could not save: ${e.message}`);
+      }
+      return false;
+    }
+    held = null;
+    clearSelection();
+    hidePopup();
+    await refreshLists();
+    toast("Quote saved.");
+    return true;
+  }
+
+  function showNoteForm() {
+    if (!popup || !held) {
+      return;
+    }
+    const range = held.range;
     const length = cpLength(range.toString());
+    if (length > maxText) {
+      return;
+    }
+    formOpen = true;
+    showPending(range);
     popup.textContent = "";
     popup.classList.add("form");
     const form = document.createElement("form");
     const info = document.createElement("p");
     info.className = "muted";
-    const tooLong = length > maxText;
-    info.textContent = tooLong
-      ? `The selection is ${length} characters long; the limit is ${maxText}.`
-      : `${length} characters selected.`;
+    info.textContent = `${lengthNote(length)} selected.`;
     const note = document.createElement("textarea");
     note.rows = 3;
-    note.placeholder = "Note (optional)";
+    note.placeholder = "Note";
     note.setAttribute("aria-label", "Note");
     const actions = document.createElement("div");
     actions.className = "actions";
     const save = document.createElement("button");
     save.type = "submit";
     save.textContent = "Save";
-    save.disabled = tooLong;
     const cancel = document.createElement("button");
     cancel.type = "button";
     cancel.textContent = "Cancel";
-    cancel.addEventListener("click", hidePopup);
+    cancel.addEventListener("click", cancelForm);
     actions.append(save, cancel);
     form.append(info, note, actions);
     popup.append(form);
-    // The form is taller than the button: place it again.
-    place(popup, range.getBoundingClientRect());
+    if (popup.classList.contains("mark-bar")) {
+      placeBar();
+    } else {
+      // The form is taller than the buttons: place it again.
+      place(popup, range.getBoundingClientRect());
+    }
     note.focus({ preventScroll: true });
-    // A phone's keyboard shrinks the viewport after the focus: keep the form in view.
-    const keepInView = () => popup && popup.scrollIntoView({ block: "nearest" });
-    window.visualViewport?.addEventListener("resize", keepInView, { once: true });
-    keepInView();
     form.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
-        hidePopup();
+        cancelForm();
       } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
         form.requestSubmit();
       }
     });
-    form.addEventListener("submit", async (event) => {
+    form.addEventListener("submit", (event) => {
       event.preventDefault();
       if (cpLength(note.value) > maxNote) {
         info.textContent = `The note is too long; the limit is ${maxNote} characters.`;
         return;
       }
-      save.disabled = true;
-      try {
-        await source.create({
-          start_block: anchor.start.block.id,
-          start_offset: anchor.start.offset,
-          end_block: anchor.end.block.id,
-          end_offset: anchor.end.offset,
-          note: note.value,
-        });
-        hidePopup();
-        const selection = window.getSelection();
-        if (selection) {
-          selection.removeAllRanges();
-        }
-        await refreshLists();
-        toast("Quote saved.");
-      } catch (e) {
-        info.textContent = `Could not save: ${e.message}`;
-        save.disabled = false;
-      }
+      saveQuote(note.value, info);
     });
   }
 
-  function onSelection() {
+  // Back to the selection and its buttons (the form's focus cleared the selection).
+  // The form goes first: removing the focused note can collapse a selection made
+  // before it. A collapse right after (the end of the tap on Cancel) is undone too.
+  function cancelForm() {
+    formOpen = false;
+    clearPending();
+    if (!held) {
+      hidePopup();
+      return;
+    }
+    if (popup && popup.contains(document.activeElement)) {
+      document.activeElement.blur();
+    }
+    fillActions();
+    restoreSelection();
+    keepSelectionUntil = Date.now() + 400;
+    showActions();
+  }
+
+  // Puts the cached range back as the selection, if the selection is not in the text.
+  function restoreSelection() {
     const selection = window.getSelection();
-    if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
-      if (popup && !popup.classList.contains("form")) {
-        hidePopup();
+    if (held && selection && !textSelection()) {
+      selection.removeAllRanges();
+      selection.addRange(held.range.cloneRange());
+    }
+  }
+
+  function onSelection() {
+    if (formOpen) {
+      return;
+    }
+    const range = textSelection();
+    if (!range && held && Date.now() < keepSelectionUntil) {
+      // A collapse that is being undone.
+      restoreSelection();
+      return;
+    }
+    if (!range) {
+      held = null;
+      hidePopup();
+      return;
+    }
+    if (!coarse.matches && mouseDown) {
+      // Shown once the mouse button is up.
+      if (popup) {
+        popup.hidden = true;
       }
       return;
     }
-    const range = selection.getRangeAt(0);
-    if (!text.contains(range.commonAncestorContainer) && range.commonAncestorContainer !== text) {
-      return;
+    if (popup) {
+      popup.hidden = false;
     }
-    if (popup && popup.classList.contains("form")) {
-      return;
+    if (anchorOf(range)) {
+      showActions();
     }
-    const anchor = anchorOf(range);
-    if (anchor) {
-      showMarkButton(range, anchor);
-    }
+  }
+
+  // A tap on the text while a selection is made does nothing: no click, and no
+  // collapse by the browser (if it collapses all the same, the selection is put back).
+  function setupSelectingTaps() {
+    let tap = null;
+    document.addEventListener("touchstart", (event) => {
+      const target = event.target;
+      tap = event.touches.length === 1 &&
+        selecting() &&
+        target instanceof Element &&
+        article.contains(target) &&
+        !target.closest("button, input, textarea, select, summary, label, .mark-popup")
+        ? { x: event.touches[0].clientX, y: event.touches[0].clientY, t: Date.now() }
+        : null;
+    }, { passive: true });
+    document.addEventListener("touchend", (event) => {
+      const start = tap;
+      tap = null;
+      if (!start || event.touches.length > 0) {
+        return;
+      }
+      const touch = event.changedTouches[0];
+      if (
+        Math.abs(touch.clientX - start.x) > TAP_SLOP ||
+        Math.abs(touch.clientY - start.y) > TAP_SLOP ||
+        Date.now() - start.t > TAP_MS
+      ) {
+        return;
+      }
+      event.preventDefault();
+      keepSelectionUntil = Date.now() + 400;
+    });
   }
 
   function setupMarks() {
@@ -713,14 +969,39 @@
     }
     let timer = null;
     document.addEventListener("selectionchange", () => {
+      const range = textSelection();
+      if (range) {
+        held = { range: range.cloneRange() };
+      } else if (held && !formOpen && Date.now() < keepSelectionUntil) {
+        restoreSelection();
+        return;
+      }
+      marksChanged();
       clearTimeout(timer);
       timer = setTimeout(onSelection, 250);
     });
     document.addEventListener("mousedown", (event) => {
-      if (popup && !popup.contains(event.target) && popup.classList.contains("form")) {
+      if (event.button === 0 && !(popup && popup.contains(event.target))) {
+        mouseDown = true;
+      }
+      if (popup && !popup.contains(event.target) && formOpen) {
+        held = null;
         hidePopup();
       }
     });
+    document.addEventListener("mouseup", () => {
+      if (mouseDown) {
+        mouseDown = false;
+        clearTimeout(timer);
+        timer = setTimeout(onSelection, 0);
+      }
+    });
+    window.visualViewport?.addEventListener("resize", placeBar);
+    window.visualViewport?.addEventListener("scroll", placeBar);
+    window.addEventListener("resize", placeBar);
+    if (coarse.matches) {
+      setupSelectingTaps();
+    }
   }
 
   // ---------- Bookmarks ----------
@@ -1261,8 +1542,9 @@
   // so no line is cut at the top and the last line stays in view; that line is lit up
   // briefly. The text slides away and back in the direction of the turn (not with
   // reduced motion). At the end of a part the next part opens, at its start the
-  // previous one at its end (`#end`). Not on links and controls, with a selection, an
-  // open popup, note or panel (the tap closes it), or in a table that scrolls sideways;
+  // previous one at its end (`#end`). Not on links and controls, with a selection (a tap
+  // does nothing then, see Creating marks), an open note or panel (the tap closes it),
+  // or in a table that scrolls sideways;
   // swipes not from the screen edges (the system's back gesture). A tap that misses a
   // link in the text (a note reference is a tiny target) by a little opens the link.
   const SWIPE_MIN = 60;
@@ -1581,7 +1863,8 @@
   }
 
   function coverCut() {
-    if (cutPaused || !document.documentElement.classList.contains("reading-focus")) {
+    // A selection being made: the cover would hide its end on the cut line.
+    if (cutPaused || selecting() || !document.documentElement.classList.contains("reading-focus")) {
       hideCut();
       return;
     }
@@ -1635,6 +1918,14 @@
       later();
     }, { passive: true });
     window.addEventListener("scrollend", atRest);
+    // Gone at once when a selection starts, back once it ends and the page is at rest.
+    marksChanged = () => {
+      if (selecting()) {
+        hideCut();
+      } else {
+        later();
+      }
+    };
     window.addEventListener("touchstart", (event) => {
       touching = event.touches.length > 0;
     }, { passive: true });
@@ -1759,7 +2050,9 @@
       }
       // No click, and no double tap for the browser (a word selection or a zoom).
       event.preventDefault();
-      tapSelectionUntil = Date.now() + 600;
+      // Long enough for the browser's double tap (about 300 ms), short enough not to
+      // drop a long press soon after the tap.
+      tapSelectionUntil = Date.now() + 350;
       const link = linkNear(touch.clientX, touch.clientY);
       if (link) {
         link.click();
@@ -2839,7 +3132,8 @@
     window.addEventListener("scroll", () => {
       const y = window.scrollY;
       const delta = y - lastY;
-      if (Date.now() < pageTurnUntil) {
+      // A page turn, or a selection being made (the reader holds still).
+      if (Date.now() < pageTurnUntil || selecting()) {
         lastY = y;
         return;
       }
@@ -2850,7 +3144,7 @@
       peek(delta < 0 || y <= 0);
     }, { passive: true });
     document.addEventListener("mousemove", (event) => {
-      if (!focused() || panelOpen()) {
+      if (!focused() || panelOpen() || selecting()) {
         return;
       }
       if (event.clientY <= 6) {

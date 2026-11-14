@@ -251,7 +251,8 @@ impl Book {
 
     /// The sidebar's bookmark and quote lists (the instance's
     /// `partials/annotation_lists.html`) for `annotations`, the book's live annotation
-    /// records. Each delete form posts to `?delete=<id>` (the app handles it).
+    /// records. Each delete form posts to `?delete=<id>`, each note form to
+    /// `?note=<id>` (the app handles both).
     pub fn lists(&self, annotations: &[AnnotationRecord]) -> Result<String, BookError> {
         let text = self.text()?;
         let mut sorted: Vec<&AnnotationRecord> = annotations.iter().collect();
@@ -317,7 +318,7 @@ impl Book {
                 end_offset: anchor.end_offset,
                 prefix: quote.prefix,
                 suffix: quote.suffix,
-                note_action: String::new(),
+                note_action: format!("?note={}", a.id),
                 delete_action: format!("?delete={}", a.id),
                 progress: (!lost)
                     .then(|| text.share_before(anchor.start_block, SHARE_SCALE))

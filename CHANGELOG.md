@@ -57,9 +57,19 @@ Build numbers (`+NNN`) do not get their own sections.
 - A static Linux binary, `x86_64-unknown-linux-musl`, next to the `linux-gnu` one on
   the GitHub releases: it runs on any x86_64 Linux, including distributions older than
   the glibc 2.39 that the `linux-gnu` binary needs. It uses mimalloc as its allocator.
+- A note can be added to a saved quote, or changed, from the Quotes tab of the
+  reader (the pencil next to ×), in the library and in the hub reader.
 
 ### Changed
 
+- Selecting text for a quote on a phone: Quote and Note sit in a bar at the bottom of
+  the screen, in place of the status line, instead of a button next to the selection
+  that moved with every change and got in the way of the selection handles and the
+  browser's menu. Quote keeps the text at once; Note opens a field for a note, with
+  the selected text highlighted; ✕ clears the selection. While text is selected the
+  reader holds still: no top bar sliding in, no cover over the bottom line, and a tap
+  on the text no longer clears the selection. On a desktop the popup at the selection
+  has the same two buttons and is shown once the mouse button is up.
 - A book marked as finished shows a double check mark (in the accent color) instead
   of the single one, on the book's page in the library and on the hub reader's
   Bookshelf.
@@ -101,6 +111,7 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ### Fixed
 
+- A long press soon after a tap on a phone no longer loses its selection.
 - The cover over the line cut by the bottom edge in focus mode sometimes did not
   appear, and a line faded by the fade above the status line stayed uncovered though
   it read poorly: such a line is covered too (it starts the next page), and the line is

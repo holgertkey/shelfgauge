@@ -1050,6 +1050,18 @@ fn the_reader_app_rendering_vector_is_stable() {
         lists.contains(r#"action="?delete=0f8fad5b-d9cb-469f-a165-70867728950e""#),
         "{lists}"
     );
+    assert!(
+        lists.contains(r#"action="?note=0f8fad5b-d9cb-469f-a165-70867728950e""#),
+        "the quote's note form: {lists}"
+    );
+    assert!(
+        !lists.contains(r#"action="?note=7c9e6679-7425-40de-944b-e07fc1f90ae7""#),
+        "no note form on a bookmark: {lists}"
+    );
+    assert!(
+        lists.contains(r#"placeholder="Note">a &#60;note&#62;</textarea>"#),
+        "the note in its form, escaped: {lists}"
+    );
     assert!(lists.contains("place not found"), "the lost one: {lists}");
     let find = book.find("маяк", Some(2)).unwrap();
     assert!(find.contains(r#"<div class="find-results""#), "{find}");

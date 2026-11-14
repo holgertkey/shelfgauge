@@ -1789,6 +1789,22 @@ function deviceSource(book, item, p, sync) {
       await store.write(p, "annotation", id, record);
       sync.later(1000);
     },
+    // Replaces the note of a quote (a list's note form, `?note=<id>`); blank removes it.
+    async setNote(form, text) {
+      const id = new URL(form.action, location.href).searchParams.get("note");
+      const record = id && await store.get(p, "annotation", id);
+      if (!record || record.content_key !== contentKey || record.deleted_at) {
+        throw new Error("not found");
+      }
+      const note = typeof text === "string" && text.trim() ? text : null;
+      if (note && cpLength(note) > maxNote) {
+        throw new Error(`the note is too long; the limit is ${maxNote} characters`);
+      }
+      record.note = note;
+      record.updated_at = now();
+      await store.write(p, "annotation", id, record);
+      sync.later(1000);
+    },
     async savePosition(body, keepalive) {
       await book.text();
       const position = JSON.parse(book.reader.position(body.block));

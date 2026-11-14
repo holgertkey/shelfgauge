@@ -347,7 +347,10 @@ in the core crate), `src/web/routes/annotations.rs`, `assets/reader.js`/`reader.
   10000 characters by default).
 - Ids are UUIDs and deletion is soft (`deleted_at`), so the V2 hub (below) can sync
   into this table later.
-- **UI**: `reader.js`/`reader.css` load only on read pages; selecting text offers "Quote";
+- **UI**: `reader.js`/`reader.css` load only on read pages; selecting text offers
+  "Quote" (saved at once) and "Note" (a form for the note; a quote's note is also
+  added or changed later from the Quotes tab, `POST /annotation/{id}/note`, `?note=` in
+  the hub reader);
   saved annotations are highlighted on the client; a bookmark is one action (button or
   `B`). The reader sidebar has tabs Contents | Bookmarks | Quotes (no Contents
   tab when the book has no titled sections or notes); the book card lists
@@ -492,13 +495,22 @@ its end, the hash dropped). The reader article has `touch-action: pan-y pinch-zo
 the page `overscroll-behavior-x: none`, so the browser neither zooms on a double tap
 nor goes back in history on a swipe; a turning tap cancels its click, and a selection
 the browser makes of quick taps is dropped. A tap within 24 px of a link in the text
-(a note reference is a tiny target) opens that link instead. Links, controls, a selection, an open quote
-popup, note or panel (the tap closes it) and sideways-scrolling tables keep their
-touches.
-Quoting works with the touch selection (`selectionchange`); the Quote button keeps
-32 px below the selection handles, goes above the selection when there is no room, and
-the note form stays in view when the keyboard opens (`visualViewport`). Browser check:
-`.debug/TESTS/mobile_smoke.mjs` (390×844, touch, through an `allowed_hosts` name).
+(a note reference is a tiny target) opens that link instead. Links, controls, an open
+note or panel (the tap closes it) and sideways-scrolling tables keep their touches.
+Quoting works with the touch selection (`selectionchange`, handles only): Quote, Note
+and ✕ sit in a bar made once per selection, fixed at the bottom of the screen (by CSS,
+so it holds while the browser's toolbar slides; lifted above the keyboard from
+`visualViewport` only while the note is typed), in place of the status line
+(`.marking`, the document gets room for it below the text), clear of the handles and
+of the browser's menu; the
+range is cached on every change (a tap on the bar may collapse the selection first).
+While a selection exists (`selecting()`) the reader holds still: no top bar on a
+scroll, no cut cover, no page turns, and a tap on the text is cancelled (a collapse
+right after it is undone), so only ✕ clears it. While the note form is open the text
+shows as the `sg-pending` highlight. On a desktop the same buttons sit in a popup
+below the selection, shown on `mouseup`. Browser checks:
+`.debug/TESTS/mobile_smoke.mjs` (390×844, touch, through an `allowed_hosts` name) and
+`.debug/TESTS/selection_smoke.mjs`.
 
 ## Security
 

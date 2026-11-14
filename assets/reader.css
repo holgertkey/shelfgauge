@@ -144,6 +144,36 @@
   right: 0.2rem;
 }
 
+/* A quote's note is added or changed in place: the pencil next to the ×. */
+.annotation-links .mark-item {
+  padding-right: 3.2rem;
+}
+
+.annotation-links .note-edit > summary {
+  top: 0.2rem;
+  right: 1.7rem;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.35rem;
+}
+
+.annotation-links .note-edit > summary:hover {
+  color: var(--fg);
+}
+
+.annotation-links .note-edit .icon {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.annotation-links .note-form {
+  margin: 0.4rem -2.9rem 0.2rem 0;
+}
+
+.annotation-links li:has(> details[open]) .note-preview {
+  display: none;
+}
+
 .link-button {
   padding: 0 0.35rem;
   color: var(--muted);
@@ -342,6 +372,83 @@ mark.sg-find.current {
   cursor: default;
 }
 
+.mark-popup[hidden] {
+  display: none;
+}
+
+/* On a touch screen: a bar at the bottom of the visible area (reader.js places it
+   above the keyboard too), in place of the status line, with room for it below the
+   text. */
+.mark-popup.mark-bar {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.4rem 1rem calc(0.4rem + var(--safe-bottom, 0px));
+  border-width: 1px 0 0;
+  border-radius: 0;
+  box-shadow: 0 -2px 8px rgb(0 0 0 / 0.15);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.mark-popup.mark-bar.form {
+  display: block;
+  width: auto;
+}
+
+.mark-bar form {
+  max-width: var(--reader-width, 40rem);
+  margin: 0 auto;
+}
+
+.mark-bar .mark-count {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.mark-popup .mark-button + .mark-button {
+  margin-left: 0.25rem;
+}
+
+.mark-bar .mark-button + .mark-button {
+  margin-left: 0;
+}
+
+.mark-popup button.mark-close {
+  color: var(--muted);
+  background: none;
+  border-color: transparent;
+}
+
+:root.marking .status-line {
+  display: none !important;
+}
+
+:root.marking body {
+  padding-bottom: var(--mark-bar-height, 0px);
+}
+
+/* The text of a quote while its note is written: the Custom Highlight API, or <mark>
+   as a fallback. */
+::highlight(sg-pending) {
+  background-color: var(--pending-bg);
+}
+
+mark.sg-pending {
+  color: inherit;
+  background-color: var(--pending-bg);
+}
+
+:root {
+  --pending-bg: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
 .reader-toast {
   position: fixed;
   bottom: 1.5rem;
@@ -356,6 +463,16 @@ mark.sg-find.current {
 
 .reader-toast[hidden] {
   display: none;
+}
+
+/* Only a message: taps go through it. While the selection bar is shown, above it (a
+   toast left from the last quote covered the bar's buttons). */
+.reader-toast {
+  pointer-events: none;
+}
+
+:root.marking .reader-toast {
+  bottom: calc(var(--mark-bar-height, 0px) + 0.75rem);
 }
 
 .bookmark-button {
@@ -1443,6 +1560,11 @@ mark.sg-find.current {
   .mark-popup button {
     min-height: 2.75rem;
     padding-inline: 1rem;
+  }
+
+  .settings-form .theme-colors input[type="color"] {
+    width: 2.75rem;
+    height: 2.75rem;
   }
 
   /* Sideways swipes and taps turn pages (reader.js): the browser only scrolls up and

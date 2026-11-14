@@ -362,6 +362,27 @@ async fn marks_bookmarks_notes_and_export() {
         fragment.starts_with("<div class=\"annotation-lists\">"),
         "{fragment}"
     );
+    // The reader's quote has a note form (also without JS), the bookmark none; it
+    // returns to the reader.
+    assert!(
+        read.contains(&format!(
+            "action=\"/annotation/{mark}/note\" class=\"note-form\""
+        )),
+        "{read}"
+    );
+    assert!(!read.contains(&format!("action=\"/annotation/{bookmark}/note\"")));
+    assert!(
+        read.contains("placeholder=\"Note\">&#60;b&#62;bold&#60;/b&#62; &#38; note</textarea>"),
+        "the note in its form, escaped: {read}"
+    );
+    let back = format!("/book/{id}/read");
+    let reply = server
+        .form(
+            &format!("/annotation/{mark}/note"),
+            &[("note", "<b>bold</b> & note"), ("back", back.as_str())],
+        )
+        .await;
+    assert_eq!(reply.location(), back);
 
     // The book card.
     let card = server.ok(&format!("/book/{id}")).await;

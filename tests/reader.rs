@@ -1051,7 +1051,9 @@ async fn the_cut_line_is_found_across_the_column() {
     assert!(reader_css.contains(".turn-line {\n  position: absolute;"));
     // No cover after a turn back, until a scroll of the reader's own or a turn forward.
     assert!(reader_js.contains("cutPaused = !forward;\n      coverCut();"));
-    assert!(reader_js.contains("if (cutPaused || !document.documentElement.classList"));
+    assert!(
+        reader_js.contains("if (cutPaused || selecting() || !document.documentElement.classList")
+    );
     assert!(setup_cut.contains("cutPaused = false;\n      hideCut();"));
     // A text replaced since (the hub's reader app) builds the leaf list again.
     assert!(reader_js.contains("!leafCache[0].isConnected"));
@@ -1060,6 +1062,96 @@ async fn the_cut_line_is_found_across_the_column() {
 /// Firefox on Android reports a bottom safe-area inset while its toolbar is shown,
 /// though the page never reaches under the navigation bar: the status line grew and
 /// jumped up. Gecko gets no inset; the status line and the note panel use the variable.
+/// Selecting text for a quote (Phase 31.9): the actions are made once per selection
+/// and only updated, a phone gets a bar in place of the status line, the reader holds
+/// still while a selection exists, and a tap on the text keeps it.
+#[tokio::test]
+async fn selecting_text_holds_the_reader_still() {
+    let lib = TestLibrary::new();
+    let server = lib.server("/", whole());
+    let reader_js = server
+        .ok("/assets/reader.js")
+        .await
+        .body
+        .replace("\r\n", "\n");
+    let section = |name: &str| {
+        reader_js
+            .split(&format!("function {name}("))
+            .nth(1)
+            .and_then(|rest| rest.split("\n  }\n").next())
+            .unwrap_or_else(|| panic!("{name} in reader.js"))
+            .to_owned()
+    };
+    // Made once, then updated: no removal on a change of the selection.
+    let show = section("showActions");
+    assert!(show.contains("if (!popup) {"), "{show}");
+    assert!(!show.contains("hidePopup()"), "{show}");
+    let on_selection = section("onSelection");
+    assert!(!on_selection.contains("showMarkButton"));
+    assert!(on_selection.contains("showActions();"));
+    // Quote saves at once, Note opens the form; both from the cached range.
+    let fill = section("fillActions");
+    assert!(fill.contains("() => saveQuote(null)"), "{fill}");
+    assert!(fill.contains("showNoteForm"), "{fill}");
+    assert!(section("saveQuote").contains("const range = held && held.range;"));
+    let setup = section("setupMarks");
+    assert!(
+        setup.contains("held = { range: range.cloneRange() };"),
+        "{setup}"
+    );
+    // The bar: at the bottom by CSS (kept there while the toolbar slides), lifted above
+    // the keyboard only while the note is typed; in place of the status line.
+    let place_bar = section("placeBar");
+    assert!(
+        place_bar.contains("const lift = formOpen && view"),
+        "{place_bar}"
+    );
+    assert!(
+        place_bar.contains("view.offsetTop + view.height"),
+        "{place_bar}"
+    );
+    assert!(!place_bar.contains("style.top"), "{place_bar}");
+    assert!(setup.contains("visualViewport?.addEventListener(\"resize\", placeBar)"));
+    // The reader holds still: the cut cover, the top bar on a scroll and at the top edge.
+    assert!(section("coverCut").contains("selecting()"));
+    assert!(reader_js.contains("if (Date.now() < pageTurnUntil || selecting()) {"));
+    assert!(reader_js.contains("if (!focused() || panelOpen() || selecting()) {"));
+    // A tap on the text with a selection does nothing; a collapse right after is undone.
+    let taps = section("setupSelectingTaps");
+    assert!(taps.contains("selecting() &&"), "{taps}");
+    assert!(taps.contains("event.preventDefault();"), "{taps}");
+    assert!(setup.contains("Date.now() < keepSelectionUntil"), "{setup}");
+    // Cancel in the note form: the form goes before the selection is put back (removing
+    // the focused note collapsed it), and a collapse right after is undone.
+    let cancel = section("cancelForm");
+    let blur = cancel
+        .find("document.activeElement.blur()")
+        .expect("blur in cancelForm");
+    let restore = cancel
+        .find("restoreSelection();")
+        .expect("restore in cancelForm");
+    assert!(blur < restore, "{cancel}");
+    assert!(
+        cancel.contains("keepSelectionUntil = Date.now() + 400;"),
+        "{cancel}"
+    );
+    // A selection after a quick tap is dropped only within the double tap's time.
+    assert!(reader_js.contains("tapSelectionUntil = Date.now() + 350;"));
+    let reader_css = server
+        .ok("/assets/reader.css")
+        .await
+        .body
+        .replace("\r\n", "\n");
+    assert!(reader_css.contains(":root.marking .status-line {\n  display: none !important;"));
+    assert!(reader_css.contains(":root.marking body {\n  padding-bottom: var(--mark-bar-height"));
+    assert!(reader_css.contains("::highlight(sg-pending)"));
+    // The toast of the last quote neither covers nor catches the bar's buttons.
+    assert!(reader_css.contains(".reader-toast {\n  pointer-events: none;"));
+    assert!(reader_css.contains(
+        ":root.marking .reader-toast {\n  bottom: calc(var(--mark-bar-height, 0px) + 0.75rem);"
+    ));
+}
+
 #[tokio::test]
 async fn gecko_gets_no_bottom_inset() {
     let lib = TestLibrary::new();

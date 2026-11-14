@@ -2711,6 +2711,12 @@ button.danger,
     height: 1.25rem;
   }
 
+  /* The color pickers of Custom (My profile, the reading settings): 44 px targets. */
+  .color-field input[type="color"] {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+
   label.check {
     display: flex;
     align-items: center;
