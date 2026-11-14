@@ -128,14 +128,45 @@
   color: var(--fg);
 }
 
-.annotation-links .note-preview {
-  display: block;
-  color: var(--muted);
-  font-size: 0.85rem;
-  white-space: pre-line;
+/* A quote in the list: the start of its text and of its note, two lines each. */
+.annotation-links .mark-text,
+.annotation-links .mark-note-text {
+  display: -webkit-box;
   overflow: hidden;
-  text-overflow: ellipsis;
-  max-height: 2.6em;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.annotation-links .mark-note-open {
+  display: block;
+  width: 100%;
+  margin: 0.15rem 0 0;
+  padding: 0;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.annotation-links .mark-note-open:hover {
+  color: var(--fg);
+}
+
+.annotation-links .mark-note-text {
+  white-space: pre-line;
+}
+
+/* The whole note of a quote, in the note panel. */
+.note-body .quote-note {
+  margin: 0.5rem 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .annotation-links .delete-form {
@@ -170,7 +201,7 @@
   margin: 0.4rem -2.9rem 0.2rem 0;
 }
 
-.annotation-links li:has(> details[open]) .note-preview {
+.annotation-links li:has(> details[open]) .mark-note-open {
   display: none;
 }
 

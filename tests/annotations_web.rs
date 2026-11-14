@@ -347,9 +347,26 @@ async fn marks_bookmarks_notes_and_export() {
         "note escaped: {read}"
     );
     assert!(!read.contains("<b>bold</b>"));
-    assert!(read.contains(&format!(
-        "href=\"/book/{id}/read?at={p12}&#38;from=mark&#38;o=15\""
-    )));
+    // The Quotes tab shows the start of the quoted text as the link and, below it, the
+    // start of the note, a button that opens the whole note (reader.js).
+    assert!(
+        read.contains(&format!(
+            "href=\"/book/{id}/read?at={p12}&#38;from=mark&#38;o=15\" data-mark-link><span class=\"mark-text\">the sly fox</span></a>"
+        )),
+        "the quote is the link: {read}"
+    );
+    assert!(
+        read.contains("class=\"mark-note-open\"")
+            && read.contains(
+                "<span class=\"mark-note-text\">&#60;b&#62;bold&#60;/b&#62; &#38; note</span></button>"
+            ),
+        "the note opens in a panel: {read}"
+    );
+    assert_eq!(
+        read.matches("class=\"mark-note-open\"").count(),
+        1,
+        "only a quote with a note has it"
+    );
     assert!(read.contains(&format!("href=\"/book/{id}/read?at={p21}&#38;from=mark\"")));
     assert!(
         read.contains(">Paragraph 2.1: the brown fox") && !read.contains("Chapter 2 — Paragraph"),

@@ -2789,6 +2789,11 @@ button.danger,
     min-height: 2.75rem;
   }
 
+  /* The start of a quote's note, which opens the whole note (reader.css). */
+  .annotation-links .mark-note-open {
+    min-height: 2.75rem;
+  }
+
   .swatch {
     padding: 0.5rem;
   }

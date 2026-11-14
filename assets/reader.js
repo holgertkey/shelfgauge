@@ -2235,26 +2235,32 @@
     style.maxWidth = "none";
   }
 
-  async function openNote(a, url) {
+  // The note panel, opened from `ref` (focused again when it closes), titled
+  // `heading`, with "Open in notes" when `url` is given; returns the panel and its
+  // body, which the caller fills.
+  function showNotePanel(ref, heading, url) {
     closeNote();
-    noteRef = a;
-    const label = a.textContent.replace(/[[\]()]/g, "").trim();
+    noteRef = ref;
     const panel = document.createElement("div");
     panel.className = "note-panel";
     panel.setAttribute("role", "dialog");
-    panel.setAttribute("aria-label", label ? `Note ${label}` : "Note");
+    panel.setAttribute("aria-label", heading);
     panel.tabIndex = -1;
     panel.lang = "en";
     const head = document.createElement("div");
     head.className = "note-head";
     const title = document.createElement("span");
     title.className = "note-label";
-    title.textContent = label ? `Note ${label}` : "Note";
-    const open = document.createElement("a");
-    open.className = "note-open";
-    open.href = url.href;
-    open.textContent = "Open in notes";
-    open.addEventListener("click", () => rememberReturn(url));
+    title.textContent = heading;
+    head.append(title);
+    if (url) {
+      const open = document.createElement("a");
+      open.className = "note-open";
+      open.href = url.href;
+      open.textContent = "Open in notes";
+      open.addEventListener("click", () => rememberReturn(url));
+      head.append(open);
+    }
     const close = document.createElement("button");
     close.type = "button";
     close.className = "icon-button note-close";
@@ -2262,16 +2268,32 @@
     close.title = "Close (Esc)";
     close.textContent = "×";
     close.addEventListener("click", closeNote);
-    head.append(title, open, close);
+    head.append(close);
     const body = document.createElement("div");
     body.className = "note-body";
-    body.lang = document.documentElement.lang;
-    body.textContent = "Loading…";
     panel.append(head, body);
     document.body.append(panel);
     notePanel = panel;
     alignNote();
     panel.focus({ preventScroll: true });
+    return { panel, body };
+  }
+
+  // The whole note of a quote in the Quotes tab, from the start of it shown there.
+  function openQuoteNote(button) {
+    const note = button.querySelector(".mark-note-text");
+    const { body } = showNotePanel(button, "Note", null);
+    const p = document.createElement("p");
+    p.className = "quote-note";
+    p.textContent = note ? note.textContent : "";
+    body.append(p);
+  }
+
+  async function openNote(a, url) {
+    const label = a.textContent.replace(/[[\]()]/g, "").trim();
+    const { panel, body } = showNotePanel(a, label ? `Note ${label}` : "Note", url);
+    body.lang = document.documentElement.lang;
+    body.textContent = "Loading…";
     const content = await noteContent(url);
     if (notePanel !== panel) {
       return;
@@ -2330,14 +2352,22 @@
       }
     });
     document.addEventListener("click", (event) => {
+      const quoteNote = event.target instanceof Element && event.target.closest(".mark-note-open");
+      if (quoteNote) {
+        openQuoteNote(quoteNote);
+      }
+    });
+    // A click elsewhere closes the panel; in the capture phase, so that a tap on the
+    // dimmed page beside a phone's sidebar (which app.js stops there) closes it too.
+    document.addEventListener("click", (event) => {
       if (
         notePanel &&
         !notePanel.contains(event.target) &&
-        !(event.target instanceof Element && event.target.closest(".note-ref"))
+        !(event.target instanceof Element && event.target.closest(".note-ref, .mark-note-open"))
       ) {
         closeNote();
       }
-    });
+    }, true);
     window.addEventListener("resize", alignNote);
     document.addEventListener("keydown", (event) => {
       if (notePanel && event.key === "Escape") {

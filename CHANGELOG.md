@@ -59,6 +59,10 @@ Build numbers (`+NNN`) do not get their own sections.
   the glibc 2.39 that the `linux-gnu` binary needs. It uses mimalloc as its allocator.
 - A note can be added to a saved quote, or changed, from the Quotes tab of the
   reader (the pencil next to ×), in the library and in the hub reader.
+- The Quotes tab shows the first two lines of each quote and, under them, the first two
+  lines of its note. A tap on the quote goes to it in the text; a tap on the note
+  opens the whole note in a panel at the bottom, like a footnote of the book. Before,
+  a quote with a note showed only the note.
 
 ### Changed
 
