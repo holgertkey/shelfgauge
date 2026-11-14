@@ -727,6 +727,22 @@ person, not authentication.
   older versions kept in `localStorage` are adopted once: while the owner's settings
   are NULL the page carries `data-adopt`. Sidebar state and focus mode stay in the
   browser (*This browser* on the Settings page).
+- **Custom theme and Auto's pair** (Phase 31.8): Custom has two settings that hold a
+  color, `cbg` and `caccent` (`profiles::COLOR_SETTINGS`, `#rrggbb` only); Auto has
+  `tlight` and `tdark` (enumerated in `SETTINGS`, `AUTO` in `theme.js`). All four are
+  kept with any theme and by the reading-settings reset, and rendered as `data-*` on
+  `<html>`. `assets/palette.js` (loaded before `theme.js`, also in the hub's offline
+  shell) derives the whole theme from the two colors in OKLCH, keeping the limits of
+  the built-in themes (text 7:1, muted text, accent, error and profile colors 4.5:1;
+  a background in the middle band of luminance, where no text can reach 7:1, is moved
+  out of it); `theme.js` sets the result by CSSOM (the CSP allows no style
+  attributes). With Auto chosen, `data-auto` is set and `data-theme` is the theme
+  shown, resolved from `prefers-color-scheme` and followed while the page is open;
+  `shelfgaugeReader.choice()` is the choice, and only it is saved. Without JavaScript,
+  Custom shows as Dark or Light by `data-cscheme` (the server's luminance of `cbg`) and
+  Auto as Light or Dark. Checks: `.debug/TESTS/palette_check.mjs` (26 000 pairs) writes
+  the vectors `tests/fixtures/palette/vectors.json`, which `tests/palette.rs` rechecks
+  in CI; `.debug/TESTS/theme_custom_check.mjs` runs `theme.js` with a minimal DOM.
 - **Family activity**: opt-in per profile (off by default); the others see its
   "Currently reading" books as "Family is reading" on the library page and "Also
   reading" on the book card. Positions only, never annotations. Statistics show the

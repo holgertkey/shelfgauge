@@ -18,8 +18,19 @@ Build numbers (`+NNN`) do not get their own sections.
 - Two themes between light and dark: Mist (light gray) and Dusk (graphite, softer
   than Dark); and two dark themes like Navy: Forest (dark green) and Wine (dark red).
   The theme menu and the theme circles in the reading settings go from light to
-  dark: Auto, Light, Sepia, Mist, Dusk, Dark, Navy, Forest, Wine (`t` cycles in this
-  order).
+  dark: Auto, Light, Sepia, Mist, Dusk, Dark, Navy, Forest, Wine, Custom (`t` cycles
+  in this order).
+- Custom theme: choose a background and an accent, and the rest of the theme (text,
+  panels, borders, the selection, the profile colors) is made from them. It always
+  stays readable: a color with too little contrast keeps its hue and is made lighter or
+  darker, and the reading settings say so. Choosing Custom the first time starts from
+  the theme shown, so nothing changes until you pick a color. Set in the reading
+  settings (the pickers apply while you move them) or on My profile.
+- Auto with a day and a night theme of your choice: Auto follows the device's light or
+  dark setting, and now shows, say, Sepia by day and Navy at night instead of always
+  Light and Dark (Custom can be either, by its background). It switches at once when a
+  phone goes into night mode while a book is open. Set in the reading settings while
+  Auto is chosen, or on My profile.
 - Keep screen on: while you read, the screen of a phone or tablet does not go dark;
   10 minutes after the last page turn (5 or 30 in the reading settings, or Off) the
   device's own screen timeout applies again. In both readers, the library's and the
