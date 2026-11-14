@@ -13,6 +13,32 @@
     <label class="swatch swatch-wine" title="Wine"><input type="radio" name="theme" value="wine"><span>Wine</span></label>
     <label class="swatch swatch-custom" title="Custom"><input type="radio" name="theme" value="custom"><span>Custom</span></label>
   </fieldset>
+  <fieldset class="setting theme-pair" hidden>
+    <legend>Auto follows the system: by day and at night</legend>
+    <div class="swatches pair-row">
+      <span class="pair-label">Day</span>
+      <label class="swatch swatch-light" title="Light"><input type="radio" name="tlight" value="light"><span>Light</span></label>
+      <label class="swatch swatch-sepia" title="Sepia"><input type="radio" name="tlight" value="sepia"><span>Sepia</span></label>
+      <label class="swatch swatch-mist" title="Mist"><input type="radio" name="tlight" value="mist"><span>Mist</span></label>
+      <label class="swatch swatch-custom" title="Custom"><input type="radio" name="tlight" value="custom"><span>Custom</span></label>
+    </div>
+    <div class="swatches pair-row">
+      <span class="pair-label">Night</span>
+      <label class="swatch swatch-dark" title="Dark"><input type="radio" name="tdark" value="dark"><span>Dark</span></label>
+      <label class="swatch swatch-dusk" title="Dusk"><input type="radio" name="tdark" value="dusk"><span>Dusk</span></label>
+      <label class="swatch swatch-navy" title="Navy"><input type="radio" name="tdark" value="navy"><span>Navy</span></label>
+      <label class="swatch swatch-forest" title="Forest"><input type="radio" name="tdark" value="forest"><span>Forest</span></label>
+      <label class="swatch swatch-wine" title="Wine"><input type="radio" name="tdark" value="wine"><span>Wine</span></label>
+      <label class="swatch swatch-custom" title="Custom"><input type="radio" name="tdark" value="custom"><span>Custom</span></label>
+    </div>
+    <p class="setting-note pair-note" hidden></p>
+  </fieldset>
+  <fieldset class="setting theme-colors" hidden>
+    <legend>Custom colors</legend>
+    <label class="color-field"><input type="color" name="cbg"><span>Background</span></label>
+    <label class="color-field"><input type="color" name="caccent"><span>Accent</span></label>
+    <p class="setting-note colors-note" hidden></p>
+  </fieldset>
   <fieldset class="setting fonts">
     <legend>Font</legend>
     <label><input type="radio" name="font" value="sans"><span class="font-sans">Sans</span></label>

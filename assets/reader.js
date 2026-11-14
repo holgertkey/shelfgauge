@@ -2541,6 +2541,93 @@
         fieldset.querySelector('[data-step="1"]').disabled = current[name] === list[list.length - 1];
         fieldset.querySelector(".step-value").textContent = shown[name];
       }
+      syncTheme();
+    }
+
+    // The theme's extra rows (theme.js): Auto's day and night themes while Auto is
+    // chosen, Custom's two colors while Custom is shown (chosen, or Auto's side); the
+    // circles of Auto and Custom in their colors.
+    function syncTheme() {
+      const data = root.dataset;
+      const palette = typeof shelfgaugePalette === "undefined" ? null : shelfgaugePalette;
+      const derived = palette && data.cbg ? palette.derive(data.cbg, data.caccent) : null;
+      const scheme = settings.customScheme();
+      // CSSOM on the form, inherited by every circle (the CSP allows no style
+      // attributes).
+      if (derived) {
+        form.style.setProperty(
+          "--swatch-custom",
+          `radial-gradient(circle, ${derived.accent} 0 32%, ${derived.bg} 35%)`,
+        );
+      } else {
+        form.style.removeProperty("--swatch-custom");
+      }
+      const pairSet = form.querySelector(".theme-pair");
+      if (pairSet) {
+        pairSet.hidden = settings.choice() !== "";
+        const backgrounds = [];
+        const notes = [];
+        for (const [name, allowed] of Object.entries(settings.AUTO)) {
+          const value = allowed.includes(data[name]) ? data[name] : allowed[0];
+          const side = name === "tdark" ? "dark" : "light";
+          for (const input of pairSet.querySelectorAll(`input[name="${name}"]`)) {
+            input.checked = input.value === value;
+            if (input.value === "custom") {
+              // Custom on the side of its scheme (or where it was chosen).
+              input.closest("label").hidden = scheme !== side && value !== "custom";
+            }
+          }
+          if (value === "custom" && scheme && scheme !== side) {
+            notes.push(
+              `Custom is ${scheme} now, so ${side === "dark" ? "the night shows Dark" : "the day shows Light"}.`,
+            );
+          }
+          const circle = form.querySelector(`.swatches:not(.pair-row) .swatch-${value} span`);
+          backgrounds.push(
+            value === "custom" && derived
+              ? derived.bg
+              : circle
+                ? getComputedStyle(circle).backgroundColor
+                : side === "dark" ? "#0d1117" : "#ffffff",
+          );
+        }
+        form.style.setProperty(
+          "--swatch-auto",
+          `linear-gradient(135deg, ${backgrounds[0]} 50%, ${backgrounds[1]} 50%)`,
+        );
+        const note = pairSet.querySelector(".pair-note");
+        note.textContent = notes.join(" ");
+        note.hidden = notes.length === 0;
+      }
+      const colorSet = form.querySelector(".theme-colors");
+      if (colorSet) {
+        const shown = settings.custom();
+        colorSet.hidden = !shown;
+        if (shown) {
+          const given = { cbg: data.cbg || shown.bg, caccent: data.caccent || shown.accent };
+          for (const [name, value] of Object.entries(given)) {
+            const input = colorSet.querySelector(`input[name="${name}"]`);
+            // Not while the picker is moved: it would fight the pointer.
+            if (input.value !== value) {
+              input.value = value;
+            }
+          }
+          const notes = [];
+          for (const [what, label, used] of [
+            ["background", "background", shown.bg],
+            ["accent", "accent", shown.accent],
+          ]) {
+            if (shown.notes.includes(what)) {
+              const before = palette.luminance(what === "background" ? given.cbg : given.caccent);
+              const way = palette.luminance(used) > before ? "lighter" : "darker";
+              notes.push(`The ${label} is shown ${way}, for contrast.`);
+            }
+          }
+          const note = colorSet.querySelector(".colors-note");
+          note.textContent = notes.join(" ");
+          note.hidden = notes.length === 0;
+        }
+      }
     }
 
     function update(name, value) {
@@ -2627,6 +2714,12 @@
         if (input.name === "theme") {
           // app.js: saves it to the profile and updates the top-bar select.
           applyTheme(input.value);
+        } else if (input.name in settings.AUTO) {
+          settings.setAuto({ [input.name]: input.value });
+          syncTheme();
+        } else if (input.type === "color") {
+          settings.setColors({ [input.name]: input.value });
+          syncTheme();
         } else if (input.name === "focus") {
           setFocus(input.checked);
         } else if (input.type === "checkbox") {
@@ -2648,6 +2741,13 @@
           }
         } else if (input.name in settings.OPTIONS) {
           update(input.name, input.value);
+        }
+      });
+      // A color picker applies while it is moved; theme.js saves after a pause.
+      form.addEventListener("input", (event) => {
+        if (event.target.type === "color") {
+          settings.setColors({ [event.target.name]: event.target.value });
+          syncTheme();
         }
       });
       form.addEventListener("click", (event) => {

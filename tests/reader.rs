@@ -752,6 +752,27 @@ async fn reader_settings_panel_is_on_read_pages_only() {
         let radio = format!("name=\"theme\" value=\"{theme}\"");
         assert!(read.body.contains(&radio), "{radio} missing");
     }
+    // Auto's day and night rows and Custom's colors, hidden until their theme.
+    for (name, values) in [
+        ("tlight", &["light", "sepia", "mist", "custom"][..]),
+        (
+            "tdark",
+            &["dark", "dusk", "navy", "forest", "wine", "custom"][..],
+        ),
+    ] {
+        for value in values {
+            let radio = format!("name=\"{name}\" value=\"{value}\"");
+            assert!(read.body.contains(&radio), "{radio} missing");
+        }
+    }
+    for part in [
+        "<fieldset class=\"setting theme-pair\" hidden>",
+        "<fieldset class=\"setting theme-colors\" hidden>",
+        "<input type=\"color\" name=\"cbg\">",
+        "<input type=\"color\" name=\"caccent\">",
+    ] {
+        assert!(read.body.contains(part), "{part} missing");
+    }
     // Neither the panel nor the reader assets on library pages.
     for uri in ["/".to_owned(), format!("/book/{id}")] {
         let page = server.ok(&uri).await;

@@ -425,6 +425,8 @@ const shelfgaugeReader = (() => {
   night.addEventListener("change", () => {
     if ("auto" in root.dataset) {
       show();
+      // The reader's settings panel shows Custom's colors while it is shown.
+      document.dispatchEvent(new CustomEvent("shelfgauge:theme", { detail: "" }));
     }
   });
   applyFocus();

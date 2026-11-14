@@ -484,6 +484,55 @@ const THEMES: &[(&str, &str)] = &[
     ("custom", "Custom"),
 ];
 
+/// The background and the accent of each built-in theme (`assets/style.css`; a test
+/// keeps them equal): what My profile's Custom colors start from before Custom has its
+/// own. Auto and Custom start from Light's.
+const THEME_COLORS: &[(&str, &str, &str)] = &[
+    ("light", "#ffffff", "#0969da"),
+    ("sepia", "#f6efe2", "#8a4b14"),
+    ("mist", "#e6e7e3", "#0a5cb8"),
+    ("dusk", "#4a4f57", "#a8cfff"),
+    ("dark", "#0d1117", "#4493f8"),
+    ("navy", "#161f30", "#82aaff"),
+    ("forest", "#15261d", "#8ccf9f"),
+    ("wine", "#2a171b", "#f4a6b8"),
+];
+
+/// The choices of Auto's day (`tlight`) or night (`tdark`) theme, the saved one
+/// selected (the default when none is).
+fn auto_choices(settings: &ProfileSettings, name: &str) -> Vec<ThemeChoice> {
+    let (_, allowed) = crate::profiles::SETTINGS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .expect("tlight and tdark are settings");
+    let chosen = settings.get(name).unwrap_or(allowed[0]);
+    allowed
+        .iter()
+        .map(|value| ThemeChoice {
+            value,
+            label: THEMES
+                .iter()
+                .find(|(v, _)| v == value)
+                .map_or(*value, |(_, label)| *label),
+            selected: *value == chosen,
+        })
+        .collect()
+}
+
+/// Custom's background and accent for My profile's color fields: its own, or those
+/// of the theme chosen.
+fn custom_colors(settings: &ProfileSettings) -> (String, String) {
+    let theme = settings.get("theme").unwrap_or("light");
+    let (_, bg, accent) = THEME_COLORS
+        .iter()
+        .find(|(t, _, _)| *t == theme)
+        .unwrap_or(&THEME_COLORS[0]);
+    (
+        settings.color("cbg").unwrap_or(bg).to_owned(),
+        settings.color("caccent").unwrap_or(accent).to_owned(),
+    )
+}
+
 /// The name of a reader font (a value of the `font` setting) as the panel shows it.
 fn font_label(value: &str) -> &str {
     match value {
@@ -561,6 +610,12 @@ struct MyProfilePage {
     share: bool,
     colors: Vec<ColorChoice>,
     themes: Vec<ThemeChoice>,
+    /// Auto's day and night themes.
+    day_themes: Vec<ThemeChoice>,
+    night_themes: Vec<ThemeChoice>,
+    /// Custom's background and accent (`#rrggbb`) for the color fields.
+    custom_bg: String,
+    custom_accent: String,
     reader_summary: String,
     reader_default: bool,
     /// Whether the request comes from another device (the password cannot be removed
@@ -653,6 +708,10 @@ fn my_profile_page(
                 selected: *value == theme,
             })
             .collect(),
+        day_themes: auto_choices(&settings, "tlight"),
+        night_themes: auto_choices(&settings, "tdark"),
+        custom_bg: custom_colors(&settings).0,
+        custom_accent: custom_colors(&settings).1,
         reader_default: summary == "default",
         reader_summary: summary,
         remote: current.remote,
@@ -696,6 +755,10 @@ pub(crate) struct MyProfileForm {
     color: Option<String>,
     share: Option<String>,
     theme: Option<String>,
+    tlight: Option<String>,
+    tdark: Option<String>,
+    cbg: Option<String>,
+    caccent: Option<String>,
     #[serde(default)]
     current_pin: String,
     #[serde(default)]
@@ -823,6 +886,21 @@ async fn save_details(
             value.insert(k.to_owned(), v.into());
         }
         value.insert("theme".to_owned(), theme.as_str().into());
+        // Auto's day and night themes (a default drops the saved one).
+        for (name, chosen) in [("tlight", &form.tlight), ("tdark", &form.tdark)] {
+            if let Some(chosen) = chosen {
+                value.insert(name.to_owned(), chosen.as_str().into());
+            }
+        }
+        // A color field always sends a color, touched or not: kept only with Custom,
+        // so another theme leaves the panel's first Custom to copy the theme shown.
+        if theme == "custom" {
+            for (name, color) in [("cbg", &form.cbg), ("caccent", &form.caccent)] {
+                if let Some(color) = color {
+                    value.insert(name.to_owned(), color.as_str().into());
+                }
+            }
+        }
         settings = ProfileSettings::from_json(&serde_json::Value::Object(value));
     }
     let several = current.several();
@@ -1591,6 +1669,36 @@ pub(crate) async fn confirm_delete(
 
 #[cfg(test)]
 mod tests {
+    /// My profile's starting colors for Custom are the built-in themes' own.
+    #[test]
+    fn theme_colors_match_the_stylesheet() {
+        let style = include_str!("../../../assets/style.css");
+        for (theme, bg, accent) in super::THEME_COLORS {
+            let selector = if *theme == "light" {
+                ":root {".to_owned()
+            } else {
+                format!(":root[data-theme=\"{theme}\"] {{")
+            };
+            let start = style
+                .find(&selector)
+                .unwrap_or_else(|| panic!("{selector}"));
+            let block = &style[start..start + style[start..].find('}').unwrap()];
+            assert!(block.contains(&format!("--bg: {bg};")), "{theme} bg");
+            assert!(
+                block.contains(&format!("--accent: {accent};")),
+                "{theme} accent"
+            );
+        }
+        // Every built-in theme but Auto and Custom.
+        let builtin: Vec<&str> = super::THEMES
+            .iter()
+            .map(|(v, _)| *v)
+            .filter(|v| !v.is_empty() && *v != "custom")
+            .collect();
+        let listed: Vec<&str> = super::THEME_COLORS.iter().map(|(t, _, _)| *t).collect();
+        assert_eq!(builtin, listed);
+    }
+
     use super::*;
 
     #[test]

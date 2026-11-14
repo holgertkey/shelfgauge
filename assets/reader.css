@@ -1215,8 +1215,9 @@ mark.sg-find.current {
   box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
 }
 
+/* Auto: the day's and the night's backgrounds (set by reader.js). */
 .settings-form .swatches .swatch-auto input + span {
-  background: linear-gradient(135deg, #ffffff 50%, #0d1117 50%);
+  background: var(--swatch-auto, linear-gradient(135deg, #ffffff 50%, #0d1117 50%));
 }
 
 .settings-form .swatches .swatch-light input + span {
@@ -1251,13 +1252,70 @@ mark.sg-find.current {
   background: #2a171b;
 }
 
-/* Custom: the colors in use are set by reader.js; until then, a wheel. */
+/* Custom: its background with a dot of its accent (set by reader.js); a wheel while
+   it has no colors. */
 .settings-form .swatches .swatch-custom input + span {
   background: var(--swatch-custom, conic-gradient(#d9534f, #f0ad4e, #5cb85c, #5bc0de, #6f42c1, #d9534f));
 }
 
 .settings-form .swatch span:hover {
   filter: brightness(0.92);
+}
+
+.settings-form .setting[hidden],
+.settings-form .swatch[hidden] {
+  display: none;
+}
+
+/* Auto's day and night themes: a row of smaller circles each. */
+.settings-form .pair-row {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
+.settings-form .pair-label {
+  width: 3rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.settings-form .pair-row label span {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+/* Custom's two colors: the browser's color picker, shown (not the hidden input of
+   the segmented buttons), with its name beside it. */
+.settings-form .theme-colors label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.settings-form .theme-colors input[type="color"] {
+  position: static;
+  flex: none;
+  width: 2.5rem;
+  height: 2rem;
+  padding: 0;
+  opacity: 1;
+  pointer-events: auto;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.settings-form .theme-colors label span,
+.settings-form .theme-colors label span:hover {
+  padding: 0;
+  text-align: start;
+  background: none;
+  border: 0;
 }
 
 /* Keep screen on: shown disabled where the browser has no Screen Wake Lock API (a

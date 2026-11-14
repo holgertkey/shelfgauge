@@ -420,6 +420,64 @@ async fn auto_day_and_night_themes_are_rendered_on_html() {
     );
 }
 
+/// My profile sets Auto's day and night themes and Custom's colors without
+/// JavaScript: the colors are kept only with Custom (a color field always sends one);
+/// the fields start from the theme's own colors.
+#[tokio::test]
+async fn my_profile_sets_auto_and_custom() {
+    let lib = Lib::new();
+    let page = lib.get("/profile", None).await.body;
+    for part in [
+        r#"<select id="profile-tlight" name="tlight">"#,
+        r#"<option value="light" selected>Light</option>"#,
+        r#"<option value="dark" selected>Dark</option>"#,
+        r#"<option value="custom">Custom</option>"#,
+        r##"<input type="color" name="cbg" value="#ffffff">"##,
+        r##"<input type="color" name="caccent" value="#0969da">"##,
+    ] {
+        assert!(page.contains(part), "{part}");
+    }
+    // Another theme with its colors untouched: the pair is kept, the colors are not.
+    let reply = lib
+        .form(
+            "/profile",
+            None,
+            "action=details&name=me&theme=navy&tlight=sepia&tdark=wine&cbg=%23ffffff&caccent=%230969da",
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.body);
+    let settings = || {
+        profiles::get(&lib.userdata.lock(), ProfileId::OWNER)
+            .unwrap()
+            .unwrap()
+            .settings
+            .unwrap()
+            .to_json()
+    };
+    assert_eq!(
+        settings(),
+        r#"{"tdark":"wine","theme":"navy","tlight":"sepia"}"#
+    );
+    // The color fields start from Navy's colors now.
+    let page = lib.get("/profile", None).await.body;
+    assert!(
+        page.contains(r##"name="cbg" value="#161f30""##),
+        "Navy's bg"
+    );
+    assert!(page.contains(r#"<option value="sepia" selected>Sepia</option>"#));
+    // Custom: the colors are kept (invalid ones dropped); a day theme by night is not.
+    lib.form(
+        "/profile",
+        None,
+        "action=details&name=me&theme=custom&tlight=light&tdark=sepia&cbg=%2320303A&caccent=bad",
+    )
+    .await;
+    assert_eq!(settings(), r##"{"cbg":"#20303a","theme":"custom"}"##);
+    let page = lib.get("/profile", None).await.body;
+    assert!(page.contains(r##"name="cbg" value="#20303a""##));
+    assert!(page.contains(r#"<option value="custom" selected>Custom</option>"#));
+}
+
 #[tokio::test]
 async fn keep_screen_on_is_stored_and_rendered_on_html() {
     let lib = Lib::new();

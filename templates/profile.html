@@ -40,6 +40,29 @@
       </select>
       <p class="hint">The same as the menu in the top bar; the <kbd>t</kbd> key switches to the next one. Saved in your profile, so it is the same on every device.</p>
     </div>
+    <div class="field">
+      <label for="profile-tlight">Auto by day</label>
+      <select id="profile-tlight" name="tlight">
+        {%- for theme in day_themes %}
+        <option value="{{ theme.value }}"{% if theme.selected %} selected{% endif %}>{{ theme.label }}</option>
+        {%- endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="profile-tdark">Auto at night</label>
+      <select id="profile-tdark" name="tdark">
+        {%- for theme in night_themes %}
+        <option value="{{ theme.value }}"{% if theme.selected %} selected{% endif %}>{{ theme.label }}</option>
+        {%- endfor %}
+      </select>
+      <p class="hint">Auto follows the light or dark setting of the device. Custom counts as a day or a night theme by its background.</p>
+    </div>
+    <fieldset class="field custom-colors">
+      <legend>Custom colors</legend>
+      <label class="color-field"><input type="color" name="cbg" value="{{ custom_bg }}"> Background</label>
+      <label class="color-field"><input type="color" name="caccent" value="{{ custom_accent }}"> Accent</label>
+      <p class="hint">Used by the Custom theme; the rest of the theme is made from them. Colors that would be hard to read are adjusted for contrast.</p>
+    </fieldset>
     {%- if several %}
     <div class="field">
       <label class="check"><input type="checkbox" name="share" value="on"{% if share %} checked{% endif %} aria-describedby="share-hint"> Show my reading to the other profiles</label>
