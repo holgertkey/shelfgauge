@@ -6,6 +6,7 @@
 <title>{% block title %}{{ layout.title }} · shelfgauge{% endblock %}</title>
 <link rel="icon" href="{{ layout.urls.asset("icon.svg") }}" type="image/svg+xml">
 <link rel="stylesheet" href="{{ layout.urls.asset("style.css") }}">
+<script src="{{ layout.urls.asset("palette.js") }}"></script>
 <script src="{{ layout.urls.asset("theme.js") }}"></script>
 <script src="{{ layout.urls.asset("app.js") }}" defer></script>
 {%- block head %}{% endblock %}
@@ -38,6 +39,7 @@
     <option value="navy">Navy</option>
     <option value="forest">Forest</option>
     <option value="wine">Wine</option>
+    <option value="custom">Custom</option>
   </select>
   {%- if layout.profile.admin %}
   <form class="rescan" action="{{ layout.urls.scan() }}" method="post">

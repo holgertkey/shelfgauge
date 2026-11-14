@@ -17,6 +17,7 @@
 <link rel="stylesheet" href="{{ base }}/assets/style.css">
 {%- block head %}{% endblock %}
 <link rel="stylesheet" href="{{ base }}/assets/hub.css">
+<script src="{{ base }}/assets/palette.js"></script>
 <script src="{{ base }}/assets/theme.js"></script>
 <script src="{{ base }}/assets/app.js" defer></script>
 {%- block app %}
@@ -48,6 +49,7 @@
     <option value="navy">Navy</option>
     <option value="forest">Forest</option>
     <option value="wine">Wine</option>
+    <option value="custom">Custom</option>
   </select>
   {%- block device %}
   <a class="icon-button device-link" href="{{ base }}/device" title="My account" aria-label="My account">

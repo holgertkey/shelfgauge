@@ -311,6 +311,74 @@ async fn settings_are_stored_cleaned_and_rendered_on_html() {
     );
 }
 
+/// The Custom theme: its two colors are stored (valid `#rrggbb` only, lowercased) and
+/// rendered on `<html>` with any theme; with Custom, `data-cscheme` says light or dark
+/// for pages without JavaScript; the reading-settings reset and choosing another
+/// theme on My profile keep the colors.
+#[tokio::test]
+async fn custom_theme_colors_are_stored_and_rendered_on_html() {
+    let lib = Lib::new();
+    let reply = lib
+        .json(
+            "/profile/settings",
+            None,
+            r##"{"theme":"custom","cbg":"#161F30","caccent":"#82aaff","font":"serif"}"##,
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::NO_CONTENT, "{}", reply.body);
+    let home = lib.get("/", None).await.body;
+    let tag = html_tag(&home);
+    for part in [
+        r#"data-theme="custom""#,
+        r##"data-cbg="#161f30""##,
+        r##"data-caccent="#82aaff""##,
+        r#"data-cscheme="dark""#,
+    ] {
+        assert!(tag.contains(part), "{part}: {tag}");
+    }
+    // palette.js comes before theme.js, which uses it while the page is drawn.
+    let palette = home.find("/assets/palette.js").expect("palette.js");
+    assert!(palette < home.find("/assets/theme.js").unwrap());
+
+    // A light background; an invalid accent is dropped.
+    lib.json(
+        "/profile/settings",
+        None,
+        r##"{"theme":"custom","cbg":"#f6efe2","caccent":"javascript:x"}"##,
+    )
+    .await;
+    let home = lib.get("/", None).await.body;
+    let tag = html_tag(&home);
+    assert!(tag.contains(r#"data-cscheme="light""#), "{tag}");
+    assert!(
+        !tag.contains("data-caccent") && !tag.contains("javascript"),
+        "{tag}"
+    );
+
+    // Another theme: the colors stay, no scheme.
+    lib.json(
+        "/profile/settings",
+        None,
+        r##"{"theme":"navy","cbg":"#101010","caccent":"#ff8800","font":"serif"}"##,
+    )
+    .await;
+    let home = lib.get("/", None).await.body;
+    let tag = html_tag(&home);
+    assert!(tag.contains(r##"data-cbg="#101010""##), "{tag}");
+    assert!(!tag.contains("data-cscheme"), "{tag}");
+
+    // The reading-settings reset keeps the theme and the colors.
+    let reply = lib.form("/profile", None, "action=reset-reading").await;
+    assert_eq!(reply.status, StatusCode::SEE_OTHER);
+    let owner = profiles::get(&lib.userdata.lock(), ProfileId::OWNER)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        owner.settings.unwrap().to_json(),
+        r##"{"caccent":"#ff8800","cbg":"#101010","theme":"navy"}"##
+    );
+}
+
 #[tokio::test]
 async fn keep_screen_on_is_stored_and_rendered_on_html() {
     let lib = Lib::new();

@@ -33,7 +33,12 @@ const shelfgaugeReader = (() => {
     // Minutes the screen stays on after the last page turn (reader.js).
     awake: ["10", "off", "5", "30"],
   };
-  const THEMES = ["", "light", "sepia", "mist", "dusk", "dark", "navy", "forest", "wine"];
+  const THEMES = ["", "light", "sepia", "mist", "dusk", "dark", "navy", "forest", "wine", "custom"];
+  // The Custom theme's background and accent (`data-cbg`, `data-caccent`; the same
+  // as `COLOR_SETTINGS` in src/profiles/mod.rs), kept with any theme. palette.js
+  // derives the rest of the theme from them.
+  const COLORS = ["cbg", "caccent"];
+  const HEX = /^#[0-9a-f]{6}$/;
   const ATTRS = {
     font: "rfont",
     size: "rsize",
@@ -46,6 +51,10 @@ const shelfgaugeReader = (() => {
   const root = document.documentElement;
   const SAVE_DELAY = 400;
   let timer = null;
+  // The custom properties set on <html> for the Custom theme, and what palette.js
+  // derived (the colors in use and what it corrected).
+  let customVars = [];
+  let customPalette = null;
 
   // The values of earlier versions that were replaced (the steps of line spacing and
   // width, the themes that were removed); the same as `RENAMED_VALUES` in
@@ -96,7 +105,7 @@ const shelfgaugeReader = (() => {
   function send() {
     clearTimeout(timer);
     timer = null;
-    const body = Object.assign(current(), { theme: root.dataset.theme || "" });
+    const body = Object.assign(current(), colors(), { theme: root.dataset.theme || "" });
     if ("localSettings" in root.dataset) {
       try {
         localStorage.setItem(LOCAL_KEY, JSON.stringify(body));
@@ -158,16 +167,93 @@ const shelfgaugeReader = (() => {
     return THEMES.includes(value) ? value : "";
   }
 
-  // Applies and saves a theme ("" for the system theme).
+  // The Custom theme's colors that are set, by setting name.
+  function colors() {
+    const value = {};
+    for (const name of COLORS) {
+      const color = root.dataset[name];
+      if (color && HEX.test(color)) {
+        value[name] = color;
+      }
+    }
+    return value;
+  }
+
+  // Sets the Custom theme's colors on <html> (invalid ones are dropped).
+  function putColors(value) {
+    for (const name of COLORS) {
+      const color = value && typeof value[name] === "string" ? value[name].toLowerCase() : "";
+      if (HEX.test(color)) {
+        root.dataset[name] = color;
+      } else {
+        delete root.dataset[name];
+      }
+    }
+  }
+
+  // Applies the Custom theme's palette when it is the theme shown, and removes it
+  // otherwise. `data-cscheme` (light or dark) follows, as the server renders it for
+  // pages without JavaScript.
+  function applyCustom() {
+    for (const name of customVars) {
+      root.style.removeProperty(name);
+    }
+    customVars = [];
+    customPalette = null;
+    if (root.dataset.theme !== "custom" || typeof shelfgaugePalette === "undefined") {
+      delete root.dataset.cscheme;
+      return null;
+    }
+    // CSSOM, not a style attribute: allowed by the CSP.
+    customPalette = shelfgaugePalette.derive(root.dataset.cbg, root.dataset.caccent);
+    for (const [name, value] of Object.entries(customPalette.vars)) {
+      root.style.setProperty(name, value);
+      customVars.push(name);
+    }
+    root.style.setProperty("color-scheme", customPalette.scheme);
+    customVars.push("color-scheme");
+    root.dataset.cscheme = customPalette.scheme;
+    return customPalette;
+  }
+
+  // The background and the accent shown now, as `#rrggbb` (null when the browser
+  // gives them otherwise).
+  function shownColors() {
+    const style = getComputedStyle(root);
+    const bg = style.getPropertyValue("--bg").trim().toLowerCase();
+    const accent = style.getPropertyValue("--accent").trim().toLowerCase();
+    return HEX.test(bg) && HEX.test(accent) ? { cbg: bg, caccent: accent } : null;
+  }
+
+  // Applies and saves a theme ("" for the system theme). Custom chosen without its
+  // colors starts from the theme shown now, so nothing jumps.
   function setTheme(theme) {
     const value = THEMES.includes(theme) ? theme : "";
+    if (value === "custom" && Object.keys(colors()).length < COLORS.length) {
+      putColors(shownColors() || { cbg: "#ffffff", caccent: "#0969da" });
+    }
     if (value) {
       root.dataset.theme = value;
     } else {
       delete root.dataset.theme;
     }
+    applyCustom();
     persist();
     return value;
+  }
+
+  // Applies and saves the Custom theme's colors (`{ cbg, caccent }`, `#rrggbb`);
+  // returns what palette.js derived, or null when Custom is not the theme.
+  function setColors(value) {
+    putColors(Object.assign(colors(), value));
+    persist();
+    return applyCustom();
+  }
+
+  // What palette.js derived for the Custom theme shown now (`{ vars, scheme, bg,
+  // accent, notes }`), or null.
+  function custom() {
+    return customPalette;
   }
 
   // Adopts the settings older versions kept in this browser: applies them before the
@@ -237,6 +323,9 @@ const shelfgaugeReader = (() => {
     try {
       const saved = JSON.parse(localStorage.getItem(LOCAL_KEY));
       apply(clean(saved));
+      if (saved && typeof saved === "object") {
+        putColors(saved);
+      }
       const theme = adoptedTheme(saved && saved.theme);
       if (theme) {
         root.dataset.theme = theme;
@@ -245,10 +334,11 @@ const shelfgaugeReader = (() => {
       // Nothing saved, or storage unavailable: the defaults.
     }
   }
+  applyCustom();
   applyFocus();
   phone.addEventListener("change", applyFocus);
 
-  return { OPTIONS, THEMES, current, save, setTheme, setFocus, phone };
+  return { OPTIONS, THEMES, current, save, setTheme, setColors, custom, setFocus, phone };
 })();
 
 (() => {

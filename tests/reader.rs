@@ -694,8 +694,8 @@ const READER_SETTINGS: [(&str, &[&str], &str); 4] = [
 /// The reader settings set with − and + in the panel (besides the size).
 const STEPPED: [&str; 2] = ["leading", "width"];
 
-const THEMES: [&str; 9] = [
-    "", "light", "sepia", "mist", "dusk", "dark", "navy", "forest", "wine",
+const THEMES: [&str; 10] = [
+    "", "light", "sepia", "mist", "dusk", "dark", "navy", "forest", "wine", "custom",
 ];
 
 #[tokio::test]
@@ -841,7 +841,13 @@ async fn reader_settings_assets_agree_on_the_values() {
             theme_js.contains(&format!("\"{theme}\"")),
             "{theme} in THEMES"
         );
-        if *theme != "light" {
+        if *theme == "custom" {
+            // theme.js sets its palette; without JavaScript it shares Dark's block
+            // (a dark background) or the plain `:root` one.
+            assert!(style_css.contains(
+                ":root[data-theme=\"custom\"][data-cscheme=\"dark\"],\n:root[data-theme=\"dark\"] {"
+            ));
+        } else if *theme != "light" {
             assert!(style_css.contains(&format!(":root[data-theme=\"{theme}\"] {{")));
         }
     }

@@ -481,6 +481,7 @@ const THEMES: &[(&str, &str)] = &[
     ("navy", "Navy"),
     ("forest", "Forest"),
     ("wine", "Wine"),
+    ("custom", "Custom"),
 ];
 
 /// The name of a reader font (a value of the `font` setting) as the panel shows it.
@@ -746,15 +747,13 @@ pub(crate) async fn save_my_profile(
         "set-pin" | "remove-pin" => save_pin(&state, &current, &form).await?,
         "set-password" | "remove-password" => save_password(&state, &current, &form).await?,
         "reset-reading" => {
-            let mut settings = ProfileSettings::default();
-            if let Some(theme) = current
+            // The theme and the Custom theme's colors stay.
+            let settings = current
                 .profile
                 .settings
                 .as_ref()
-                .and_then(|s| s.get("theme"))
-            {
-                settings = ProfileSettings::from_json(&serde_json::json!({ "theme": theme }));
-            }
+                .map(ProfileSettings::kept_on_reset)
+                .unwrap_or_default();
             user(&state, move |_, conn| {
                 store::save_settings(conn, id, &settings).map_err(profile_error)
             })

@@ -2,7 +2,7 @@
 //! `GET /device` (this device's page) serve the start page,
 //! `GET /r/{id}` the reading view, and `GET /assets/{*path}` their files: the app's own
 //! from `assets/hub/` and the library's reading files (`style.css`, `reader.css`,
-//! `theme.js`, `app.js`, `reader.js`, `icon.svg`) from `assets/`.
+//! `palette.js`, `theme.js`, `app.js`, `reader.js`, `icon.svg`) from `assets/`.
 //!
 //! The pages are static (`templates/hub/`): the same for every well-formed
 //! publication id and served without a database lookup, so they say nothing about
@@ -33,6 +33,7 @@ struct HubAssets;
 #[folder = "assets/"]
 #[include = "style.css"]
 #[include = "reader.css"]
+#[include = "palette.js"]
 #[include = "theme.js"]
 #[include = "app.js"]
 #[include = "reader.js"]

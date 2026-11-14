@@ -77,6 +77,9 @@
   }
 }
 
+/* The Custom theme without JavaScript: Dark for a dark background (data-cscheme),
+   Light otherwise; theme.js sets the whole palette derived by palette.js. */
+:root[data-theme="custom"][data-cscheme="dark"],
 :root[data-theme="dark"] {
   --bg: #0d1117;
   --fg: #e6edf3;

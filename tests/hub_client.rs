@@ -1540,6 +1540,7 @@ async fn the_hub_reading_view_has_what_reader_js_needs() {
         "data-position=",
         "data-max-text=",
         "data-max-note=",
+        "/assets/palette.js",
         "/assets/theme.js",
         "/assets/app.js",
         "/assets/reader.css",

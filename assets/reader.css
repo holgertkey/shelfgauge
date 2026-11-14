@@ -270,7 +270,8 @@ mark.sg-find.current {
 :root[data-theme="dark"],
 :root[data-theme="navy"],
 :root[data-theme="forest"],
-:root[data-theme="wine"] {
+:root[data-theme="wine"],
+:root[data-theme="custom"][data-cscheme="dark"] {
   --find-bg: rgb(80 160 255 / 0.32);
   --find-current-bg: rgb(255 150 50 / 0.5);
 }
@@ -1248,6 +1249,11 @@ mark.sg-find.current {
 
 .settings-form .swatches .swatch-wine input + span {
   background: #2a171b;
+}
+
+/* Custom: the colors in use are set by reader.js; until then, a wheel. */
+.settings-form .swatches .swatch-custom input + span {
+  background: var(--swatch-custom, conic-gradient(#d9534f, #f0ad4e, #5cb85c, #5bc0de, #6f42c1, #d9534f));
 }
 
 .settings-form .swatch span:hover {

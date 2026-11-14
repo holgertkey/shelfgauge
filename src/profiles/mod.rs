@@ -187,7 +187,7 @@ pub const SETTINGS: &[(&str, &[&str])] = &[
     (
         "theme",
         &[
-            "", "light", "sepia", "mist", "dusk", "dark", "navy", "forest", "wine",
+            "", "light", "sepia", "mist", "dusk", "dark", "navy", "forest", "wine", "custom",
         ],
     ),
     (
@@ -226,15 +226,75 @@ pub const RENAMED_VALUES: &[(&str, &str, &str)] = &[
     ("width", "full", "7"),
 ];
 
+/// The settings that hold a color (`#rrggbb`) instead of one of a list of values: the
+/// Custom theme's background and accent (`assets/palette.js` derives the rest). Kept
+/// while another theme is chosen, so going back to Custom brings them back. The same
+/// list is `COLORS` in `assets/theme.js` and `colors` in
+/// `tests/fixtures/profiles/settings.json`.
+pub const COLOR_SETTINGS: &[&str] = &["cbg", "caccent"];
+
+/// The settings the reading-settings reset keeps: the theme and its colors.
+const KEPT_ON_RESET: &[&str] = &["theme", "cbg", "caccent"];
+
+/// `value` as a color setting: `#rrggbb` (any case), lowercased; anything else is
+/// `None`.
+///
+/// # Examples
+///
+/// ```
+/// use shelfgauge::profiles::parse_color;
+///
+/// assert_eq!(parse_color("#1A2b3C").as_deref(), Some("#1a2b3c"));
+/// assert_eq!(parse_color("#abc"), None);
+/// assert_eq!(parse_color("red"), None);
+/// ```
+pub fn parse_color(value: &str) -> Option<String> {
+    let digits = value.strip_prefix('#')?;
+    (digits.len() == 6 && digits.bytes().all(|b| b.is_ascii_hexdigit()))
+        .then(|| value.to_ascii_lowercase())
+}
+
+/// Whether `#rrggbb` is a dark color: white text has more contrast on it than black
+/// (WCAG 2), as `isDark` in `assets/palette.js`. The Custom theme's light or dark
+/// scheme without JavaScript.
+///
+/// # Examples
+///
+/// ```
+/// use shelfgauge::profiles::is_dark_color;
+///
+/// assert!(is_dark_color("#161f30"));
+/// assert!(!is_dark_color("#f6efe2"));
+/// ```
+pub fn is_dark_color(hex: &str) -> bool {
+    let Some(color) = parse_color(hex) else {
+        return false;
+    };
+    let channel = |i: usize| {
+        let c = f64::from(u8::from_str_radix(&color[i..i + 2], 16).unwrap_or(0)) / 255.0;
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let lum = 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
+    // White: (1.05) / (lum + 0.05); black: (lum + 0.05) / 0.05.
+    1.05 / (lum + 0.05) >= (lum + 0.05) / 0.05
+}
+
 /// A profile's theme and reader settings: only known names with allowed values that
-/// are not the default.
+/// are not the default, and the colors of [`COLOR_SETTINGS`] that are valid.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ProfileSettings(BTreeMap<&'static str, &'static str>);
+pub struct ProfileSettings {
+    values: BTreeMap<&'static str, &'static str>,
+    colors: BTreeMap<&'static str, String>,
+}
 
 impl ProfileSettings {
     /// The settings in a JSON object, keeping only known names with allowed values
-    /// (anything else, such as broken data, is dropped; a value of an earlier version
-    /// is read as its step, see [`RENAMED_VALUES`]).
+    /// and valid colors (anything else, such as broken data, is dropped; a value of an
+    /// earlier version is read as its step, see [`RENAMED_VALUES`]).
     ///
     /// # Examples
     ///
@@ -246,9 +306,15 @@ impl ProfileSettings {
     /// assert_eq!(settings.get("theme"), Some("dark"));
     /// assert_eq!(settings.get("font"), None);
     /// assert_eq!(settings.to_json(), r#"{"size":"5","theme":"dark"}"#);
+    ///
+    /// let value = serde_json::json!({"theme": "custom", "cbg": "#161F30", "caccent": "blue"});
+    /// let settings = ProfileSettings::from_json(&value);
+    /// assert_eq!(settings.color("cbg"), Some("#161f30"));
+    /// assert_eq!(settings.color("caccent"), None);
     /// ```
     pub fn from_json(value: &serde_json::Value) -> Self {
         let mut settings = BTreeMap::new();
+        let mut colors = BTreeMap::new();
         if let Some(object) = value.as_object() {
             for (name, allowed) in SETTINGS {
                 let Some(value) = object.get(*name).and_then(|v| v.as_str()) else {
@@ -262,8 +328,20 @@ impl ProfileSettings {
                     settings.insert(*name, *v);
                 }
             }
+            for name in COLOR_SETTINGS {
+                if let Some(color) = object
+                    .get(*name)
+                    .and_then(|v| v.as_str())
+                    .and_then(parse_color)
+                {
+                    colors.insert(*name, color);
+                }
+            }
         }
-        Self(settings)
+        Self {
+            values: settings,
+            colors,
+        }
     }
 
     /// The stored settings; unparsable text counts as no settings.
@@ -275,22 +353,55 @@ impl ProfileSettings {
 
     /// The JSON text to store.
     pub fn to_json(&self) -> String {
-        serde_json::to_string(&self.0).expect("a map of strings serializes")
+        let all: BTreeMap<&str, &str> = self.iter().collect();
+        serde_json::to_string(&all).expect("a map of strings serializes")
     }
 
-    /// The value of setting `name`, if it is not the default.
+    /// The value of setting `name` (one with a list of values), if it is not the
+    /// default.
     pub fn get(&self, name: &str) -> Option<&'static str> {
-        self.0.get(name).copied()
+        self.values.get(name).copied()
     }
 
-    /// The settings that are not the default, in name order.
-    pub fn iter(&self) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
-        self.0.iter().map(|(k, v)| (*k, *v))
+    /// The color of setting `name` (one of [`COLOR_SETTINGS`]), if set.
+    pub fn color(&self, name: &str) -> Option<&str> {
+        self.colors.get(name).map(String::as_str)
+    }
+
+    /// The settings that are not the default, the colors among them, in name order.
+    pub fn iter(&self) -> impl Iterator<Item = (&'static str, &str)> + '_ {
+        let mut all: Vec<(&'static str, &str)> = self
+            .values
+            .iter()
+            .map(|(k, v)| (*k, *v))
+            .chain(self.colors.iter().map(|(k, v)| (*k, v.as_str())))
+            .collect();
+        all.sort_unstable();
+        all.into_iter()
     }
 
     /// Whether every setting is the default.
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.values.is_empty() && self.colors.is_empty()
+    }
+
+    /// The settings the reading-settings reset keeps: the theme and the Custom theme's
+    /// colors.
+    pub fn kept_on_reset(&self) -> Self {
+        Self {
+            values: self
+                .values
+                .iter()
+                .filter(|(k, _)| KEPT_ON_RESET.contains(k))
+                .map(|(k, v)| (*k, *v))
+                .collect(),
+            colors: self
+                .colors
+                .iter()
+                .filter(|(k, _)| KEPT_ON_RESET.contains(k))
+                .map(|(k, v)| (*k, v.clone()))
+                .collect(),
+        }
     }
 }
 
@@ -327,6 +438,66 @@ mod tests {
             let s = ProfileSettings::parse(&format!(r#"{{"awake":"{value}"}}"#));
             assert_eq!(s.get("awake"), Some(value));
         }
+    }
+
+    /// The Custom theme's colors: `#rrggbb` only, lowercased; kept with any theme; the
+    /// reading-settings reset keeps them with the theme.
+    #[test]
+    fn custom_theme_colors() {
+        let s = ProfileSettings::parse(
+            r##"{"theme":"custom","cbg":"#ABCDEF","caccent":"#12ab34","size":"5"}"##,
+        );
+        assert_eq!(s.get("theme"), Some("custom"));
+        assert_eq!(s.color("cbg"), Some("#abcdef"));
+        assert_eq!(s.color("caccent"), Some("#12ab34"));
+        assert_eq!(
+            s.to_json(),
+            r##"{"caccent":"#12ab34","cbg":"#abcdef","size":"5","theme":"custom"}"##
+        );
+        assert_eq!(ProfileSettings::parse(&s.to_json()), s);
+        for bad in [
+            "#abc", "red", "#12345g", "#1234567", "123456", "#", "", " #123456",
+        ] {
+            let s = ProfileSettings::from_json(&serde_json::json!({ "cbg": bad }));
+            assert!(s.is_empty(), "{bad:?}");
+        }
+        assert!(ProfileSettings::from_json(&serde_json::json!({ "cbg": 5 })).is_empty());
+        // Kept while another theme is chosen.
+        let s = ProfileSettings::parse(r##"{"theme":"navy","cbg":"#101010"}"##);
+        assert_eq!(s.color("cbg"), Some("#101010"));
+        // The reset keeps the theme and the colors only.
+        let s = ProfileSettings::parse(
+            r##"{"theme":"custom","cbg":"#101010","caccent":"#ff8800","font":"serif","size":"5"}"##,
+        );
+        assert_eq!(
+            s.kept_on_reset().to_json(),
+            r##"{"caccent":"#ff8800","cbg":"#101010","theme":"custom"}"##
+        );
+        assert!(
+            ProfileSettings::parse(r#"{"font":"serif"}"#)
+                .kept_on_reset()
+                .is_empty()
+        );
+    }
+
+    /// Light or dark as palette.js decides it: the vectors' backgrounds and schemes.
+    #[test]
+    fn dark_colors_as_palette_js() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/palette/vectors.json"))
+                .unwrap();
+        for vector in vectors.as_array().unwrap() {
+            let bg = vector["vars"]["--bg"].as_str().unwrap();
+            assert_eq!(
+                is_dark_color(bg),
+                vector["scheme"] == "dark",
+                "{bg} {}",
+                vector["scheme"]
+            );
+        }
+        assert!(is_dark_color("#000000"));
+        assert!(!is_dark_color("#ffffff"));
+        assert!(!is_dark_color("not a color"));
     }
 
     /// A theme that was removed is read as the closest one left, here and in theme.js.
@@ -393,6 +564,22 @@ mod tests {
                 )
             })
             .collect();
+        // The color settings are a list of names, not of values.
+        let (colors, fixture): (Vec<_>, Vec<_>) =
+            fixture.into_iter().partition(|(k, _)| k == "colors");
+        assert_eq!(colors[0].1, COLOR_SETTINGS, "colors of the fixture");
+        let js_colors = format!(
+            "const COLORS = [{}];",
+            COLOR_SETTINGS
+                .iter()
+                .map(|c| format!("\"{c}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        assert!(
+            include_str!("../../assets/theme.js").contains(&js_colors),
+            "{js_colors} in theme.js"
+        );
         let mut ours: Vec<(String, Vec<String>)> = SETTINGS
             .iter()
             .map(|(k, v)| ((*k).to_owned(), v.iter().map(|s| (*s).to_owned()).collect()))

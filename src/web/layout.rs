@@ -6,6 +6,7 @@ use serde::Serialize;
 
 use super::profile::CurrentProfile;
 use super::{AppState, Urls};
+use crate::profiles::{COLOR_SETTINGS, is_dark_color};
 use crate::scanner::ScanPhase;
 
 /// The cookie that remembers the sidebar mode. It has to be a cookie, not
@@ -141,6 +142,12 @@ pub(crate) struct LayoutProfile {
     pub(crate) theme: String,
     /// The reader settings as `data-*` attributes: `(attribute, value)`.
     pub(crate) reader: Vec<(&'static str, &'static str)>,
+    /// The Custom theme's colors as `data-*` attributes (`data-cbg`, `data-caccent`):
+    /// kept with any theme, so the reading settings can go back to Custom.
+    pub(crate) colors: Vec<(&'static str, String)>,
+    /// With the Custom theme, `dark` or `light` by its background (`data-cscheme`):
+    /// what style.css shows without JavaScript (theme.js derives the whole palette).
+    pub(crate) cscheme: Option<&'static str>,
     /// Whether the page asks `theme.js` to adopt the settings saved in this browser
     /// before 0.15.0 (`data-adopt`): the owner, settings never saved.
     pub(crate) adopt: bool,
@@ -163,6 +170,16 @@ impl LayoutProfile {
                 .iter()
                 .filter_map(|(name, attr)| settings.get(name).map(|v| (*attr, v)))
                 .collect(),
+            colors: COLOR_SETTINGS
+                .iter()
+                .filter_map(|name| settings.color(name).map(|c| (*name, c.to_owned())))
+                .collect(),
+            cscheme: (settings.get("theme") == Some("custom")).then(|| {
+                match settings.color("cbg") {
+                    Some(bg) if is_dark_color(bg) => "dark",
+                    _ => "light",
+                }
+            }),
             adopt: profile.id.is_owner() && profile.settings.is_none(),
         }
     }
@@ -179,6 +196,8 @@ impl LayoutProfile {
             remote: false,
             theme: String::new(),
             reader: Vec::new(),
+            colors: Vec::new(),
+            cscheme: None,
             adopt: false,
         }
     }

@@ -2572,6 +2572,14 @@ async fn the_service_worker_and_manifest_make_the_reader_installable() {
             urls.push(format!("{prefix}/assets/{file}"));
         }
         assert!(urls.len() > 10, "{urls:?}");
+        // The reading view's scripts are kept for offline reading, palette.js (the
+        // Custom theme) among them.
+        for file in ["palette.js", "theme.js", "reader.js"] {
+            assert!(
+                files.contains(&format!("/assets/{file}`")),
+                "{file}: {files}"
+            );
+        }
         for url in &urls {
             assert_eq!(hub.get(url, None).await.status, StatusCode::OK, "{url}");
         }
