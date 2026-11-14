@@ -39,6 +39,16 @@ const shelfgaugeReader = (() => {
   // derives the rest of the theme from them.
   const COLORS = ["cbg", "caccent"];
   const HEX = /^#[0-9a-f]{6}$/;
+  // Auto's day and night themes (`data-tlight`, `data-tdark`), the default first; the
+  // same as `tlight` and `tdark` in `SETTINGS` of src/profiles/mod.rs.
+  const AUTO = {
+    tlight: ["light", "sepia", "mist", "custom"],
+    tdark: ["dark", "dusk", "navy", "forest", "wine", "custom"],
+  };
+  // With Auto chosen, `data-auto` is set and `data-theme` is the theme shown: the
+  // night's under a dark system setting, else the day's (without JavaScript,
+  // style.css follows the system setting with Light and Dark).
+  const night = matchMedia("(prefers-color-scheme: dark)");
   const ATTRS = {
     font: "rfont",
     size: "rsize",
@@ -105,7 +115,7 @@ const shelfgaugeReader = (() => {
   function send() {
     clearTimeout(timer);
     timer = null;
-    const body = Object.assign(current(), colors(), { theme: root.dataset.theme || "" });
+    const body = Object.assign(current(), colors(), pair(), { theme: choice() });
     if ("localSettings" in root.dataset) {
       try {
         localStorage.setItem(LOCAL_KEY, JSON.stringify(body));
@@ -191,6 +201,66 @@ const shelfgaugeReader = (() => {
     }
   }
 
+  // The theme chosen: "" for Auto, whichever theme it shows.
+  function choice() {
+    return "auto" in root.dataset ? "" : root.dataset.theme || "";
+  }
+
+  // Auto's day and night themes that are not the defaults, by setting name.
+  function pair() {
+    const value = {};
+    for (const [name, allowed] of Object.entries(AUTO)) {
+      const theme = root.dataset[name];
+      if (allowed.includes(theme) && theme !== allowed[0]) {
+        value[name] = theme;
+      }
+    }
+    return value;
+  }
+
+  // Sets Auto's day and night themes on <html> (unknown ones and the defaults are
+  // dropped).
+  function putPair(value) {
+    for (const [name, allowed] of Object.entries(AUTO)) {
+      const theme = value ? value[name] : undefined;
+      if (allowed.includes(theme) && theme !== allowed[0]) {
+        root.dataset[name] = theme;
+      } else {
+        delete root.dataset[name];
+      }
+    }
+  }
+
+  // The scheme of the Custom theme's colors (`light` or `dark`).
+  function customScheme() {
+    if (typeof shelfgaugePalette === "undefined") {
+      return null;
+    }
+    return shelfgaugePalette.derive(root.dataset.cbg, root.dataset.caccent).scheme;
+  }
+
+  // The theme Auto shows now: the night's under a dark system setting, else the
+  // day's. Custom only on the side of its scheme; on the other one (its colors
+  // changed since it was chosen), that side's default.
+  function autoTheme() {
+    const side = night.matches ? "tdark" : "tlight";
+    const theme = AUTO[side].includes(root.dataset[side]) ? root.dataset[side] : AUTO[side][0];
+    const scheme = theme === "custom" ? customScheme() : null;
+    if (scheme && scheme !== (side === "tdark" ? "dark" : "light")) {
+      return AUTO[side][0];
+    }
+    return theme;
+  }
+
+  // Shows the theme chosen: with Auto, the day's or the night's; then the Custom
+  // palette when that is the theme shown.
+  function show() {
+    if ("auto" in root.dataset) {
+      root.dataset.theme = autoTheme();
+    }
+    applyCustom();
+  }
+
   // Applies the Custom theme's palette when it is the theme shown, and removes it
   // otherwise. `data-cscheme` (light or dark) follows, as the server renders it for
   // pages without JavaScript.
@@ -234,12 +304,22 @@ const shelfgaugeReader = (() => {
     }
     if (value) {
       root.dataset.theme = value;
+      delete root.dataset.auto;
     } else {
-      delete root.dataset.theme;
+      root.dataset.auto = "";
     }
-    applyCustom();
+    show();
     persist();
     return value;
+  }
+
+  // Applies and saves Auto's day and night themes (`{ tlight, tdark }`); returns the
+  // ones that are not the defaults.
+  function setAuto(value) {
+    putPair(Object.assign(pair(), value));
+    show();
+    persist();
+    return pair();
   }
 
   // Applies and saves the Custom theme's colors (`{ cbg, caccent }`, `#rrggbb`);
@@ -247,7 +327,9 @@ const shelfgaugeReader = (() => {
   function setColors(value) {
     putColors(Object.assign(colors(), value));
     persist();
-    return applyCustom();
+    // Auto may show another side's theme now (Custom moved to the other scheme).
+    show();
+    return customPalette;
   }
 
   // What palette.js derived for the Custom theme shown now (`{ vars, scheme, bg,
@@ -325,6 +407,7 @@ const shelfgaugeReader = (() => {
       apply(clean(saved));
       if (saved && typeof saved === "object") {
         putColors(saved);
+        putPair(saved);
       }
       const theme = adoptedTheme(saved && saved.theme);
       if (theme) {
@@ -334,11 +417,34 @@ const shelfgaugeReader = (() => {
       // Nothing saved, or storage unavailable: the defaults.
     }
   }
-  applyCustom();
+  if (!root.dataset.theme) {
+    root.dataset.auto = "";
+  }
+  show();
+  // A phone turning to night mode while a book is open.
+  night.addEventListener("change", () => {
+    if ("auto" in root.dataset) {
+      show();
+    }
+  });
   applyFocus();
   phone.addEventListener("change", applyFocus);
 
-  return { OPTIONS, THEMES, current, save, setTheme, setColors, custom, setFocus, phone };
+  return {
+    OPTIONS,
+    THEMES,
+    AUTO,
+    current,
+    save,
+    choice,
+    setTheme,
+    setAuto,
+    setColors,
+    custom,
+    customScheme,
+    setFocus,
+    phone,
+  };
 })();
 
 (() => {

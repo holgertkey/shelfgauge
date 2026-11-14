@@ -851,6 +851,15 @@ async fn reader_settings_assets_agree_on_the_values() {
             assert!(style_css.contains(&format!(":root[data-theme=\"{theme}\"] {{")));
         }
     }
+    // With Auto, `data-theme` is the theme shown (the day's or the night's): the
+    // choice is read through `choice()` only.
+    let app_js = server.ok("/assets/app.js").await.body;
+    let reader_js = server.ok("/assets/reader.js").await.body;
+    for (name, js) in [("app.js", &app_js), ("reader.js", &reader_js)] {
+        assert!(!js.contains("dataset.theme"), "{name} reads dataset.theme");
+        assert!(js.contains(".choice()"), "{name} without choice()");
+    }
+    assert!(theme_js.contains("tlight: [\"light\", \"sepia\", \"mist\", \"custom\"],"));
     // Buttons that need JavaScript stay hidden without it.
     assert!(style_css.contains(".icon-button[hidden] {\n  display: none;"));
     // Focus mode is styled in reader.css only, so it never touches library pages.

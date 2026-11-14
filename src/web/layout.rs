@@ -142,6 +142,10 @@ pub(crate) struct LayoutProfile {
     pub(crate) theme: String,
     /// The reader settings as `data-*` attributes: `(attribute, value)`.
     pub(crate) reader: Vec<(&'static str, &'static str)>,
+    /// Auto's day and night themes as `data-*` attributes (`data-tlight`,
+    /// `data-tdark`) when not the defaults: kept with any theme, so the reading
+    /// settings can go back to Auto with them.
+    pub(crate) auto: Vec<(&'static str, &'static str)>,
     /// The Custom theme's colors as `data-*` attributes (`data-cbg`, `data-caccent`):
     /// kept with any theme, so the reading settings can go back to Custom.
     pub(crate) colors: Vec<(&'static str, String)>,
@@ -170,6 +174,10 @@ impl LayoutProfile {
                 .iter()
                 .filter_map(|(name, attr)| settings.get(name).map(|v| (*attr, v)))
                 .collect(),
+            auto: ["tlight", "tdark"]
+                .into_iter()
+                .filter_map(|name| settings.get(name).map(|v| (name, v)))
+                .collect(),
             colors: COLOR_SETTINGS
                 .iter()
                 .filter_map(|name| settings.color(name).map(|c| (*name, c.to_owned())))
@@ -196,6 +204,7 @@ impl LayoutProfile {
             remote: false,
             theme: String::new(),
             reader: Vec::new(),
+            auto: Vec::new(),
             colors: Vec::new(),
             cscheme: None,
             adopt: false,

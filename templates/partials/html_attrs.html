@@ -1,5 +1,6 @@
 {%- if !layout.profile.theme.is_empty() %} data-theme="{{ layout.profile.theme }}"{% endif %}
 {%- for (attr, value) in layout.profile.reader %} data-{{ attr }}="{{ value }}"{% endfor %}
+{%- for (attr, value) in layout.profile.auto %} data-{{ attr }}="{{ value }}"{% endfor %}
 {%- for (attr, value) in layout.profile.colors %} data-{{ attr }}="{{ value }}"{% endfor %}
 {%- if let Some(scheme) = layout.profile.cscheme %} data-cscheme="{{ scheme }}"{% endif %}
 {%- if layout.profile.color != 0 %} data-pcolor="{{ layout.profile.color }}"{% endif %}

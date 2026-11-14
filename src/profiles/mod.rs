@@ -190,6 +190,13 @@ pub const SETTINGS: &[(&str, &[&str])] = &[
             "", "light", "sepia", "mist", "dusk", "dark", "navy", "forest", "wine", "custom",
         ],
     ),
+    // Auto's day and night themes (the system's light and dark setting), the same as
+    // `AUTO` in theme.js; Custom on the side of its scheme.
+    ("tlight", &["light", "sepia", "mist", "custom"]),
+    (
+        "tdark",
+        &["dark", "dusk", "navy", "forest", "wine", "custom"],
+    ),
     (
         "font",
         &[
@@ -233,8 +240,9 @@ pub const RENAMED_VALUES: &[(&str, &str, &str)] = &[
 /// `tests/fixtures/profiles/settings.json`.
 pub const COLOR_SETTINGS: &[&str] = &["cbg", "caccent"];
 
-/// The settings the reading-settings reset keeps: the theme and its colors.
-const KEPT_ON_RESET: &[&str] = &["theme", "cbg", "caccent"];
+/// The settings the reading-settings reset keeps: the theme, Auto's day and night
+/// themes and the Custom theme's colors.
+const KEPT_ON_RESET: &[&str] = &["theme", "tlight", "tdark", "cbg", "caccent"];
 
 /// `value` as a color setting: `#rrggbb` (any case), lowercased; anything else is
 /// `None`.
@@ -385,8 +393,8 @@ impl ProfileSettings {
         self.values.is_empty() && self.colors.is_empty()
     }
 
-    /// The settings the reading-settings reset keeps: the theme and the Custom theme's
-    /// colors.
+    /// The settings the reading-settings reset keeps: the theme, Auto's day and night
+    /// themes and the Custom theme's colors.
     pub fn kept_on_reset(&self) -> Self {
         Self {
             values: self
@@ -478,6 +486,34 @@ mod tests {
                 .kept_on_reset()
                 .is_empty()
         );
+    }
+
+    /// Auto's day and night themes: a light theme by day, a dark one by night (Custom
+    /// on either); the defaults are implicit; the reset keeps them.
+    #[test]
+    fn auto_day_and_night_themes() {
+        let s = ProfileSettings::parse(r#"{"tlight":"sepia","tdark":"navy","font":"serif"}"#);
+        assert_eq!(s.get("tlight"), Some("sepia"));
+        assert_eq!(s.get("tdark"), Some("navy"));
+        assert_eq!(
+            s.kept_on_reset().to_json(),
+            r#"{"tdark":"navy","tlight":"sepia"}"#
+        );
+        for (name, value) in [
+            ("tlight", "navy"),
+            ("tdark", "sepia"),
+            ("tlight", "light"),
+            ("tdark", "dark"),
+            ("tlight", ""),
+            ("tdark", "black"),
+        ] {
+            let s = ProfileSettings::from_json(&serde_json::json!({ name: value }));
+            assert!(s.is_empty(), "{name} {value}");
+        }
+        for name in ["tlight", "tdark"] {
+            let s = ProfileSettings::from_json(&serde_json::json!({ name: "custom" }));
+            assert_eq!(s.get(name), Some("custom"));
+        }
     }
 
     /// Light or dark as palette.js decides it: the vectors' backgrounds and schemes.
@@ -589,14 +625,17 @@ mod tests {
         sorted.sort();
         assert_eq!(ours, sorted);
 
-        // theme.js: the `OPTIONS` object, one `name: ["a", "b"],` per line.
+        // theme.js: the `OPTIONS` and `AUTO` objects, one `name: ["a", "b"],` per line.
         let js = include_str!("../../assets/theme.js");
-        let block = js
-            .split("const OPTIONS = {")
-            .nth(1)
-            .and_then(|rest| rest.split("};").next())
-            .expect("OPTIONS in theme.js");
-        let mut from_js: Vec<(String, Vec<String>)> = block
+        let block = |name: &str| {
+            js.split(&format!("const {name} = {{"))
+                .nth(1)
+                .and_then(|rest| rest.split("};").next())
+                .unwrap_or_else(|| panic!("{name} in theme.js"))
+                .to_owned()
+        };
+        let blocks = block("OPTIONS") + "\n" + &block("AUTO");
+        let mut from_js: Vec<(String, Vec<String>)> = blocks
             .lines()
             .map(str::trim)
             .filter(|l| !l.is_empty() && !l.starts_with("//"))
@@ -616,7 +655,7 @@ mod tests {
         let themes = fixture.iter().find(|(k, _)| k == "theme").unwrap().clone();
         from_js.push(themes.clone());
         from_js.sort();
-        assert_eq!(from_js, sorted, "theme.js OPTIONS");
+        assert_eq!(from_js, sorted, "theme.js OPTIONS and AUTO");
 
         // The theme menu offers the same themes.
         let base = include_str!("../../templates/base.html");

@@ -379,6 +379,47 @@ async fn custom_theme_colors_are_stored_and_rendered_on_html() {
     );
 }
 
+/// Auto's day and night themes are stored and rendered on `<html>` with any theme
+/// (no `data-theme` with Auto: theme.js shows the side's theme); the defaults are not
+/// rendered; the reading-settings reset keeps them.
+#[tokio::test]
+async fn auto_day_and_night_themes_are_rendered_on_html() {
+    let lib = Lib::new();
+    lib.json(
+        "/profile/settings",
+        None,
+        r#"{"theme":"","tlight":"sepia","tdark":"navy","size":"6"}"#,
+    )
+    .await;
+    let home = lib.get("/", None).await.body;
+    let tag = html_tag(&home);
+    assert!(
+        tag.contains(r#"data-tlight="sepia""#) && tag.contains(r#"data-tdark="navy""#),
+        "{tag}"
+    );
+    assert!(!tag.contains("data-theme"), "{tag}");
+    lib.json(
+        "/profile/settings",
+        None,
+        r#"{"theme":"wine","tlight":"light","tdark":"forest"}"#,
+    )
+    .await;
+    let home = lib.get("/", None).await.body;
+    let tag = html_tag(&home);
+    assert!(tag.contains(r#"data-theme="wine""#), "{tag}");
+    assert!(tag.contains(r#"data-tdark="forest""#), "{tag}");
+    assert!(!tag.contains("data-tlight"), "the default: {tag}");
+    let reply = lib.form("/profile", None, "action=reset-reading").await;
+    assert_eq!(reply.status, StatusCode::SEE_OTHER);
+    let owner = profiles::get(&lib.userdata.lock(), ProfileId::OWNER)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        owner.settings.unwrap().to_json(),
+        r#"{"tdark":"forest","theme":"wine"}"#
+    );
+}
+
 #[tokio::test]
 async fn keep_screen_on_is_stored_and_rendered_on_html() {
     let lib = Lib::new();

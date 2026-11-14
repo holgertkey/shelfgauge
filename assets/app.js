@@ -68,13 +68,13 @@ function setupTheme() {
   if (!select) {
     return;
   }
-  select.value = document.documentElement.dataset.theme || "";
+  select.value = shelfgaugeReader.choice();
   select.addEventListener("change", () => applyTheme(select.value));
 }
 
 function nextTheme() {
   const themes = shelfgaugeReader.THEMES;
-  const current = document.documentElement.dataset.theme || "";
+  const current = shelfgaugeReader.choice();
   applyTheme(themes[(themes.indexOf(current) + 1) % themes.length]);
 }
 

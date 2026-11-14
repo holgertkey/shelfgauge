@@ -2519,7 +2519,7 @@
         return;
       }
       const current = settings.current();
-      current.theme = root.dataset.theme || "";
+      current.theme = settings.choice();
       for (const [name, value] of Object.entries(current)) {
         for (const input of form.querySelectorAll(`input[name="${name}"]`)) {
           input.checked = input.value === value;
