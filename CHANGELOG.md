@@ -83,6 +83,9 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ### Changed
 
+- The reader's top bar has a new order after the search: Aa, the note pencil, the
+  bookmark (from the right edge: bookmark, note, Aa, search), in the library and the
+  hub reader; Focus mode, shown on a wide screen only, comes after them.
 - The search in a book on a phone: a magnifier in the top bar like the buttons next to
   it (blue while a search is on) instead of a field squeezed to the size of a button.
   A tap opens the field over the whole top bar with ✕; Enter searches and closes it,

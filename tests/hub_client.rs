@@ -1551,6 +1551,25 @@ async fn the_hub_reading_view_has_what_reader_js_needs() {
         );
         assert!(hub_page.contains(needle), "the hub's page: {needle}");
     }
+    // The top bar after the search, in both readers: Aa, Note, Bookmark (from the
+    // right: Bookmark, Note, Aa, Search), then Focus mode (a wide screen only).
+    for (page, body) in [("the library's", &instance.body), ("the hub's", &hub_page)] {
+        let at = |needle: &str| {
+            body.find(needle)
+                .unwrap_or_else(|| panic!("{page} page: {needle}"))
+        };
+        let order = [
+            at(r#"<form class="search find-form""#),
+            at(r#"class="icon-button settings-button""#),
+            at(r#"class="icon-button note-button""#),
+            at(r#"class="icon-button bookmark-button""#),
+            at(r#"class="icon-button focus-button""#),
+        ];
+        assert!(
+            order.windows(2).all(|w| w[0] < w[1]),
+            "{page} top bar: {order:?}"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
