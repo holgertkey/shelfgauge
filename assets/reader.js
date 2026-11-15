@@ -389,6 +389,17 @@
     syncPager();
   }
 
+  // A jump to a bookmark, mark or note does not move the reading position until the
+  // reader reads on from there (another part holds it when it opens: `from=mark`).
+  function markJump(href) {
+    const url = new URL(href, window.location.href);
+    if (url.pathname + url.search === here()) {
+      settle(false);
+      const id = decodeURIComponent(url.hash.slice(1));
+      holdAt(BLOCK_ID.test(id) ? document.getElementById(id) : null, 0);
+    }
+  }
+
   function setupSidebar() {
     if (!sidebar) {
       return;
@@ -405,14 +416,7 @@
       }
       const mark = event.target.closest("[data-mark-link]");
       if (mark) {
-        // A jump to a bookmark or mark does not move the reading position until the
-        // reader reads on from there (another part holds it when it opens).
-        const url = new URL(mark.href, window.location.href);
-        if (url.pathname + url.search === here()) {
-          settle(false);
-          const id = decodeURIComponent(url.hash.slice(1));
-          holdAt(BLOCK_ID.test(id) ? document.getElementById(id) : null, 0);
-        }
+        markJump(mark.href);
       }
     });
     sidebar.addEventListener("submit", async (event) => {
@@ -2391,10 +2395,28 @@
     return { panel, body };
   }
 
-  // The whole note of a quote in the Quotes tab, from the start of it shown there.
+  // The whole note of a quote in the Quotes tab, from the start of it shown there; a
+  // note on a place (`data-href`) gets a link to that place in its head.
   function openQuoteNote(button) {
     const note = button.querySelector(".mark-note-text");
-    const { body } = showNotePanel(button, "Note", null);
+    const { panel, body } = showNotePanel(button, "Note", null);
+    if (button.dataset.href) {
+      const go = document.createElement("a");
+      go.className = "note-open";
+      go.href = button.dataset.href;
+      go.textContent = "Go to the place";
+      go.addEventListener("click", () => {
+        markJump(go.href);
+        noteRef = null;
+        closeNote();
+        // On a phone the sidebar under the panel closes too, so the text is seen.
+        if (window.matchMedia("(max-width: 48rem)").matches && document.body.classList.contains("sidebar-shown")) {
+          document.body.classList.remove("sidebar-shown");
+          document.querySelector(".sidebar-toggle")?.setAttribute("aria-expanded", "false");
+        }
+      });
+      panel.querySelector(".note-close").before(go);
+    }
     const p = document.createElement("p");
     p.className = "quote-note";
     p.textContent = note ? note.textContent : "";

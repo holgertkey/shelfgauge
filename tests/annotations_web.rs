@@ -584,15 +584,29 @@ async fn notes_on_places() {
         1,
         "only the quote"
     );
+    // Only the start of the note: it opens the whole note in a panel with a link to
+    // its place (reader.js; a plain link without JS).
+    let place = format!("/book/{id}/read?at={p21}&#38;from=mark&#38;o=12");
     assert!(
         read.contains(&format!(
-            "href=\"/book/{id}/read?at={p21}&#38;from=mark&#38;o=12\" data-mark-link><span class=\"mark-text\">{first_word}"
+            "<button type=\"button\" class=\"mark-note-open\" data-href=\"{place}\""
         )),
-        "its place is the link: {read}"
+        "{read}"
     );
     assert!(
         read.contains("<span class=\"mark-note-text\">My &#60;i&#62;thought&#60;/i&#62;\nline two</span></button>"),
         "the note opens in a panel, escaped: {read}"
+    );
+    assert!(
+        read.contains(&format!(
+            "<noscript><a href=\"{place}\">Go to the place</a></noscript>"
+        )),
+        "{read}"
+    );
+    let item_html = &read[item..item + read[item..].find("</li>").unwrap()];
+    assert!(
+        !item_html.contains("mark-text") && !item_html.contains(&first_word),
+        "no line of the book in the item: {item_html}"
     );
     assert!(
         read.contains("aria-label=\"Note\" placeholder=\"Note\" required>My &#60;i&#62;"),

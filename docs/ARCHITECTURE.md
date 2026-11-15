@@ -360,7 +360,8 @@ in the core crate), `src/web/routes/annotations.rs`, `assets/reader.js`/`reader.
   `B`); a note on a place is the pencil in the top bar or `w` (the note form of a
   quote, in the bar on a touch screen; the place is taken when it opens). The reader
   sidebar has tabs Contents | Bookmarks | Quotes, the notes on places under "Notes"
-  at the end of Quotes (no Contents tab when the book has no titled sections or
+  at the end of Quotes (the start of each note; the note panel has "Go to the place")
+  (no Contents tab when the book has no titled sections or
   notes); the book card lists bookmarks, quotes and notes in three `<details>` blocks
   with plain-form edit/delete.
   Lists are server-rendered and work without JS. Writes are a separate route group

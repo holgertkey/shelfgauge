@@ -181,7 +181,8 @@
   padding-right: 3.2rem;
 }
 
-/* The notes on places, after the quotes: the note leads, its place is one line. */
+/* The notes on places, after the quotes: only the start of the note, which opens
+   the whole note with a link to its place. */
 .tab-panel .list-title {
   margin: 1rem 0 0.3rem 0.3rem;
   color: var(--muted);
@@ -196,14 +197,8 @@
   margin-top: 0.3rem;
 }
 
-.annotation-links .note-item .mark-text {
-  color: var(--muted);
-  font-size: 0.85rem;
-  -webkit-line-clamp: 1;
-  line-clamp: 1;
-}
-
 .annotation-links .note-item .mark-note-open {
+  margin: 0;
   color: var(--fg);
   font-size: inherit;
 }

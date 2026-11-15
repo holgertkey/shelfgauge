@@ -65,9 +65,10 @@ Build numbers (`+NNN`) do not get their own sections.
   a quote with a note showed only the note.
 - Notes without a quote: the pencil in the reader's top bar (or `w`) opens a field for
   a note on the place at the top of the page, the place a bookmark would go. Notes
-  are listed in the Quotes tab after the quotes, each with the line it was written at
-  (a tap goes there) and the start of the note (a tap shows the whole note); on the
-  book card they have their own block, and the Markdown export a Notes section. In
+  are listed in the Quotes tab after the quotes, each as the first two lines of the
+  note; a tap shows the whole note in the panel at the bottom, with a link to the place
+  it was written at. On the book card they have their own block, and the Markdown
+  export a Notes section. In
   the library and in the hub reader. A note on a place cannot be emptied; it is
   deleted with ×. A library still on 0.24 shows such a note as a bookmark with a
   note.

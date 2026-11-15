@@ -1090,18 +1090,14 @@ fn the_reader_app_rendering_vector_is_stable() {
         with_note.contains(r#"placeholder="Note" required>a thought</textarea>"#),
         "{with_note}"
     );
-    let label = shelfgauge::annotations::lists::label(
-        None,
-        &shelfgauge::annotations::anchor::Quote {
-            text: String::new(),
-            prefix: String::new(),
-            suffix: bookmark.suffix.clone(),
-        },
-        bookmark.section_title.as_deref(),
+    assert!(
+        with_note.contains(r#"class="mark-note-open" data-href="?part="#)
+            && with_note.contains("&#38;from=mark#b3"),
+        "the note leads to its place from the panel: {with_note}"
     );
     assert!(
-        with_note.contains(&format!(r#"<span class="mark-text">{label}</span>"#)),
-        "labelled by its place: {with_note}"
+        with_note.contains(r#"<span class="mark-note-text">a thought</span>"#),
+        "{with_note}"
     );
     let find = book.find("маяк", Some(2)).unwrap();
     assert!(find.contains(r#"<div class="find-results""#), "{find}");
