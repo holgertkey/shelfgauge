@@ -18,6 +18,9 @@
     <input type="hidden" name="part" value="{{ find.part }}">
     {%- endif %}
     <input type="search" name="find" class="find-input" value="{{ find.query }}" placeholder="Search in this book…" aria-label="Search in this book" title="Search in this book (/ or s)" maxlength="1000" autocomplete="off" spellcheck="false">
+    {#- A phone shows the field as a magnifier that opens over the top bar; ✕ closes it
+        (style.css, reader.js). #}
+    <button type="button" class="icon-button find-close" title="Close the search" aria-label="Close the search" hidden>✕</button>
   </form>
 {%- endblock %}
 {% block topbar %}

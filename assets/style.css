@@ -563,6 +563,11 @@ button:hover {
   padding-left: 2rem;
 }
 
+/* Only a phone's search in a book shows it (below). */
+.search .find-close {
+  display: none;
+}
+
 .rescan {
   margin: 0;
 }
@@ -2634,6 +2639,79 @@ button.danger,
     gap: 0.25rem;
   }
 
+  /* The search in a book: a magnifier like the buttons next to it (the field itself,
+     so a tap opens the keyboard at once), accented while a search is on; typed in, it
+     covers the whole top bar, with ✕ (reader.js) to close it. */
+  .topbar .find-form {
+    flex: 0 0 auto;
+    width: 2.25rem;
+    height: 2.25rem;
+  }
+
+  .topbar .find-form .icon {
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  .topbar .find-form .find-input {
+    height: 100%;
+    padding: 0;
+    color: transparent;
+    caret-color: transparent;
+    background: none;
+    border-color: transparent;
+    cursor: pointer;
+  }
+
+  .topbar .find-form .find-input::placeholder {
+    color: transparent;
+  }
+
+  .topbar .find-form .find-input::-webkit-search-cancel-button {
+    display: none;
+  }
+
+  .topbar .find-form:has(.find-input:not(:placeholder-shown)) .icon {
+    color: var(--accent);
+  }
+
+  .topbar .find-form:focus-within {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    gap: 0.25rem;
+    width: auto;
+    height: auto;
+    max-width: none;
+    margin: 0;
+    padding: 0 max(0.5rem, env(safe-area-inset-right)) 0 max(0.5rem, env(safe-area-inset-left));
+    background: var(--bg);
+  }
+
+  .topbar .find-form:focus-within .icon {
+    left: calc(max(0.5rem, env(safe-area-inset-left)) + 0.6rem);
+    transform: none;
+  }
+
+  .topbar .find-form:focus-within .find-input {
+    flex: 1;
+    height: 2.5rem;
+    padding-left: 2rem;
+    color: var(--fg);
+    caret-color: auto;
+    background: var(--input-bg, var(--bg));
+    border-color: var(--border);
+    cursor: text;
+  }
+
+  .topbar .find-form:focus-within .find-input::placeholder {
+    color: var(--muted);
+  }
+
+  .topbar .find-form:focus-within .find-close:not([hidden]) {
+    display: inline-flex;
+  }
+
   /* The theme is also on the settings page (and in the reader's Aa panel), and the
      t key switches it: the bar keeps its room for the search field. */
   .topbar .theme-select {
@@ -2808,6 +2886,23 @@ button.danger,
 
   .swatch {
     padding: 0.5rem;
+  }
+}
+
+/* A phone's magnifier for the search in a book (above) is a target of the same size as
+   the buttons next to it. The 44 px targets touch each other (each has its own
+   padding around the icon), and the bar's edges are narrower, so that a reader's
+   eight buttons fit a 360 px screen. `header` outranks the notch padding below. */
+@media (max-width: 48rem) and (pointer: coarse) {
+  .topbar .find-form {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+
+  header.topbar {
+    gap: 0;
+    padding-right: max(0.5rem, env(safe-area-inset-right));
+    padding-left: max(0.5rem, env(safe-area-inset-left));
   }
 }
 

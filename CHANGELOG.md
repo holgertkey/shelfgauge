@@ -75,6 +75,12 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ### Changed
 
+- The search in a book on a phone: a magnifier in the top bar like the buttons next to
+  it (blue while a search is on) instead of a field squeezed to the size of a button.
+  A tap opens the field over the whole top bar with ✕; Enter searches and closes it,
+  so the results are seen; ✕ ends the search. The phone's top bar has narrower edges
+  and no gaps between its 44 px buttons, so a reader's eight buttons fit a 360 px
+  screen. In the library and in the hub reader.
 - Selecting text for a quote on a phone: Quote and Note sit in a bar at the bottom of
   the screen, in place of the status line, instead of a button next to the selection
   that moved with every change and got in the way of the selection handles and the

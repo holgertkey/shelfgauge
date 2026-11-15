@@ -2847,10 +2847,28 @@
       return true;
     };
 
+    // A phone shows the field as a magnifier that opens over the top bar while it is
+    // typed in (style.css): Enter closes it, so the results are seen; ✕ ends the search.
+    const narrow = window.matchMedia("(max-width: 48rem)");
     findForm.addEventListener("submit", (event) => {
       event.preventDefault();
       search(findInput.value);
+      if (narrow.matches) {
+        findInput.blur();
+      }
     });
+    const close = findForm.querySelector(".find-close");
+    if (close) {
+      close.hidden = false;
+      // A press would take the focus from the field, and the closed field the button.
+      for (const type of ["pointerdown", "mousedown"]) {
+        close.addEventListener(type, (e) => e.preventDefault());
+      }
+      close.addEventListener("click", () => {
+        clearFind();
+        findInput.blur();
+      });
+    }
     findInput.addEventListener("input", () => {
       clearTimeout(timer);
       const raw = findInput.value;
@@ -2964,7 +2982,11 @@
     const focused = () => root.classList.contains("reading-focus");
     // A phone-sized screen is always in focus mode (theme.js).
     const phone = () => settings.phone.matches;
-    const panelOpen = () => Boolean(panel) && panel.matches(":popover-open");
+    // The Aa panel is open, or the search field typed in: the top bar they hang from
+    // stays.
+    const panelOpen = () =>
+      (Boolean(panel) && panel.matches(":popover-open")) ||
+      (document.activeElement instanceof Element && document.activeElement.matches(".find-input"));
 
     function sync() {
       if (focusButton) {
