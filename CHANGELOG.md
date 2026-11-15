@@ -68,10 +68,9 @@ Build numbers (`+NNN`) do not get their own sections.
   are listed in the Quotes tab after the quotes, each as the first two lines of the
   note; a tap shows the whole note in the panel at the bottom, with a link to the place
   it was written at. On the book card they have their own block, and the Markdown
-  export a Notes section. In
-  the library and in the hub reader. A note on a place cannot be emptied; it is
-  deleted with ×. A library still on 0.24 shows such a note as a bookmark with a
-  note.
+  export a Notes section. In the library and in the hub reader. A note on a place
+  cannot be emptied; it is deleted with ×. A library still on 0.24 shows such a note
+  as a bookmark with a note.
 
 ### Changed
 
@@ -130,6 +129,9 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ### Fixed
 
+- On a phone, a one-line quote in the Quotes tab is no longer followed by an empty
+  line before its note: the finger-sized height goes to the whole item, not to the
+  quote and the note each.
 - In Chrome on a phone, selecting text from the first word of a paragraph no longer
   puts the start handle far below it (under the paragraph's last hyphenated word): while
   such a selection lasts, that paragraph is shown without automatic hyphenation.

@@ -288,7 +288,12 @@ Key design points to keep in mind when implementing:
     book. At most 500 results are listed (a note gives the total), grouped by section (notes
     as "Notes"), each a snippet linking to `read?part=<n>&find=<query>&hit=<k>#<block>`.
     `GET /book/<id>/find?q=` returns the results as a fragment for the live search;
-    without scripts the form submits to the read page, which renders them. The reader
+    without scripts the form submits to the read page, which renders them. Below
+    `48rem` the field is shown as a magnifier like the top bar's buttons (the field
+    itself, so a tap opens the keyboard; accented while it holds a query, `:has`), and
+    covers the whole top bar while focused (`:focus-within`), with ✕ (`reader.js`:
+    clears the search); Enter searches and leaves the field, so the results are seen;
+    while it is focused the top bar stays in focus mode. The reader
     highlights the part's matches with the same rules (`assets/reader.js`; both sides
     are tested with `tests/fixtures/find/normalize.json`), and a page reached from a
     result does not move the reading position. Queries are not logged. Full-text
@@ -477,7 +482,10 @@ that fits the window (`body` height plus the top bar) keeps the top bar
 (`.page-fits`, re-measured on resize and by a `ResizeObserver`): it could not be
 scrolled up to bring it back. On touch screens (`pointer: coarse`) every
 control, menu entry and list of links is at least 44 by 44 CSS px; links in running text
-keep their size. Pages use `viewport-fit=cover` with `env(safe-area-inset-*)` padding.
+keep their size. An item of the Quotes tab with two targets (a quote and its note) is
+44 px tall as a whole, each target about 30 px across the list's width, so a one-line
+quote leaves no gap. On a touch phone the top bar's 44 px buttons have no gaps between
+them and the bar's edges are 0.5rem, so a reader's eight buttons fit 360 px. Pages use `viewport-fit=cover` with `env(safe-area-inset-*)` padding.
 Notes (`reader.js`, every device): a note link opens the note in a panel at the
 bottom (under the text column on a wide screen, above the status line in focus mode)
 instead of navigating; a note in another part comes from that part's page (fetched once
