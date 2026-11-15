@@ -1063,6 +1063,46 @@ fn the_reader_app_rendering_vector_is_stable() {
         "the note in its form, escaped: {lists}"
     );
     assert!(lists.contains("place not found"), "the lost one: {lists}");
+    assert!(!lists.contains("note-item"), "{lists}");
+    // A note on a place (since 0.25): after the quotes, labelled by its place, with a
+    // note form that keeps it from going blank.
+    let notes: Vec<shelfgauge_wasm::book::AnnotationRecord> =
+        serde_json::from_value(serde_json::json!([
+            { "id": "9b2c1f3a-0000-4000-8000-000000000001", "start_block": 3, "start_offset": 0,
+              "end_block": 3, "end_offset": 0, "text": "", "prefix": "",
+              "suffix": bookmark.suffix, "section_title": bookmark.section_title,
+              "note": "a thought", "place_note": true, "created_at": 4 },
+        ]))
+        .unwrap();
+    let with_note = book.lists(&notes).unwrap();
+    let bookmarks_tab = with_note.find(r#"id="tab-bookmarks""#).unwrap();
+    let quotes_tab = with_note.find(r#"id="tab-marks""#).unwrap();
+    let item = with_note.find(r#"<li class="note-item""#).unwrap();
+    assert!(
+        bookmarks_tab < quotes_tab && quotes_tab < item,
+        "{with_note}"
+    );
+    assert!(
+        with_note.contains("No bookmarks yet"),
+        "not a bookmark: {with_note}"
+    );
+    assert!(
+        with_note.contains(r#"placeholder="Note" required>a thought</textarea>"#),
+        "{with_note}"
+    );
+    let label = shelfgauge::annotations::lists::label(
+        None,
+        &shelfgauge::annotations::anchor::Quote {
+            text: String::new(),
+            prefix: String::new(),
+            suffix: bookmark.suffix.clone(),
+        },
+        bookmark.section_title.as_deref(),
+    );
+    assert!(
+        with_note.contains(&format!(r#"<span class="mark-text">{label}</span>"#)),
+        "labelled by its place: {with_note}"
+    );
     let find = book.find("маяк", Some(2)).unwrap();
     assert!(find.contains(r#"<div class="find-results""#), "{find}");
     assert!(find.contains(r#"class="current""#), "{find}");

@@ -326,8 +326,13 @@ in the core crate), `src/web/routes/annotations.rs`, `assets/reader.js`/`reader.
   and 64 from it as `suffix`, found again as `prefix + suffix` in a leaf, a bookmark at
   a block's start by its start as before). Links to bookmarks and quotes carry the
   place in the block (`o=`) and open that line.
-  No `kind` field: bookmarks (empty text) and quotes (non-empty text) are one model
-  shown as two lists.
+  An annotation with no selection and the flag `place_note` (since 0.25,
+  `userdata.sqlite` v11) is a **note on a place**: anchored like a bookmark, its note
+  required (a blank one is refused on create and edit, `422`), listed after the quotes.
+  No other `kind` field: bookmarks (empty text), quotes (non-empty text) and notes on
+  places are one model shown as three lists. A bookmark with a note (named on the book
+  card) stays a bookmark. In sync records the key `place_note: true` is written only
+  when set, so other records keep their bytes; a 0.24 library ignores it.
 - **The server owns annotations.** They live in a separate SQLite file,
   `.shelfgauge/userdata.sqlite` (own migrations), not in the index DB: the index can be
   rebuilt by rescanning, user data cannot, and the scanner's single writer stays alone.
@@ -352,14 +357,18 @@ in the core crate), `src/web/routes/annotations.rs`, `assets/reader.js`/`reader.
   added or changed later from the Quotes tab, `POST /annotation/{id}/note`, `?note=` in
   the hub reader);
   saved annotations are highlighted on the client; a bookmark is one action (button or
-  `B`). The reader sidebar has tabs Contents | Bookmarks | Quotes (no Contents
-  tab when the book has no titled sections or notes); the book card lists
-  bookmarks and marks in two `<details>` blocks with plain-form edit/delete.
+  `B`); a note on a place is the pencil in the top bar or `w` (the note form of a
+  quote, in the bar on a touch screen; the place is taken when it opens). The reader
+  sidebar has tabs Contents | Bookmarks | Quotes, the notes on places under "Notes"
+  at the end of Quotes (no Contents tab when the book has no titled sections or
+  notes); the book card lists bookmarks, quotes and notes in three `<details>` blocks
+  with plain-form edit/delete.
   Lists are server-rendered and work without JS. Writes are a separate route group
   behind the Origin check.
 - **Export**: one Markdown file per book in `.shelfgauge/annotations/`, regenerated
   atomically from the DB after every change, **one way only** (edits to the file are not
-  read back): bookmarks first, then quotes grouped by section, notes, and `?at=b<n>`
+  read back): bookmarks first, then quotes grouped by section with their notes, then
+  the notes on places (section `## Notes`), and `?at=b<n>`
   links.
   `shelfgauge annotations export` rewrites all files; generated files carry a marker
   comment and only marked files are ever removed.

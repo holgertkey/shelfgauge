@@ -4,7 +4,8 @@
 //! One entity, the [`Annotation`] (UI label "Mark"), covers bookmarks, notes and
 //! quotes: the selected `text` is immutable (it is the quote and the fingerprint that
 //! finds the place again when the book file changes), the `note` is editable and
-//! optional. An annotation without text is a *bookmark* on the start of a block.
+//! optional. An annotation without text is a *bookmark* on a place in a block, or,
+//! with [`Annotation::place_note`], a *note on that place* (listed with the quotes).
 //!
 //! Annotations belong to a book's *content key* (the identity of the content cache,
 //! see [`content_key`](crate::render::load::content_key)), so they survive rescans,
@@ -94,6 +95,9 @@ pub struct Annotation {
     pub anchor_lost: bool,
     /// The note, if any.
     pub note: Option<String>,
+    /// Whether this is a note on a place: no selected text, like a bookmark, but
+    /// listed with the quotes; its note is never blank.
+    pub place_note: bool,
     /// Creation time (Unix seconds).
     pub created_at: i64,
     /// Last change (Unix seconds).
@@ -108,9 +112,9 @@ pub struct Annotation {
 
 /// Code points of a mark's text shown as its label when it has no note.
 impl Annotation {
-    /// Whether this is a bookmark (no selected text).
+    /// Whether this is a bookmark (no selected text, not a note on a place).
     pub fn is_bookmark(&self) -> bool {
-        self.quote.text.is_empty()
+        self.quote.text.is_empty() && !self.place_note
     }
 
     /// The note, if it is not blank.
@@ -118,10 +122,11 @@ impl Annotation {
         self.note.as_deref().filter(|n| !n.trim().is_empty())
     }
 
-    /// The label in lists ([`lists::label`]).
+    /// The label in lists ([`lists::label`]); a note on a place is labelled by its
+    /// place.
     pub fn label(&self) -> String {
         lists::label(
-            self.note.as_deref(),
+            self.note.as_deref().filter(|_| !self.place_note),
             &self.quote,
             self.section_title.as_deref(),
         )
@@ -158,6 +163,7 @@ mod tests {
             book_authors: "A. Author".into(),
             anchor_lost: false,
             note: note.map(str::to_owned),
+            place_note: false,
             created_at: 0,
             updated_at: 0,
             deleted_at: None,
@@ -195,6 +201,14 @@ mod tests {
         heading.quote.suffix = "Chapter 1".into();
         assert_eq!(heading.label(), "Chapter 1");
         assert!(!sample("x", None).is_bookmark() && sample("", None).is_bookmark());
+        let mut note = sample("", Some("A thought"));
+        note.place_note = true;
+        assert!(!note.is_bookmark());
+        assert_eq!(
+            note.label(),
+            sample("", None).label(),
+            "labelled by its place"
+        );
     }
 
     #[test]

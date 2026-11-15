@@ -49,6 +49,7 @@ pub(crate) fn annotation_lists(
         note: a.note().unwrap_or("").to_owned(),
         text: a.quote.text.clone(),
         bookmark: a.is_bookmark(),
+        place_note: a.place_note,
         lost: a.anchor_lost,
         start_block: a.anchor.start_block.to_string(),
         start_offset: a.anchor.start_offset,
@@ -220,7 +221,8 @@ fn check_note(state: &AppState, note: Option<&str>) -> Result<(), AppError> {
     }
 }
 
-/// The body of `POST /book/{id}/annotations`: a selection, or a bookmark on `block`.
+/// The body of `POST /book/{id}/annotations`: a selection, or a bookmark on `block`
+/// (with `place_note`, a note on that place).
 #[derive(Debug, Deserialize)]
 pub(crate) struct CreateRequest {
     /// A bookmark on this block (instead of a selection).
@@ -233,7 +235,13 @@ pub(crate) struct CreateRequest {
     end_block: Option<String>,
     end_offset: Option<u32>,
     note: Option<String>,
+    /// With `block` and a note: a note on the place rather than a bookmark.
+    #[serde(default)]
+    place_note: bool,
 }
+
+/// Why a note on a place cannot be left without its note.
+const BLANK_PLACE_NOTE: &str = "a note cannot be empty; delete it instead";
 
 #[derive(Serialize)]
 struct Created {
@@ -258,6 +266,16 @@ pub(crate) async fn create(
             let (book, snapshot) = readable_book(index, id)?;
             let note = request.note.as_deref().filter(|n| !n.trim().is_empty());
             check_note(state, note)?;
+            if request.place_note {
+                if request.block.is_none() {
+                    return Err(AppError::BadRequest(
+                        "a note on a place needs `block`".to_owned(),
+                    ));
+                }
+                if note.is_none() {
+                    return Err(AppError::BadRequest(BLANK_PLACE_NOTE.to_owned()));
+                }
+            }
             let (content, text) = state.book_text(&book)?;
             let bad = |e: AnchorError| AppError::BadRequest(e.to_string());
             let (anchor, quote) = match &request.block {
@@ -325,6 +343,7 @@ pub(crate) async fn create(
                     anchor,
                     quote,
                     note: note.map(str::to_owned),
+                    place_note: request.place_note,
                 },
                 now(),
             )?;
@@ -418,7 +437,8 @@ fn failed(json: bool, e: AppError) -> Response {
     }
 }
 
-/// `POST /annotation/{id}/note`: replaces the note (a blank note removes it).
+/// `POST /annotation/{id}/note`: replaces the note (a blank note removes it; a note
+/// on a place cannot be blank, `422`).
 pub(crate) async fn note(
     State(state): State<AppState>,
     current: CurrentProfile,
@@ -436,6 +456,13 @@ pub(crate) async fn note(
             .user_db(move |state, index| {
                 check_note(state, note.as_deref())?;
                 let user = state.userdata().lock();
+                let blank = note.as_deref().is_none_or(|n| n.trim().is_empty());
+                if blank
+                    && store::get(&user, current.id(), &id)?
+                        .is_some_and(|a| a.place_note && a.deleted_at.is_none())
+                {
+                    return Err(AppError::BadRequest(BLANK_PLACE_NOTE.to_owned()));
+                }
                 let annotation = store::set_note(&user, current.id(), &id, note.as_deref(), now())?
                     .ok_or(AppError::NotFound)?;
                 export(state, index, &user, &annotation.book_key);

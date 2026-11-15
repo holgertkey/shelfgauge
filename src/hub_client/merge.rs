@@ -74,6 +74,9 @@ struct AnnotationIn {
     created_at: i64,
     updated_at: i64,
     deleted_at: Option<i64>,
+    /// A note on a place (since 0.25; absent: `false`).
+    #[serde(default)]
+    place_note: bool,
 }
 
 #[derive(Deserialize)]
@@ -350,9 +353,10 @@ fn annotation(
         "INSERT INTO annotations
              (id, profile_id, book_key, book_id, start_block, start_offset, end_block,
               end_offset, text, prefix, suffix, section_title, book_title, book_authors,
-              anchor_lost, note, created_at, updated_at, deleted_at, deleted_reason)
+              anchor_lost, note, created_at, updated_at, deleted_at, deleted_reason,
+              place_note)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                 ?17, ?18, ?19, ?20)
+                 ?17, ?18, ?19, ?20, ?21)
          ON CONFLICT (id) DO UPDATE SET
              book_key = excluded.book_key, start_block = excluded.start_block,
              start_offset = excluded.start_offset, end_block = excluded.end_block,
@@ -361,7 +365,8 @@ fn annotation(
              section_title = excluded.section_title, book_title = excluded.book_title,
              book_authors = excluded.book_authors, note = excluded.note,
              created_at = excluded.created_at, updated_at = excluded.updated_at,
-             deleted_at = excluded.deleted_at, deleted_reason = excluded.deleted_reason",
+             deleted_at = excluded.deleted_at, deleted_reason = excluded.deleted_reason,
+             place_note = excluded.place_note",
         params![
             a.id,
             profile.0,
@@ -383,6 +388,7 @@ fn annotation(
             a.updated_at,
             deleted_at,
             reason,
+            a.place_note,
         ],
     )?;
     drop_outbox(conn, profile, "annotation", &a.id)?;
@@ -586,6 +592,51 @@ mod tests {
             Applied::Kept,
             "the same state again changes nothing"
         );
+    }
+
+    #[test]
+    fn a_place_note_keeps_its_flag_and_bytes() {
+        let (userdata, key) = setup();
+        let conn = userdata.lock();
+        let none = |_: &[u8]| None;
+        let apply = |r: &InRecord| apply(&conn, ProfileId::OWNER, &key, r, &none, "Home").unwrap();
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&annotation_json("a1", "n")).unwrap();
+        value["place_note"] = serde_json::json!(true);
+        let plain = serde_json::to_vec(&value).unwrap();
+        let sealed = record(
+            "annotation",
+            "a1",
+            Some(seal_record(&key, "annotation", "a1", &plain).unwrap()),
+        );
+        assert_eq!(apply(&sealed), Applied::Annotation(vec![0, 1, 2]));
+        let stored: bool = conn
+            .query_row(
+                "SELECT place_note FROM annotations WHERE id = 'a1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(stored);
+        let local = records::annotation(&conn, ProfileId::OWNER, "a1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(local.plain, plain, "the record comes back byte for byte");
+        assert_eq!(apply(&sealed), Applied::Kept);
+
+        // A record without the key (a bookmark with a note, or a 0.24 client) is not
+        // one, and its bytes have no such key.
+        let bookmark = annotation_json("a2", "named");
+        let sealed = record(
+            "annotation",
+            "a2",
+            Some(seal_record(&key, "annotation", "a2", &bookmark).unwrap()),
+        );
+        assert_eq!(apply(&sealed), Applied::Annotation(vec![0, 1, 2]));
+        let local = records::annotation(&conn, ProfileId::OWNER, "a2")
+            .unwrap()
+            .unwrap();
+        assert_eq!(local.plain, bookmark);
     }
 
     #[test]

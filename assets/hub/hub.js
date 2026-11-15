@@ -1696,6 +1696,9 @@ class Sync {
   }
 }
 
+/** Why a note on a place cannot be left without its note (the instance's words). */
+const BLANK_PLACE_NOTE = "a note cannot be empty; delete it instead";
+
 /**
  * The reader's data on this device (reader.js's `window.shelfgaugeSource`): pages of
  * other parts, lists, search results and new annotations come from the WASM module
@@ -1760,6 +1763,12 @@ function deviceSource(book, item, p, sync) {
       if (note && cpLength(note) > maxNote) {
         throw new Error(`the note is too long; the limit is ${maxNote} characters`);
       }
+      // A note on a place (no quote) needs its note. The key goes into the record only
+      // when set, as the instance writes it.
+      const placeNote = body.place_note === true && Boolean(body.block);
+      if (body.place_note === true && (!placeNote || !note)) {
+        throw new Error(BLANK_PLACE_NOTE);
+      }
       const t = now();
       const id = crypto.randomUUID();
       await store.write(p, "annotation", id, Object.assign({
@@ -1773,7 +1782,7 @@ function deviceSource(book, item, p, sync) {
         created_at: t,
         updated_at: t,
         deleted_at: null,
-      }, anchor, snapshot));
+      }, placeNote ? { place_note: true } : {}, anchor, snapshot));
       sync.later(1000);
       return { id };
     },
@@ -1789,7 +1798,8 @@ function deviceSource(book, item, p, sync) {
       await store.write(p, "annotation", id, record);
       sync.later(1000);
     },
-    // Replaces the note of a quote (a list's note form, `?note=<id>`); blank removes it.
+    // Replaces the note of a quote (a list's note form, `?note=<id>`); blank removes it
+    // (a note on a place cannot be blank).
     async setNote(form, text) {
       const id = new URL(form.action, location.href).searchParams.get("note");
       const record = id && await store.get(p, "annotation", id);
@@ -1799,6 +1809,9 @@ function deviceSource(book, item, p, sync) {
       const note = typeof text === "string" && text.trim() ? text : null;
       if (note && cpLength(note) > maxNote) {
         throw new Error(`the note is too long; the limit is ${maxNote} characters`);
+      }
+      if (!note && record.place_note === true) {
+        throw new Error(BLANK_PLACE_NOTE);
       }
       record.note = note;
       record.updated_at = now();

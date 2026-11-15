@@ -249,7 +249,7 @@ impl Book {
             .or_else(|| text.text(block).map(|_| block))
     }
 
-    /// The sidebar's bookmark and quote lists (the instance's
+    /// The sidebar's bookmark, quote and note lists (the instance's
     /// `partials/annotation_lists.html`) for `annotations`, the book's live annotation
     /// records. Each delete form posts to `?delete=<id>`, each note form to
     /// `?note=<id>` (the app handles both).
@@ -302,14 +302,20 @@ impl Book {
                 } else {
                     format!("?part={}&from=mark#{}", part + 1, anchor.start_block)
                 },
-                label: label(a.note.as_deref(), &quote, a.section_title.as_deref()),
+                // A note on a place is labelled by its place; its note is shown under it.
+                label: label(
+                    a.note.as_deref().filter(|_| !a.place_note),
+                    &quote,
+                    a.section_title.as_deref(),
+                ),
                 note: a
                     .note
                     .as_deref()
                     .filter(|n| !n.trim().is_empty())
                     .unwrap_or("")
                     .to_owned(),
-                bookmark: quote.text.is_empty(),
+                bookmark: quote.text.is_empty() && !a.place_note,
+                place_note: a.place_note,
                 text: quote.text,
                 lost,
                 start_block: anchor.start_block.to_string(),
@@ -419,6 +425,10 @@ pub struct AnnotationRecord {
     pub section_title: Option<String>,
     /// The note.
     pub note: Option<String>,
+    /// Whether this is a note on a place (no quoted text); records made before 0.25
+    /// have no such key.
+    #[serde(default)]
+    pub place_note: bool,
     /// When it was made (Unix seconds).
     pub created_at: i64,
 }

@@ -176,8 +176,36 @@
 }
 
 /* A quote's note is added or changed in place: the pencil next to the ×. */
-.annotation-links .mark-item {
+.annotation-links .mark-item,
+.annotation-links .note-item {
   padding-right: 3.2rem;
+}
+
+/* The notes on places, after the quotes: the note leads, its place is one line. */
+.tab-panel .list-title {
+  margin: 1rem 0 0.3rem 0.3rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* No quotes above: at the top of the tab. */
+.tabbed .panel-title + .list-title {
+  margin-top: 0.3rem;
+}
+
+.annotation-links .note-item .mark-text {
+  color: var(--muted);
+  font-size: 0.85rem;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+}
+
+.annotation-links .note-item .mark-note-open {
+  color: var(--fg);
+  font-size: inherit;
 }
 
 .annotation-links .note-edit > summary {
@@ -506,7 +534,8 @@ mark.sg-pending {
   bottom: calc(var(--mark-bar-height, 0px) + 0.75rem);
 }
 
-.bookmark-button {
+.bookmark-button,
+.note-button {
   cursor: pointer;
 }
 

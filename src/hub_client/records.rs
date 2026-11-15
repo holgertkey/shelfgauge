@@ -8,8 +8,10 @@
 //!   `end_offset` (blocks as ordinals, offsets in code points of rendered text),
 //!   `text`, `prefix`, `suffix`, `section_title`, `note`, `book_title`,
 //!   `book_authors`, `created_at`, `updated_at`, `deleted_at` (a deletion by the
-//!   person; `null` otherwise). Local state (the book id hint, `anchor_lost`) stays
-//!   local.
+//!   person; `null` otherwise), and since 0.25 `place_note: true` for a note on a
+//!   place (absent otherwise, so other records keep their bytes; a 0.24 library
+//!   ignores the key and lists the note as a bookmark with a note). Local state (the
+//!   book id hint, `anchor_lost`) stays local.
 //! - `position`: `content_key`, `block`, `offset`, `suffix`, `progress` (per mille),
 //!   `book_title`, `book_authors`, `updated_at`, `finished_at` (when the book was
 //!   marked finished, `null` if it is not; since 0.23: a record without the key counts
@@ -118,13 +120,13 @@ pub fn annotation(
         .query_row(
             "SELECT book_key, start_block, start_offset, end_block, end_offset, text, prefix,
                     suffix, section_title, note, book_title, book_authors, created_at,
-                    updated_at, deleted_at
+                    updated_at, deleted_at, place_note
                FROM annotations
               WHERE profile_id = ?1 AND id = ?2 AND deleted_reason IS NOT 'book_removed'",
             params![profile.0, id],
             |row| {
                 let key: Vec<u8> = row.get(0)?;
-                let value = json!({
+                let mut value = json!({
                     "id": id,
                     "content_key": b64(&key),
                     "start_block": row.get::<_, i64>(1)?,
@@ -142,6 +144,9 @@ pub fn annotation(
                     "updated_at": row.get::<_, i64>(13)?,
                     "deleted_at": row.get::<_, Option<i64>>(14)?,
                 });
+                if row.get::<_, bool>(15)? {
+                    value["place_note"] = json!(true);
+                }
                 Ok(AnnotationRecord {
                     plain: bytes(&value),
                     content_key: key,

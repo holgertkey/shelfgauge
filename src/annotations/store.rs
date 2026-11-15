@@ -28,7 +28,7 @@ use crate::storage::{StorageError, migrations, open_wal};
 
 /// Schema migrations of the user-data database; index `i` upgrades version `i` to
 /// `i + 1`. Append only: user data cannot be rebuilt.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11];
 
 /// Version 1: annotations and reading positions.
 ///
@@ -493,6 +493,14 @@ const V10: &str = r#"
 ALTER TABLE hub_catalog_covers ADD COLUMN size INTEGER;
 "#;
 
+/// Version 11: `annotations.place_note`, a note on a place without selected text
+/// (listed with the quotes, unlike a bookmark with a note). The hub outbox triggers
+/// need no change: an update of the row already queues the annotation.
+const V11: &str = r#"
+ALTER TABLE annotations ADD COLUMN place_note INTEGER NOT NULL DEFAULT 0
+    CHECK (place_note IN (0, 1));
+"#;
+
 /// The schema version this build creates and understands.
 pub const SCHEMA_VERSION: u32 = MIGRATIONS.len() as u32;
 
@@ -552,11 +560,13 @@ pub struct NewAnnotation {
     pub section_title: Option<String>,
     /// The note.
     pub note: Option<String>,
+    /// Whether this is a note on a place (no selected text).
+    pub place_note: bool,
 }
 
 const COLUMNS: &str = "id, book_key, book_id, start_block, start_offset, end_block, \
     end_offset, text, prefix, suffix, section_title, book_title, book_authors, anchor_lost, \
-    note, created_at, updated_at, deleted_at, deleted_reason, profile_id";
+    note, created_at, updated_at, deleted_at, deleted_reason, profile_id, place_note";
 
 fn block(n: i64) -> BlockId {
     BlockId::new(u32::try_from(n).unwrap_or(0)).unwrap_or(BlockId::UNASSIGNED)
@@ -591,6 +601,7 @@ fn annotation_row(row: &Row<'_>) -> rusqlite::Result<Annotation> {
             .as_deref()
             .and_then(DeletedReason::parse),
         profile: row.get(19)?,
+        place_note: row.get(20)?,
     })
 }
 
@@ -611,7 +622,7 @@ pub fn insert(
         &format!(
             "INSERT INTO annotations ({COLUMNS}) VALUES
              (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0, ?14, ?15, ?15,
-              NULL, NULL, ?16)"
+              NULL, NULL, ?16, ?17)"
         ),
         params![
             id,
@@ -630,6 +641,7 @@ pub fn insert(
             stored_note(new.note.as_deref()),
             now,
             profile,
+            new.place_note,
         ],
     )?;
     Ok(get(conn, profile, &id)?.expect("the row was just inserted"))
@@ -717,28 +729,32 @@ pub fn for_key(conn: &Connection, key: &[u8]) -> Result<Vec<Annotation>, Storage
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
-/// The number of live bookmarks and marks of `profile` in a book.
+/// The number of live bookmarks and marks (quotes and notes on places) of `profile`
+/// in a book.
 pub fn counts(
     conn: &Connection,
     profile: ProfileId,
     key: &[u8],
 ) -> Result<(u64, u64), StorageError> {
     Ok(conn.query_row(
-        "SELECT count(*) FILTER (WHERE text = ''), count(*) FILTER (WHERE text != '')
+        "SELECT count(*) FILTER (WHERE text = '' AND NOT place_note),
+                count(*) FILTER (WHERE text != '' OR place_note)
          FROM annotations WHERE profile_id = ?1 AND book_key = ?2 AND deleted_at IS NULL",
         params![profile, key],
         |row| Ok((row.get::<_, i64>(0)? as u64, row.get::<_, i64>(1)? as u64)),
     )?)
 }
 
-/// The number of live bookmarks and marks of `profile` in every book that has any:
+/// The number of live bookmarks and marks (quotes and notes on places) of `profile`
+/// in every book that has any:
 /// `(book key, bookmarks, marks)`.
 pub fn counts_by_book(
     conn: &Connection,
     profile: ProfileId,
 ) -> Result<Vec<(Vec<u8>, u64, u64)>, StorageError> {
     let mut stmt = conn.prepare(
-        "SELECT book_key, count(*) FILTER (WHERE text = ''), count(*) FILTER (WHERE text != '')
+        "SELECT book_key, count(*) FILTER (WHERE text = '' AND NOT place_note),
+                count(*) FILTER (WHERE text != '' OR place_note)
          FROM annotations WHERE profile_id = ?1 AND deleted_at IS NULL GROUP BY book_key",
     )?;
     let rows = stmt.query_map([profile], |row| {
@@ -1182,6 +1198,7 @@ mod tests {
             },
             section_title: Some("Chapter".into()),
             note: None,
+            place_note: false,
         }
     }
 
@@ -1430,6 +1447,45 @@ mod tests {
         end.progress = 1000;
         save_position(&conn, P, &end).unwrap();
         assert_eq!(listed(&conn), 2);
+    }
+
+    #[test]
+    fn place_notes_count_with_the_marks() {
+        let data = UserData::open_in_memory().unwrap();
+        let conn = data.lock();
+        insert(&conn, P, &new(b"k", 1, ""), 1).unwrap();
+        insert(&conn, P, &new(b"k", 2, "quote"), 2).unwrap();
+        let mut place = new(b"k", 3, "");
+        place.place_note = true;
+        place.note = Some("A thought".into());
+        let note = insert(&conn, P, &place, 3).unwrap();
+        assert!(note.place_note && !note.is_bookmark());
+        assert_eq!(note.note.as_deref(), Some("A thought"));
+        assert_eq!(get(&conn, P, &note.id).unwrap().unwrap(), note);
+        assert_eq!(counts(&conn, P, b"k").unwrap(), (1, 2));
+        assert_eq!(counts_by_book(&conn, P).unwrap(), [(b"k".to_vec(), 1, 2)]);
+        let latest = latest_marks(&conn, P, 10).unwrap();
+        assert_eq!(latest.len(), 1, "the latest quotes have text");
+    }
+
+    #[test]
+    fn version_10_annotations_are_not_place_notes() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::storage::configure(&conn).unwrap();
+        migrations::apply(&mut conn, &MIGRATIONS[..10]).unwrap();
+        conn.execute_batch(
+            "INSERT INTO annotations (id, profile_id, book_key, book_id, start_block,
+                 start_offset, end_block, end_offset, text, prefix, suffix, book_title,
+                 book_authors, note, created_at, updated_at)
+             VALUES ('a', 1, x'01', 1, 3, 0, 3, 0, '', '', 's', 'T', 'A', 'named', 1, 1);",
+        )
+        .unwrap();
+        migrations::apply(&mut conn, MIGRATIONS).unwrap();
+        let old = get(&conn, P, "a").unwrap().unwrap();
+        assert!(
+            !old.place_note && old.is_bookmark(),
+            "a named bookmark stays one"
+        );
     }
 
     #[test]

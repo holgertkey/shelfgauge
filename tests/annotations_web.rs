@@ -512,6 +512,180 @@ async fn marks_bookmarks_notes_and_export() {
 }
 
 #[tokio::test]
+async fn notes_on_places() {
+    let lib = TestLibrary::new();
+    lib.write("book.fb2", &book("The Book", "Writer", 3, false, &[]));
+    lib.scan();
+    let id = lib.id_of("book.fb2");
+    let server = lib.server(|_| {});
+    let p12 = server.block_of(id, &para(1, 2)).await;
+    let p21 = server.block_of(id, &para(2, 1)).await;
+    let create = |body: serde_json::Value| {
+        let server = &server;
+        async move { server.json(&format!("/book/{id}/annotations"), body).await }
+    };
+
+    // A note on a place needs a block and a note.
+    for body in [
+        serde_json::json!({ "block": p21, "place_note": true }),
+        serde_json::json!({ "block": p21, "place_note": true, "note": "  \n " }),
+        serde_json::json!({
+            "start_block": p12, "start_offset": 0, "end_block": p12, "end_offset": 4,
+            "note": "x", "place_note": true,
+        }),
+    ] {
+        let reply = create(body.clone()).await;
+        assert_eq!(
+            reply.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{body}: {}",
+            reply.body
+        );
+    }
+    assert!(lib.export_files().is_empty(), "nothing was stored");
+
+    let reply = create(serde_json::json!({
+        "block": p21, "offset": 12, "place_note": true, "note": "My <i>thought</i>\nline two",
+    }))
+    .await;
+    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+    assert_eq!(reply.json()["bookmark"], false, "{}", reply.body);
+    let note = reply.json()["id"].as_str().unwrap().to_owned();
+    let from_offset: String = para(2, 1).chars().skip(12).collect();
+    let first_word = from_offset.split_whitespace().next().unwrap().to_owned();
+    assert!(
+        reply.json()["label"]
+            .as_str()
+            .unwrap()
+            .starts_with(&first_word),
+        "labelled by its place: {}",
+        reply.body
+    );
+    let quote = server.mark(id, &p12, 15, 11, "").await;
+    let bookmark = server.bookmark(id, &p12).await;
+
+    // The reader: in the Quotes tab, after the quotes, under "Notes"; never in the
+    // Bookmarks tab and never highlighted in the text (no `mark-item`).
+    let read = server.ok(&format!("/book/{id}/read")).await;
+    let (bookmarks_tab, quotes_tab) = (
+        read.find("id=\"tab-bookmarks\"").unwrap(),
+        read.find("id=\"tab-marks\"").unwrap(),
+    );
+    let item = read
+        .find(&format!("<li class=\"note-item\" data-id=\"{note}\""))
+        .unwrap();
+    assert!(bookmarks_tab < quotes_tab && quotes_tab < item, "{read}");
+    assert!(
+        read.find(&format!("data-id=\"{quote}\"")).unwrap()
+            < read.find("<h3 class=\"list-title\">Notes</h3>").unwrap()
+    );
+    assert_eq!(
+        read.matches("class=\"mark-item\"").count(),
+        1,
+        "only the quote"
+    );
+    assert!(
+        read.contains(&format!(
+            "href=\"/book/{id}/read?at={p21}&#38;from=mark&#38;o=12\" data-mark-link><span class=\"mark-text\">{first_word}"
+        )),
+        "its place is the link: {read}"
+    );
+    assert!(
+        read.contains("<span class=\"mark-note-text\">My &#60;i&#62;thought&#60;/i&#62;\nline two</span></button>"),
+        "the note opens in a panel, escaped: {read}"
+    );
+    assert!(
+        read.contains("aria-label=\"Note\" placeholder=\"Note\" required>My &#60;i&#62;"),
+        "{read}"
+    );
+    assert!(
+        read.contains("class=\"icon-button note-button\""),
+        "the pencil in the top bar"
+    );
+    assert!(!read.contains("No quotes yet"));
+    let fragment = server.ok(&format!("/book/{id}/annotations")).await;
+    assert!(fragment.contains("class=\"note-item\""), "{fragment}");
+
+    // The book card: its own block.
+    let card = server.ok(&format!("/book/{id}")).await;
+    assert!(
+        card.contains("Bookmarks (1)") && card.contains("Quotes (1)") && card.contains("Notes (1)"),
+        "{card}"
+    );
+    assert!(
+        card.contains("<p class=\"note\">My &#60;i&#62;thought"),
+        "{card}"
+    );
+
+    // The export: a section of its own, last.
+    let md = lib.export_text();
+    let notes = md.find("## Notes").unwrap();
+    assert!(md.find("## Quotes").unwrap() < notes, "{md}");
+    assert!(
+        md[notes..].starts_with("## Notes\n\nMy <i>thought</i>\nline two\n\n["),
+        "{md}"
+    );
+    assert!(
+        md[notes..].contains(&format!("?at={p21}&from=mark&o=12)")),
+        "{md}"
+    );
+
+    // A note on a place keeps its note: a blank one is refused (JSON and form); a
+    // bookmark's or quote's note can still be removed.
+    let reply = server
+        .json(
+            &format!("/annotation/{note}/note"),
+            serde_json::json!({ "note": " " }),
+        )
+        .await;
+    assert_eq!(
+        reply.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        reply.body
+    );
+    assert!(
+        reply.json()["error"]
+            .as_str()
+            .unwrap()
+            .contains("delete it instead")
+    );
+    let reply = server
+        .form(&format!("/annotation/{note}/note"), &[("note", "")])
+        .await;
+    assert_eq!(reply.status, StatusCode::BAD_REQUEST, "the error page");
+    let reply = server
+        .json(
+            &format!("/annotation/{note}/note"),
+            serde_json::json!({ "note": "Second thought" }),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    assert!(lib.export_text().contains("Second thought"));
+    for id in [&bookmark, &quote] {
+        let reply = server
+            .json(
+                &format!("/annotation/{id}/note"),
+                serde_json::json!({ "note": "" }),
+            )
+            .await;
+        assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    }
+
+    // Deleted like any other annotation.
+    let reply = server
+        .json(&format!("/annotation/{note}/delete"), serde_json::json!({}))
+        .await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    let card = server.ok(&format!("/book/{id}")).await;
+    assert!(
+        card.contains("Notes (0)") && card.contains("No notes yet"),
+        "{card}"
+    );
+    assert!(!lib.export_text().contains("## Notes"));
+}
+
+#[tokio::test]
 async fn invalid_requests_are_rejected() {
     let lib = TestLibrary::new();
     lib.write("book.fb2", &book("The Book", "Writer", 3, false, &[]));
@@ -1494,6 +1668,7 @@ async fn reattach_and_cleanup_cover_every_profile() {
                 quote: mark.quote.clone(),
                 section_title: mark.section_title.clone(),
                 note: Some("Anna's".into()),
+                place_note: false,
             },
             1,
         )

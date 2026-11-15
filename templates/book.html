@@ -149,6 +149,18 @@
     </ol>
     {%- endif %}
   </details>
+  <details>
+    <summary>Notes ({{ lists.notes.len() }})</summary>
+    {%- if lists.notes.is_empty() %}
+    <p class="hint">No notes yet. While reading, press <kbd>W</kbd> or the pencil in the top bar to write a note on the place at the top of the page.</p>
+    {%- else %}
+    <ol class="annotation-list">
+      {%- for item in lists.notes %}
+      <li>{% include "partials/annotation_item.html" %}</li>
+      {%- endfor %}
+    </ol>
+    {%- endif %}
+  </details>
 </section>
 {%- endif %}
 {% endblock %}

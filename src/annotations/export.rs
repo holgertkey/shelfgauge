@@ -291,9 +291,10 @@ fn sanitize(name: &str) -> String {
     name
 }
 
-/// The Markdown of a book's annotations: title and authors, the bookmarks, then the
-/// marks grouped by section, each a quote with its note and a link to the reader.
-/// Quotes and notes are plain text paragraphs, not Markdown block quotes.
+/// The Markdown of a book's annotations: title and authors, the bookmarks, the marks
+/// grouped by section, each a quote with its note and a link to the reader, then the
+/// notes on places, each with a link to its place. Quotes and notes are plain text
+/// paragraphs, not Markdown block quotes.
 pub fn render(book: &ExportBook, annotations: &[Annotation], base_url: &str) -> String {
     let link = |block: BlockId, offset: u32| {
         let o = if offset > 0 {
@@ -321,7 +322,11 @@ pub fn render(book: &ExportBook, annotations: &[Annotation], base_url: &str) -> 
         );
     }
     let bookmarks: Vec<&Annotation> = annotations.iter().filter(|a| a.is_bookmark()).collect();
-    let marks: Vec<&Annotation> = annotations.iter().filter(|a| !a.is_bookmark()).collect();
+    let marks: Vec<&Annotation> = annotations
+        .iter()
+        .filter(|a| !a.is_bookmark() && !a.place_note)
+        .collect();
+    let notes: Vec<&Annotation> = annotations.iter().filter(|a| a.place_note).collect();
     if !bookmarks.is_empty() {
         let _ = writeln!(out, "## Bookmarks\n");
         for bookmark in bookmarks {
@@ -358,6 +363,23 @@ pub fn render(book: &ExportBook, annotations: &[Annotation], base_url: &str) -> 
                 out,
                 "[{place}]({})\n",
                 link(mark.anchor.start_block, mark.anchor.start_offset)
+            );
+        }
+    }
+    if !notes.is_empty() {
+        let _ = writeln!(out, "## Notes\n");
+        for note in notes {
+            let _ = writeln!(out, "{}\n", plain(note.note().unwrap_or("").trim()));
+            let place = if note.anchor_lost {
+                "place not found".to_owned()
+            } else {
+                inline(&note.label())
+            };
+            let _ = writeln!(
+                out,
+                "[{}]({})\n",
+                place.replace(']', "\\]"),
+                link(note.anchor.start_block, note.anchor.start_offset)
             );
         }
     }
@@ -442,6 +464,32 @@ mod tests {
             "no block quotes: {md}"
         );
         assert!(!md.contains("## Bookmarks"), "{md}");
+    }
+
+    #[test]
+    fn notes_on_places_come_last_with_their_place() {
+        let mut note = sample("", Some("A thought\non two lines"));
+        note.place_note = true;
+        let named = sample("", Some("Named bookmark"));
+        let quote = sample("Quoted", None);
+        let md = render(&book("B"), &[note, named, quote], "http://h");
+        let (bookmarks, quotes, notes) = (
+            md.find("## Bookmarks").unwrap(),
+            md.find("## Quotes").unwrap(),
+            md.find("## Notes").unwrap(),
+        );
+        assert!(bookmarks < quotes && quotes < notes, "{md}");
+        assert!(
+            md.contains("- [Named bookmark]("),
+            "a bookmark with a note: {md}"
+        );
+        assert!(
+            md.ends_with(
+                "## Notes\n\nA thought\non two lines\n\n[It was a dark and stormy night; the \
+                 rain fell in torrents, except…](http://h/book/12/read?at=b3&from=mark)\n"
+            ),
+            "{md}"
+        );
     }
 
     #[test]

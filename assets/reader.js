@@ -854,46 +854,32 @@
     return true;
   }
 
-  function showNoteForm() {
-    if (!popup || !held) {
-      return;
-    }
-    const range = held.range;
-    const length = cpLength(range.toString());
-    if (length > maxText) {
-      return;
-    }
+  // The note form in the popup (or bar), with `message` above the note; `save(note,
+  // info)` is called with a note of an allowed length. Returns the note's field.
+  function fillNoteForm(message, save) {
     formOpen = true;
-    showPending(range);
     popup.textContent = "";
     popup.classList.add("form");
     const form = document.createElement("form");
     const info = document.createElement("p");
     info.className = "muted";
-    info.textContent = `${lengthNote(length)} selected.`;
+    info.textContent = message;
     const note = document.createElement("textarea");
     note.rows = 3;
     note.placeholder = "Note";
     note.setAttribute("aria-label", "Note");
     const actions = document.createElement("div");
     actions.className = "actions";
-    const save = document.createElement("button");
-    save.type = "submit";
-    save.textContent = "Save";
+    const saveButton = document.createElement("button");
+    saveButton.type = "submit";
+    saveButton.textContent = "Save";
     const cancel = document.createElement("button");
     cancel.type = "button";
     cancel.textContent = "Cancel";
     cancel.addEventListener("click", cancelForm);
-    actions.append(save, cancel);
+    actions.append(saveButton, cancel);
     form.append(info, note, actions);
     popup.append(form);
-    if (popup.classList.contains("mark-bar")) {
-      placeBar();
-    } else {
-      // The form is taller than the buttons: place it again.
-      place(popup, range.getBoundingClientRect());
-    }
-    note.focus({ preventScroll: true });
     form.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         cancelForm();
@@ -907,8 +893,83 @@
         info.textContent = `The note is too long; the limit is ${maxNote} characters.`;
         return;
       }
-      saveQuote(note.value, info);
+      save(note.value, info);
     });
+    return note;
+  }
+
+  function showNoteForm() {
+    if (!popup || !held) {
+      return;
+    }
+    const range = held.range;
+    const length = cpLength(range.toString());
+    if (length > maxText) {
+      return;
+    }
+    showPending(range);
+    const note = fillNoteForm(`${lengthNote(length)} selected.`, (value, info) => saveQuote(value, info));
+    if (popup.classList.contains("mark-bar")) {
+      placeBar();
+    } else {
+      // The form is taller than the buttons: place it again.
+      place(popup, range.getBoundingClientRect());
+    }
+    note.focus({ preventScroll: true });
+  }
+
+  // A note without a quote, on the place a bookmark would go (the first whole line at
+  // the top of the screen): the same form, in the bar on a touch screen, below that
+  // line on a desktop. The place is taken when the form opens, since a phone's
+  // keyboard moves the page; saving it also saves the reading position there.
+  function showPlaceNoteForm() {
+    if (!createUrl) {
+      return;
+    }
+    const at = placeNow();
+    if (!at) {
+      toast("There is no place for a note here.");
+      return;
+    }
+    held = null;
+    clearSelection();
+    hidePopup();
+    const bar = coarse.matches;
+    popup = document.createElement("div");
+    popup.className = bar ? "mark-popup mark-bar" : "mark-popup";
+    document.body.append(popup);
+    const note = fillNoteForm("A note on the place at the top of the page.", async (value, info) => {
+      if (!value.trim()) {
+        info.textContent = "Write the note first.";
+        return;
+      }
+      const buttons = Array.from(popup.querySelectorAll("button"));
+      for (const button of buttons) {
+        button.disabled = true;
+      }
+      try {
+        await source.create({ block: at.block.id, offset: at.offset, note: value, place_note: true });
+      } catch (e) {
+        for (const button of buttons) {
+          button.disabled = false;
+        }
+        info.textContent = `Could not save: ${e.message}`;
+        return;
+      }
+      hidePopup();
+      readHere();
+      await refreshLists();
+      toast("Note saved.");
+    });
+    if (bar) {
+      document.documentElement.classList.add("marking");
+      placeBar();
+    } else {
+      const top = lineTop(at.block, at.offset);
+      const left = at.block.getBoundingClientRect().left;
+      place(popup, { top, bottom: top + (parseFloat(getComputedStyle(at.block).lineHeight) || 24), left });
+    }
+    note.focus({ preventScroll: true });
   }
 
   // Back to the selection and its buttons (the form's focus cleared the selection).
@@ -1070,8 +1131,15 @@
       button.hidden = false;
       button.addEventListener("click", addBookmark);
     }
+    const noteButton = document.querySelector(".note-button");
+    if (noteButton && createUrl) {
+      noteButton.hidden = false;
+      // A press would end a selection or move the focus: the form takes it.
+      noteButton.addEventListener("mousedown", (e) => e.preventDefault());
+      noteButton.addEventListener("click", showPlaceNoteForm);
+    }
     document.addEventListener("keydown", (event) => {
-      if (event.ctrlKey || event.metaKey || event.altKey || event.key !== "b") {
+      if (event.ctrlKey || event.metaKey || event.altKey || (event.key !== "b" && event.key !== "w")) {
         return;
       }
       const target = event.target;
@@ -1082,7 +1150,11 @@
         (target instanceof HTMLElement && target.isContentEditable);
       if (!typing) {
         event.preventDefault();
-        addBookmark();
+        if (event.key === "b") {
+          addBookmark();
+        } else {
+          showPlaceNoteForm();
+        }
       }
     });
   }

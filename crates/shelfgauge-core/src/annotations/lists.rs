@@ -1,4 +1,4 @@
-//! The bookmark and quote lists of the reader's sidebar: their items and labels.
+//! The bookmark, quote and note lists of the reader's sidebar: their items and labels.
 //!
 //! The instance builds them from its stored annotations, the hub's reader app from
 //! sync records; both render them with the same template
@@ -23,8 +23,10 @@ pub struct ListItem {
     pub note: String,
     /// The quoted text; empty for a bookmark.
     pub text: String,
-    /// Whether this is a bookmark (no quoted text).
+    /// Whether this is a bookmark (no quoted text, not a note).
     pub bookmark: bool,
+    /// Whether this is a note on a place (no quoted text): listed after the quotes.
+    pub place_note: bool,
     /// Whether its place was not found in the book (the book has changed).
     pub lost: bool,
     /// The anchor: start block id, e.g. `b12`.
@@ -48,32 +50,48 @@ pub struct ListItem {
     pub progress: Option<u64>,
 }
 
-/// A book's bookmarks and marks, in book order.
+/// A book's bookmarks, quotes and notes on places, in book order.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Lists {
     /// The bookmarks.
     pub bookmarks: Vec<ListItem>,
     /// The quotes (marks).
     pub marks: Vec<ListItem>,
+    /// The notes on places (shown after the quotes).
+    pub notes: Vec<ListItem>,
     /// Where the forms return to.
     pub back: String,
 }
 
 impl Lists {
-    /// Sorts `items` into bookmarks and quotes, keeping their order.
+    /// Sorts `items` into bookmarks, quotes and notes, keeping their order.
     pub fn new(items: impl IntoIterator<Item = ListItem>, back: String) -> Self {
-        let (bookmarks, marks) = items.into_iter().partition(|item| item.bookmark);
-        Self {
-            bookmarks,
-            marks,
+        let mut lists = Self {
             back,
+            ..Self::default()
+        };
+        for item in items {
+            if item.place_note {
+                lists.notes.push(item);
+            } else if item.bookmark {
+                lists.bookmarks.push(item);
+            } else {
+                lists.marks.push(item);
+            }
         }
+        lists
+    }
+
+    /// Whether there are neither quotes nor notes (the Quotes tab is empty).
+    pub fn no_quotes_or_notes(&self) -> bool {
+        self.marks.is_empty() && self.notes.is_empty()
     }
 }
 
 /// The label of an annotation in lists: the note's first line, else the start of the
 /// quoted text; for a bookmark without a note, the text from its place (the line it
-/// points to), else the section's title.
+/// points to), else the section's title. A note on a place is labelled by its place
+/// (`label(None, ..)`): its note is shown under it.
 ///
 /// # Examples
 ///
@@ -122,5 +140,55 @@ fn words(suffix: &str) -> String {
     match suffix.trim_end().rsplit_once(char::is_whitespace) {
         Some((head, _)) if !head.trim().is_empty() => format!("{}…", head.trim_end()),
         _ => format!("{suffix}…"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(id: &str, bookmark: bool, place_note: bool) -> ListItem {
+        ListItem {
+            id: id.into(),
+            href: String::new(),
+            label: String::new(),
+            note: String::new(),
+            text: String::new(),
+            bookmark,
+            place_note,
+            lost: false,
+            start_block: "b1".into(),
+            start_offset: 0,
+            end_block: "b1".into(),
+            end_offset: 0,
+            prefix: String::new(),
+            suffix: String::new(),
+            note_action: String::new(),
+            delete_action: String::new(),
+            progress: None,
+        }
+    }
+
+    #[test]
+    fn items_go_to_three_lists_in_order() {
+        let lists = Lists::new(
+            [
+                item("n1", false, true),
+                item("b1", true, false),
+                item("q1", false, false),
+                item("n2", false, true),
+                item("q2", false, false),
+            ],
+            "/back".into(),
+        );
+        let ids = |list: &[ListItem]| list.iter().map(|i| i.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&lists.bookmarks), ["b1"]);
+        assert_eq!(ids(&lists.marks), ["q1", "q2"]);
+        assert_eq!(ids(&lists.notes), ["n1", "n2"]);
+        assert_eq!(lists.back, "/back");
+        assert!(!lists.no_quotes_or_notes());
+        let only_notes = Lists::new([item("n", false, true)], String::new());
+        assert!(only_notes.marks.is_empty() && !only_notes.no_quotes_or_notes());
+        assert!(Lists::new([item("b", true, false)], String::new()).no_quotes_or_notes());
     }
 }
