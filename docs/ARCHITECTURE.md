@@ -507,7 +507,12 @@ range is cached on every change (a tap on the bar may collapse the selection fir
 While a selection exists (`selecting()`) the reader holds still: no top bar on a
 scroll, no cut cover, no page turns, and a tap on the text is cancelled (a collapse
 right after it is undone), so only ✕ clears it. While the note form is open the text
-shows as the `sg-pending` highlight. On a desktop the same buttons sit in a popup
+shows as the `sg-pending` highlight. Chrome on a touch screen draws the start handle
+of a selection from a paragraph's first character under the paragraph's last
+automatic hyphen (`hyphens: auto`; the selection itself is right): while such a
+selection lasts, that paragraph gets `hyphens: manual` (laid out again once, its first
+word in place), and its hyphens come back when the selection ends, not when the start
+moves on (Chromium is told by `navigator.userAgentData`). On a desktop the same buttons sit in a popup
 below the selection, shown on `mouseup`. Browser checks:
 `.debug/TESTS/mobile_smoke.mjs` (390×844, touch, through an `allowed_hosts` name) and
 `.debug/TESTS/selection_smoke.mjs`.

@@ -3,6 +3,10 @@
     book. #}
 {% block head %}
 <link rel="stylesheet" href="{{ base }}/assets/reader.css">
+{%- if client_log %}
+<meta name="sg-log" content="{{ base }}/debug/log">
+<script src="{{ base }}/assets/debuglog.js"></script>
+{%- endif %}
 {%- endblock %}
 {% block toggle %}
   <button type="button" class="icon-button sidebar-toggle" aria-controls="sidebar" aria-expanded="true" title="Toggle sidebar">

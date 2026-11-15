@@ -109,6 +109,9 @@ struct ReadPage {
     lists: Lists,
     /// No search yet (the app shows results).
     find: FindPanel,
+    /// Debug builds: the page sends the app's log lines to the hub
+    /// (`assets/hub/debuglog.js`, `POST /debug/log`).
+    client_log: bool,
 }
 
 /// The Search panel of the reading view, empty.
@@ -413,6 +416,7 @@ fn read_page(base: String) -> ReadPage {
         max_note: limits.max_note_length,
         lists: Lists::default(),
         find: FindPanel { results: None },
+        client_log: super::client_log::ENABLED,
     }
 }
 

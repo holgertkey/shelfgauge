@@ -115,6 +115,9 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ### Fixed
 
+- In Chrome on a phone, selecting text from the first word of a paragraph no longer
+  puts the start handle far below it (under the paragraph's last hyphenated word): while
+  such a selection lasts, that paragraph is shown without automatic hyphenation.
 - A long press soon after a tap on a phone no longer loses its selection.
 - The cover over the line cut by the bottom edge in focus mode sometimes did not
   appear, and a line faded by the fade above the status line stayed uncovered though

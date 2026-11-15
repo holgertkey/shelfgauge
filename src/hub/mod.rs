@@ -25,6 +25,7 @@ pub mod config;
 
 mod api;
 mod blobs;
+mod client_log;
 mod held;
 mod limits;
 mod shell;
@@ -884,7 +885,9 @@ async fn not_found() -> HubError {
 /// Builds the hub app: the API, the reader shell and its assets, behind the request
 /// trace, the hardening headers and the `Host` check.
 pub fn router(state: HubState) -> Router {
-    let app = api::routes(&state).merge(shell::routes(&state));
+    let app = api::routes(&state)
+        .merge(shell::routes(&state))
+        .merge(client_log::routes(&state));
     let trace = trace::TraceSettings {
         assets: state.path("/assets/{*path}").into(),
         slow: state.0.slow_request,

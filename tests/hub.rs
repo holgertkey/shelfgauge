@@ -19,6 +19,8 @@ use shelfgauge::hub::{Hub, HubError, HubState};
 use shelfgauge::publication::format::PublicationId;
 use tower::ServiceExt;
 
+mod common;
+
 const HOST: &str = "localhost:8743";
 
 /// The start of the test clock (Unix seconds).
@@ -3336,4 +3338,53 @@ async fn shutting_down_answers_the_held_calls() {
     // Nothing is held any more.
     let (_, took) = timed(hub.get("/api/sync?since=0&wait=10", Some(&olga.token))).await;
     assert!(took < AT_ONCE, "{took:?}");
+}
+
+/// A debug build (the tests are one) takes the reading view's log lines: the page
+/// loads `debuglog.js`, and `POST /debug/log` writes each line of the body into the
+/// hub's log, control characters dropped. A release build has neither.
+#[tokio::test]
+async fn debug_builds_log_the_reading_views_lines() {
+    let hub = TestHub::open();
+    let page = hub.get(&format!("/r/{}", pub_id(1)), None).await;
+    let html = String::from_utf8(page.body).unwrap();
+    assert_eq!(
+        html.contains(r#"<meta name="sg-log" content="/debug/log">"#),
+        cfg!(debug_assertions),
+        "{html}"
+    );
+    assert_eq!(
+        html.contains(r#"<script src="/assets/debuglog.js"></script>"#),
+        cfg!(debug_assertions)
+    );
+
+    let capture = common::Capture::default();
+    let _log = tracing::dispatcher::set_default(&capture.dispatch(
+        "shelfgauge=info",
+        shelfgauge::logging::LogFormat::Text,
+        false,
+    ));
+    let answer = hub
+        .call_with(
+            Method::POST,
+            "/debug/log",
+            None,
+            Body::from("[ab12 0.500] sel start\u{1b}[31m\nsecond line\n"),
+            |r| r.header(header::CONTENT_TYPE, "text/plain"),
+        )
+        .await;
+    let log = capture.text();
+    if cfg!(debug_assertions) {
+        assert_eq!(answer.status, StatusCode::NO_CONTENT);
+        let line = log
+            .lines()
+            .find(|l| l.contains("[ab12 0.500] sel start"))
+            .unwrap_or_else(|| panic!("{log}"));
+        assert!(line.contains("shelfgauge::client"), "{line}");
+        assert!(line.contains("sel start[31m"), "{line}");
+        assert!(log.contains("second line"), "{log}");
+    } else {
+        assert_eq!(answer.status, StatusCode::NOT_FOUND);
+        assert!(!log.contains("sel start"), "{log}");
+    }
 }

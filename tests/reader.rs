@@ -1532,3 +1532,32 @@ async fn reading_fonts_are_served_with_their_licenses() {
         assert!(reader_js.contains(part), "{part} missing in reader.js");
     }
 }
+
+/// Chrome on a touch screen draws the start handle of a selection from a paragraph's
+/// first character under the paragraph's last automatic hyphen: reader.js turns the
+/// hyphenation of that paragraph off while the selection lasts (Chromium only, from
+/// the paragraph's start only) and back on when the selection ends.
+#[tokio::test]
+async fn a_selection_from_a_paragraphs_start_keeps_its_start_handle() {
+    let lib = TestLibrary::new();
+    let server = lib.server("/", whole());
+    // Windows checkouts may embed CRLF line endings.
+    let reader_js = server
+        .ok("/assets/reader.js")
+        .await
+        .body
+        .replace("\r\n", "\n");
+    for part in [
+        "const startHandleBug = coarse.matches && \"userAgentData\" in navigator;",
+        "if (before.toString().trim() !== \"\") {",
+        "block.style.hyphens = \"manual\";",
+        "block.style.removeProperty(\"hyphens\");",
+        "held = { range: range.cloneRange() };\n        keepStartHandle(range);",
+        "clearPending();\n    rehyphenate();",
+    ] {
+        assert!(reader_js.contains(part), "{part} missing in reader.js");
+    }
+    // The text is hyphenated automatically otherwise.
+    let style_css = server.ok("/assets/style.css").await.body;
+    assert!(style_css.contains("hyphens: auto;"));
+}

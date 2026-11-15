@@ -282,6 +282,16 @@ needing a newer glibc than the server's is refused), copies the staging database
 switches the staging link, restarts the staging hub, waits until the new process
 answers and runs `hub check`; on a failure the old binary and database come back.
 
+A debug build's reading view also sends the app's log lines to the hub (only a debug
+build has `POST /debug/log` and loads `assets/hub/debuglog.js`): what a script
+passes to `window.sgLog(...)`, and errors in the page, each line tagged with the
+page's random tag and the seconds since it loaded. They go into the staging hub's log
+with the target `shelfgauge::client`:
+
+```sh
+ssh root@server journalctl -u shelfgauge-hub-staging --since -30min -o cat | grep shelfgauge::client
+```
+
 Hub commands for the staging hub use its own binary, which may be newer than
 production's (and may have migrated its database):
 `sudo -u shelfgauge /usr/local/bin/shelfgauge-hub-staging hub invite --data /srv/shelfgauge-hub-staging`.

@@ -625,6 +625,44 @@
     return text.contains(range.commonAncestorContainer) ? range : null;
   }
 
+  // Chrome on a touch screen draws the start handle of a selection that starts at a
+  // paragraph's first character under the paragraph's last automatic hyphen instead
+  // (a selection starting later in the paragraph is drawn right). While such a
+  // selection lasts, that paragraph is not hyphenated automatically: it is laid out
+  // again once, its first word staying in place. Its hyphens come back when the
+  // selection ends (`hidePopup`), not when the start moves on: a paragraph laid out
+  // again under the finger would move the handle. Chromium alone has
+  // `navigator.userAgentData`.
+  const startHandleBug = coarse.matches && "userAgentData" in navigator;
+  const unhyphenated = new Set();
+
+  function keepStartHandle(range) {
+    if (!startHandleBug) {
+      return;
+    }
+    const node = range.startContainer;
+    const block = (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement)?.closest("[id]");
+    if (!block || !BLOCK_ID.test(block.id) || !text.contains(block) || unhyphenated.has(block)) {
+      return;
+    }
+    const before = document.createRange();
+    before.setStart(block, 0);
+    before.setEnd(node, range.startOffset);
+    if (before.toString().trim() !== "") {
+      return;
+    }
+    block.style.hyphens = "manual";
+    unhyphenated.add(block);
+    window.sgLog?.("unhyphenated", block.id);
+  }
+
+  function rehyphenate() {
+    for (const block of unhyphenated) {
+      block.style.removeProperty("hyphens");
+    }
+    unhyphenated.clear();
+  }
+
   // Whether a selection for a quote is being made: the reader holds still.
   function selecting() {
     return formOpen || textSelection() !== null;
@@ -668,6 +706,7 @@
     }
     formOpen = false;
     clearPending();
+    rehyphenate();
     document.documentElement.classList.remove("marking");
     document.documentElement.style.removeProperty("--mark-bar-height");
     marksChanged();
@@ -972,6 +1011,7 @@
       const range = textSelection();
       if (range) {
         held = { range: range.cloneRange() };
+        keepStartHandle(range);
       } else if (held && !formOpen && Date.now() < keepSelectionUntil) {
         restoreSelection();
         return;
