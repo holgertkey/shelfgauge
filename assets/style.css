@@ -603,6 +603,7 @@ button:hover {
   z-index: 5;
   width: 9px;
   height: calc(100vh - var(--topbar-height));
+  height: calc(100dvh - var(--topbar-height));
   margin-left: -5px;
   cursor: col-resize;
   touch-action: none;
@@ -635,7 +636,11 @@ body.resizing {
 .sidebar {
   position: sticky;
   top: var(--topbar-height);
+  /* 100vh is the height without the browser's address bar (Chrome on Android), so
+     the sidebar's end would be under the screen's edge while the bar is shown;
+     100dvh follows the bar, 100vh stays for older browsers. */
   height: calc(100vh - var(--topbar-height));
+  height: calc(100dvh - var(--topbar-height));
   padding: 0.75rem 0.5rem 2rem 0.75rem;
   overflow-y: auto;
   background: var(--sidebar-bg);
@@ -2592,9 +2597,12 @@ button.danger,
   .sidebar {
     position: fixed;
     top: var(--topbar-height);
+    bottom: 0;
     left: 0;
     z-index: 10;
     display: none;
+    /* Down to the visible bottom edge, with or without the browser's address bar. */
+    height: auto;
     width: min(var(--sidebar-width), 85vw);
     box-shadow: 2px 0 8px rgb(0 0 0 / 0.25);
   }

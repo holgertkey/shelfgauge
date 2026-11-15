@@ -141,6 +141,9 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ### Fixed
 
+- In Chrome on Android, the sidebar (the contents, bookmarks and quotes) can be
+  scrolled to its end while the browser's address bar is shown: the sidebar and the
+  reading settings now end at the visible bottom edge of the screen.
 - On a phone, a one-line quote in the Quotes tab is no longer followed by an empty
   line before its note: the finger-sized height goes to the whole item, not to the
   quote and the note each.

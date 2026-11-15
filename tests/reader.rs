@@ -1561,3 +1561,23 @@ async fn a_selection_from_a_paragraphs_start_keeps_its_start_handle() {
     let style_css = server.ok("/assets/style.css").await.body;
     assert!(style_css.contains("hyphens: auto;"));
 }
+
+/// Chrome on Android counts `100vh` without its address bar, so a sidebar of that
+/// height ended under the screen's edge while the bar was shown and its last items
+/// could not be scrolled to: the heights follow the visible screen (`100dvh`, and the
+/// narrow screen's fixed sidebar reaches down to `bottom: 0`).
+#[tokio::test]
+async fn the_sidebar_ends_at_the_visible_screen_edge() {
+    let lib = TestLibrary::new();
+    let server = lib.server("/", whole());
+    // Windows checkouts may embed CRLF line endings.
+    let style_css = server
+        .ok("/assets/style.css")
+        .await
+        .body
+        .replace("\r\n", "\n");
+    assert!(style_css.contains("  height: calc(100dvh - var(--topbar-height));\n  padding:"));
+    assert!(style_css.contains("    bottom: 0;\n    left: 0;\n    z-index: 10;"));
+    let reader_css = server.ok("/assets/reader.css").await.body;
+    assert!(reader_css.contains("max-height: calc(100dvh - var(--topbar-height) - 1rem);"));
+}
