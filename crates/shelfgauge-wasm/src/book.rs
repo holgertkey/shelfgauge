@@ -9,6 +9,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::{Deserialize, Serialize};
 use shelfgauge_core::annotations::anchor::{self, Anchor, Quote};
+use shelfgauge_core::annotations::export::ExportHead;
 use shelfgauge_core::annotations::lists::{ListItem, Lists, label};
 use shelfgauge_core::annotations::results::FindResults;
 use shelfgauge_core::annotations::text::BookText;
@@ -317,6 +318,7 @@ impl Book {
                 bookmark: quote.text.is_empty() && !a.place_note,
                 place_note: a.place_note,
                 text: quote.text,
+                section_title: a.section_title.clone(),
                 lost,
                 start_block: anchor.start_block.to_string(),
                 start_offset: anchor.start_offset,
@@ -332,7 +334,14 @@ impl Book {
             })
         });
         ListsFragment {
-            lists: Lists::new(items, String::new()),
+            lists: Lists::new(
+                items,
+                String::new(),
+                ExportHead {
+                    title: self.manifest.title.clone(),
+                    authors: self.manifest.authors.join(", "),
+                },
+            ),
         }
         .render()
         .map_err(|e| BookError(e.to_string()))

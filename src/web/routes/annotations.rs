@@ -32,22 +32,25 @@ use crate::web::{AppError, AppState, Urls};
 
 use crate::annotations::lists::ListItem;
 pub(crate) use crate::annotations::lists::Lists;
+use shelfgauge_core::annotations::export::ExportHead;
 
 /// A book's bookmarks and marks, in book order; with the book's `text`, items carry
 /// their [`ListItem::progress`].
 pub(crate) fn annotation_lists(
     urls: &Urls,
-    book_id: i64,
+    book: &BookDetails,
     annotations: &[Annotation],
     back: String,
     text: Option<&BookText>,
 ) -> Lists {
+    let book_id = book.id;
     let item = |a: &Annotation| ListItem {
         id: a.id.clone(),
         href: urls.read_mark(book_id, a.anchor.start_block, a.anchor.start_offset),
         label: a.label(),
         note: a.note().unwrap_or("").to_owned(),
         text: a.quote.text.clone(),
+        section_title: a.section_title.clone(),
         bookmark: a.is_bookmark(),
         place_note: a.place_note,
         lost: a.anchor_lost,
@@ -63,7 +66,11 @@ pub(crate) fn annotation_lists(
             .filter(|_| !a.anchor_lost)
             .and_then(|text| text.share_before(a.anchor.start_block, 10_000)),
     };
-    Lists::new(annotations.iter().map(item), back)
+    let head = ExportHead {
+        title: book.title.clone(),
+        authors: attach::authors(book),
+    };
+    Lists::new(annotations.iter().map(item), back, head)
 }
 
 /// The annotations and reading position of a book, for its card or reader page.
@@ -712,19 +719,19 @@ pub(crate) async fn lists(
     Path(id): Path<String>,
 ) -> Result<Response, AppError> {
     let id = parse_id(&id)?;
-    let (annotations, text) = state
+    let (book, annotations, text) = state
         .user_db(move |state, index| {
             let (book, snapshot) = readable_book(index, id)?;
             let annotations =
                 store::for_book(&state.userdata().lock(), current.id(), &snapshot.key)?;
             // Without the content (e.g. a missing file) the items carry no progress.
             let text = state.book_text(&book).ok().map(|(_, text)| text);
-            Ok((annotations, text))
+            Ok((book, annotations, text))
         })
         .await?;
     let urls = state.urls();
     let fragment = ListsFragment {
-        lists: annotation_lists(urls, id, &annotations, urls.read(id, 1), text.as_deref()),
+        lists: annotation_lists(urls, &book, &annotations, urls.read(id, 1), text.as_deref()),
     };
     Ok((
         [(header::CACHE_CONTROL, "no-store")],

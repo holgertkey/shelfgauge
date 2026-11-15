@@ -16,6 +16,12 @@
 </section>
 <section class="tab-panel" id="tab-marks" data-tab="marks" aria-label="Quotes">
   <h2 class="panel-title">Quotes</h2>
+  {%- if !lists.no_quotes_or_notes() %}
+  {#- The quotes and notes as plain text (no links, no bookmarks): Export shares or
+      downloads it as a file, Copy all copies it (reader.js); shown with JS only. #}
+  <div class="export-actions" hidden><button type="button" class="small export-file" data-file="{{ lists.export_file_name() }}">Export</button><button type="button" class="small export-copy">Copy all</button></div>
+  <textarea class="export-text" hidden readonly tabindex="-1" aria-hidden="true">{{ lists.export_text() }}</textarea>
+  {%- endif %}
   {%- if lists.no_quotes_or_notes() %}
   <p class="hint">No quotes yet. Select text in the book and choose “Quote” to keep it, or “Note” to add a note. To write a note without a quote, press the pencil in the top bar (or <kbd>w</kbd>): it goes on the place at the top of the page.</p>
   {%- endif %}
@@ -28,6 +34,7 @@
       <a href="{{ item.href }}" data-mark-link><span class="mark-text">{{ item.text }}</span></a>{% if item.lost %} <span class="badge" title="The book has changed; this text was not found in it.">place not found</span>{% endif %}
       {%- if !item.note.is_empty() %}
       <button type="button" class="mark-note-open" title="Show the whole note" aria-label="Show the whole note: {{ item.label }}"><span class="mark-note-text">{{ item.note }}</span></button>{% endif %}
+      <button type="button" class="link-button mark-copy" data-copy="{{ lists.copy_text(item) }}" title="Copy this quote" aria-label="Copy" hidden><svg class="icon" aria-hidden="true"><use href="#i-copy"></use></svg></button>
       <details class="note-edit"><summary class="link-button" title="{% if item.note.is_empty() %}Add a note{% else %}Edit the note{% endif %}" aria-label="{% if item.note.is_empty() %}Add a note{% else %}Edit the note{% endif %}"><svg class="icon" aria-hidden="true"><use href="#i-edit"></use></svg></summary>
         <form method="post" action="{{ item.note_action }}" class="note-form"><input type="hidden" name="back" value="{{ lists.back }}"><textarea name="note" rows="3" aria-label="Note" placeholder="Note">{{ item.note }}</textarea>
           <div class="note-actions"><button type="submit" class="small primary">Save</button><button type="reset" class="small note-cancel">Cancel</button></div></form></details>

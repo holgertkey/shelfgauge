@@ -5,6 +5,7 @@
 //! (`templates/partials/annotation_lists.html` in the repository).
 
 use super::anchor::{BOOKMARK_CHARS, Quote};
+use super::export::{self, ExportHead, ExportItem, ExportKind};
 use super::text;
 
 /// The longest label of a quote, in code points (then cut with "…").
@@ -23,6 +24,8 @@ pub struct ListItem {
     pub note: String,
     /// The quoted text; empty for a bookmark.
     pub text: String,
+    /// The section title at its start (the export groups quotes by it).
+    pub section_title: Option<String>,
     /// Whether this is a bookmark (no quoted text, not a note).
     pub bookmark: bool,
     /// Whether this is a note on a place (no quoted text): listed after the quotes.
@@ -61,13 +64,16 @@ pub struct Lists {
     pub notes: Vec<ListItem>,
     /// Where the forms return to.
     pub back: String,
+    /// The book, for the export and the copied quotes.
+    pub book: ExportHead,
 }
 
 impl Lists {
     /// Sorts `items` into bookmarks, quotes and notes, keeping their order.
-    pub fn new(items: impl IntoIterator<Item = ListItem>, back: String) -> Self {
+    pub fn new(items: impl IntoIterator<Item = ListItem>, back: String, book: ExportHead) -> Self {
         let mut lists = Self {
             back,
+            book,
             ..Self::default()
         };
         for item in items {
@@ -85,6 +91,40 @@ impl Lists {
     /// Whether there are neither quotes nor notes (the Quotes tab is empty).
     pub fn no_quotes_or_notes(&self) -> bool {
         self.marks.is_empty() && self.notes.is_empty()
+    }
+
+    /// The Quotes tab's export: the quotes and notes in the
+    /// [`unlinked`](export::unlinked) form.
+    pub fn export_text(&self) -> String {
+        let quotes = self.marks.iter().map(|m| ExportItem {
+            kind: ExportKind::Quote,
+            text: &m.text,
+            note: Some(m.note.as_str()),
+            section_title: m.section_title.as_deref(),
+            label: String::new(),
+            href: String::new(),
+            lost: m.lost,
+        });
+        let notes = self.notes.iter().map(|n| ExportItem {
+            kind: ExportKind::PlaceNote,
+            text: "",
+            note: Some(n.note.as_str()),
+            section_title: n.section_title.as_deref(),
+            label: n.label.clone(),
+            href: String::new(),
+            lost: n.lost,
+        });
+        export::unlinked(&self.book, &quotes.chain(notes).collect::<Vec<_>>())
+    }
+
+    /// The file name of [`Lists::export_text`].
+    pub fn export_file_name(&self) -> String {
+        export::quotes_file_name(&self.book)
+    }
+
+    /// One quote for a message ([`copy_text`](export::copy_text)).
+    pub fn copy_text(&self, item: &ListItem) -> String {
+        export::copy_text(&self.book, &item.text, Some(&item.note))
     }
 }
 
@@ -154,6 +194,7 @@ mod tests {
             label: String::new(),
             note: String::new(),
             text: String::new(),
+            section_title: None,
             bookmark,
             place_note,
             lost: false,
@@ -180,6 +221,7 @@ mod tests {
                 item("q2", false, false),
             ],
             "/back".into(),
+            ExportHead::default(),
         );
         let ids = |list: &[ListItem]| list.iter().map(|i| i.id.clone()).collect::<Vec<_>>();
         assert_eq!(ids(&lists.bookmarks), ["b1"]);
@@ -187,8 +229,51 @@ mod tests {
         assert_eq!(ids(&lists.notes), ["n1", "n2"]);
         assert_eq!(lists.back, "/back");
         assert!(!lists.no_quotes_or_notes());
-        let only_notes = Lists::new([item("n", false, true)], String::new());
+        let only_notes = Lists::new(
+            [item("n", false, true)],
+            String::new(),
+            ExportHead::default(),
+        );
         assert!(only_notes.marks.is_empty() && !only_notes.no_quotes_or_notes());
-        assert!(Lists::new([item("b", true, false)], String::new()).no_quotes_or_notes());
+        assert!(
+            Lists::new(
+                [item("b", true, false)],
+                String::new(),
+                ExportHead::default()
+            )
+            .no_quotes_or_notes()
+        );
+    }
+
+    #[test]
+    fn export_and_copy_from_the_lists() {
+        let mut quote = item("q", false, false);
+        quote.text = "Quoted text.".into();
+        quote.note = "Mine".into();
+        quote.section_title = Some("Chapter 1".into());
+        let mut bare = item("q2", false, false);
+        bare.text = "Another.".into();
+        bare.section_title = Some("Chapter 1".into());
+        let mut note = item("n", false, true);
+        note.note = "A thought".into();
+        note.label = "The place".into();
+        let mut bookmark = item("b", true, false);
+        bookmark.label = "A bookmark".into();
+        let book = ExportHead {
+            title: "T".into(),
+            authors: "A".into(),
+        };
+        let lists = Lists::new([bookmark, quote, note, bare], String::new(), book);
+        assert_eq!(
+            lists.export_text(),
+            "# T\n\nA\n\n## Quotes\n\n### Chapter 1\n\nQuoted text.\n\nNote: Mine\n\n\
+             ***\n\nAnother.\n\n## Notes\n\nThe place\n\nNote: A thought\n"
+        );
+        assert_eq!(lists.export_file_name(), "A — T — quotes.md");
+        assert_eq!(
+            lists.copy_text(&lists.marks[0]),
+            "Quoted text.\n\nNote: Mine\n\n— A, T"
+        );
+        assert_eq!(lists.copy_text(&lists.marks[1]), "Another.\n\n— A, T");
     }
 }

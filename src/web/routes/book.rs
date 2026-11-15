@@ -161,7 +161,7 @@ pub(crate) async fn card(
         .map(|a| {
             annotation_lists(
                 urls,
-                book.id,
+                &book,
                 &a.annotations,
                 format!("{}#annotations", urls.book(book.id)),
                 None,

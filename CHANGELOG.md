@@ -71,6 +71,15 @@ Build numbers (`+NNN`) do not get their own sections.
   export a Notes section. In the library and in the hub reader. A note on a place
   cannot be emptied; it is deleted with ×. A library still on 0.24 shows such a note
   as a bookmark with a note.
+- Export and copy of quotes and notes from the reader's Quotes tab, in the library and
+  in the hub reader. **Export** gives the book's quotes and notes as a Markdown file
+  (`<Authors> — <Title> — quotes.md`): on a phone through the share menu (to Obsidian,
+  Notes, a messenger, mail), elsewhere as a download. **Copy all** copies the same
+  text; **Copy** next to a quote copies that quote with its note and the book's
+  authors and title. The text is plain: each quote as it is, its note after it
+  starting with `Note:`, a line `***` between records, the notes on places last; no
+  links and no bookmarks. It is made on the device, so it works offline too. The
+  library's own export files in `.shelfgauge/annotations/` are unchanged.
 
 ### Changed
 

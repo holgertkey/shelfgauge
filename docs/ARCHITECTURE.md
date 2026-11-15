@@ -378,6 +378,19 @@ in the core crate), `src/web/routes/annotations.rs`, `assets/reader.js`/`reader.
   links.
   `shelfgauge annotations export` rewrites all files; generated files carry a marker
   comment and only marked files are ever removed.
+- **Export and copy in the reader** (the Quotes tab, both readers): the lists'
+  template carries the book's quotes and notes as text (a hidden
+  `<textarea class="export-text">`, and `data-copy` on each quote's Copy button),
+  rendered by `shelfgauge_core::annotations::export` (`unlinked`, `copy_text`;
+  `linked` is the export files' form above) through `Lists::export_text` and
+  `Lists::copy_text`, on the server or in the hub's WASM module, so both readers give
+  the same text, offline too. The form: no links, no bookmarks, no marker; each quote's
+  text as it is, its note a paragraph starting with `Note: `, records divided by
+  `***`, the notes on places last with the start of their place. `reader.js` shows the
+  buttons (JS only): Export shares a `text/plain` file named `<Authors> — <Title> —
+  quotes.md` through Web Share on a touch screen (`canShare` with files), else
+  downloads it; Copy all and Copy use `navigator.clipboard` in a secure context, else
+  the copy command over a selected textarea (`.copy-buffer`).
 - **Reading position** (separate from bookmarks, never in the lists): one server-side
   row per book in `userdata.sqlite` (the first whole line at the top of the screen:
   its block, the code point `offset` of the line's start in it, the block's

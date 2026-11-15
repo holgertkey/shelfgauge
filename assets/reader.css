@@ -175,10 +175,64 @@
   right: 0.2rem;
 }
 
-/* A quote's note is added or changed in place: the pencil next to the ×. */
+/* A quote's note is added or changed in place: the pencil next to the ×; a quote
+   also has Copy before the pencil (shown with JS only). */
 .annotation-links .mark-item,
 .annotation-links .note-item {
   padding-right: 3.2rem;
+}
+
+.js-copy .annotation-links .mark-item {
+  padding-right: 5.2rem;
+}
+
+.annotation-links .mark-copy {
+  position: absolute;
+  top: 0.2rem;
+  right: 3.4rem;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.35rem;
+}
+
+.annotation-links .mark-copy[hidden] {
+  display: none;
+}
+
+.annotation-links .mark-copy:hover {
+  color: var(--fg);
+}
+
+.annotation-links .mark-copy .icon {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.js-copy .annotation-links .mark-item .note-form {
+  margin-right: -4.9rem;
+}
+
+/* Export and Copy all of the Quotes tab, above the list. */
+.export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.2rem 0 0.5rem 0.3rem;
+}
+
+.export-actions[hidden] {
+  display: none;
+}
+
+/* The textarea a copy goes through where the clipboard API is missing (reader.js). */
+.copy-buffer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* The notes on places, after the quotes: only the start of the note, which opens

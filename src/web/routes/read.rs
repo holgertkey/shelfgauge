@@ -262,7 +262,7 @@ fn page(
         toc: render_toc(&content, &parts, index, &links),
         prev: index.checked_sub(1).and_then(neighbour),
         next: neighbour(index + 1),
-        lists: annotation_lists(urls, book.id, &annotations, current, Some(&text)),
+        lists: annotation_lists(urls, book, &annotations, current, Some(&text)),
         annotations_href: urls.annotations(book.id),
         position_href: if config.reader.remember_position {
             urls.position(book.id)

@@ -4,9 +4,11 @@
 //! - [`find`]: search within a book's text;
 //! - [`anchor`]: anchors, quotes and the fingerprint search;
 //! - [`lists`]: the reader's bookmark and quote lists;
+//! - [`export`]: the Markdown of a book's quotes and notes;
 //! - [`results`]: the reader's search results.
 
 pub mod anchor;
+pub mod export;
 pub mod find;
 pub mod lists;
 pub mod results;

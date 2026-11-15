@@ -1064,6 +1064,20 @@ fn the_reader_app_rendering_vector_is_stable() {
     );
     assert!(lists.contains("place not found"), "the lost one: {lists}");
     assert!(!lists.contains("note-item"), "{lists}");
+    // The Quotes tab's export and copy texts, made in the module as on the instance:
+    // no links, no bookmarks, `Note: ` and `***`.
+    assert!(
+        lists.contains(r#"data-file="A. Author — Book — quotes.md""#),
+        "{lists}"
+    );
+    assert!(
+        lists.contains("\n\nNote: a &#60;note&#62;\n\n***\n\ngone\n</textarea>"),
+        "{lists}"
+    );
+    assert!(
+        lists.contains("\n\nNote: a &#60;note&#62;\n\n— A. Author, Book\""),
+        "{lists}"
+    );
     // A note on a place (since 0.25): after the quotes, labelled by its place, with a
     // note form that keeps it from going blank.
     let notes: Vec<shelfgauge_wasm::book::AnnotationRecord> =

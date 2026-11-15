@@ -352,6 +352,7 @@
     if (replacement) {
       lists.replaceWith(replacement);
     }
+    showExportControls();
     // The replaced panels lost their state: show the same tab again.
     showTab(active ? active.dataset.tab : storageGet(TAB_KEY) || "toc", false);
     syncPager();
@@ -400,11 +401,96 @@
     }
   }
 
+  // ---------- Export and copy of quotes and notes ----------
+
+  // The Quotes tab's Export and Copy all, and each quote's Copy: the text is in the
+  // lists' HTML (`.export-text`, `data-copy`), made by the server or the hub's WASM
+  // module, so both readers give the same text, offline too.
+  function showExportControls() {
+    document.documentElement.classList.add("js-copy");
+    for (const el of sidebar.querySelectorAll(".export-actions, .mark-copy")) {
+      el.hidden = false;
+    }
+  }
+
+  // Copies `text`; the clipboard API where the page is a secure context, else a
+  // selected textarea and the copy command (the library's reader over plain HTTP on
+  // a LAN address). Resolves to whether it worked.
+  async function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch (e) {
+        // The command below.
+      }
+    }
+    const focused = document.activeElement;
+    const area = document.createElement("textarea");
+    area.className = "copy-buffer";
+    area.value = text;
+    area.setAttribute("readonly", "");
+    document.body.append(area);
+    area.select();
+    area.setSelectionRange(0, area.value.length);
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch (e) {
+      ok = false;
+    }
+    area.remove();
+    if (focused instanceof HTMLElement) {
+      focused.focus({ preventScroll: true });
+    }
+    return ok;
+  }
+
+  async function copyWithToast(text, done) {
+    toast((await copyText(text)) ? done : "Cannot copy here.");
+  }
+
+  // Export: on a touch screen the system's share sheet with the file (to Obsidian,
+  // Notes, a messenger), elsewhere (or without Web Share for files) a download. The
+  // file's type is text/plain, which Web Share takes; its name ends in .md.
+  async function exportFile(button) {
+    const area = sidebar.querySelector(".export-text");
+    if (!area) {
+      return;
+    }
+    const name = button.dataset.file || "quotes.md";
+    const file = new File([area.value], name, { type: "text/plain" });
+    const canShare = !!(navigator.canShare && navigator.canShare({ files: [file] }));
+    window.sgLog?.("export", coarse.matches ? "touch" : "desktop", canShare ? "can share" : "cannot share");
+    if (coarse.matches && canShare) {
+      try {
+        await navigator.share({ files: [file] });
+        return;
+      } catch (e) {
+        if (e && e.name === "AbortError") {
+          return;
+        }
+        // Not allowed here: the download below (in a debug build's log, which one).
+        window.sgLog?.("export share failed", e && e.name);
+      }
+    }
+    const href = URL.createObjectURL(file);
+    const a = document.createElement("a");
+    a.href = href;
+    a.download = name;
+    a.hidden = true;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(href), 60000);
+  }
+
   function setupSidebar() {
     if (!sidebar) {
       return;
     }
     sidebar.classList.add("tabbed");
+    showExportControls();
     setupPager();
     showTab(storageGet(TAB_KEY) || "toc");
     sidebar.addEventListener("click", (event) => {
@@ -412,6 +498,21 @@
       if (tab) {
         event.preventDefault();
         showTab(tab.dataset.tab);
+        return;
+      }
+      const exportButton = event.target.closest(".export-file");
+      if (exportButton) {
+        exportFile(exportButton);
+        return;
+      }
+      if (event.target.closest(".export-copy")) {
+        const area = sidebar.querySelector(".export-text");
+        copyWithToast(area ? area.value : "", "Quotes copied.");
+        return;
+      }
+      const copy = event.target.closest(".mark-copy");
+      if (copy) {
+        copyWithToast(copy.dataset.copy || "", "Quote copied.");
         return;
       }
       const mark = event.target.closest("[data-mark-link]");
