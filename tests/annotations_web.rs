@@ -554,22 +554,16 @@ async fn quotes_tab_export_and_copy() {
         .await;
     assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
 
-    for page in [
-        server.ok(&format!("/book/{id}/read")).await,
-        server.ok(&format!("/book/{id}/annotations")).await,
-    ] {
-        // Shown by reader.js only.
-        assert!(
-            page.contains("<div class=\"export-actions\" hidden>"),
-            "{page}"
-        );
-        assert!(
-            page.contains("data-file=\"Writer Anna — The Book — quotes.md\""),
-            "{page}"
-        );
+    // Export and Copy all stand in the sidebar head, shown by reader.js only.
+    let read = server.ok(&format!("/book/{id}/read")).await;
+    assert!(
+        read.contains("<div class=\"sidebar-tools\" hidden lang=\"en\">\n  <div class=\"export-actions\" hidden><button type=\"button\" class=\"small export-file\">Export</button><button type=\"button\" class=\"small export-copy\">Copy all</button></div>"),
+        "{read}"
+    );
+    for page in [read, server.ok(&format!("/book/{id}/annotations")).await] {
         let text = between(
             &page,
-            "<textarea class=\"export-text\" hidden readonly tabindex=\"-1\" aria-hidden=\"true\">",
+            "<textarea class=\"export-text\" data-file=\"Writer Anna — The Book — quotes.md\" hidden readonly tabindex=\"-1\" aria-hidden=\"true\">",
             "</textarea>",
         );
         assert!(
@@ -611,11 +605,11 @@ async fn quotes_tab_export_and_copy() {
     );
     assert!(!file.contains("Note: ") && !file.contains("***"), "{file}");
 
-    // A book without quotes or notes has neither the buttons nor the text.
+    // A book without quotes or notes has no text, so reader.js keeps the buttons hidden.
     let other = server
         .ok(&format!("/book/{}/read", lib.id_of("other.fb2")))
         .await;
-    assert!(!other.contains("export-actions") && !other.contains("export-text"));
+    assert!(!other.contains("export-text"), "{other}");
 }
 
 #[tokio::test]

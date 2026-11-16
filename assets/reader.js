@@ -332,6 +332,7 @@
       tab.classList.toggle("active", active);
       tab.setAttribute("aria-current", active ? "true" : "false");
     }
+    syncExportActions(name);
     syncPager();
     // The Search tab comes and goes with the query: never remembered.
     if (known && remember && name !== "find") {
@@ -360,17 +361,18 @@
     drawBookmarks();
   }
 
-  // The ‹ › buttons under the book link page through the open tab (the sidebar scrolls) like
+  // The ‹ › buttons under the book link (at the right of the line with Export) page through the open tab (the sidebar scrolls) like
   // Page Up / Page Down; each is disabled at its end.
   let syncPager = () => {};
 
   function setupPager() {
-    const pager = sidebar.querySelector(".tab-pager");
+    const tools = sidebar.querySelector(".sidebar-tools");
+    const pager = tools && tools.querySelector(".tab-pager");
     if (!pager) {
       return;
     }
     const [up, down] = pager.querySelectorAll("[data-page]");
-    pager.hidden = false;
+    tools.hidden = false;
     syncPager = () => {
       up.disabled = sidebar.scrollTop <= 0;
       down.disabled = sidebar.scrollTop + sidebar.clientHeight >= sidebar.scrollHeight - 1;
@@ -403,13 +405,22 @@
 
   // ---------- Export and copy of quotes and notes ----------
 
-  // The Quotes tab's Export and Copy all, and each quote's Copy: the text is in the
-  // lists' HTML (`.export-text`, `data-copy`), made by the server or the hub's WASM
-  // module, so both readers give the same text, offline too.
+  // The Quotes tab's Export and Copy all (in the sidebar head), and each quote's Copy:
+  // the text is in the lists' HTML (`.export-text`, `data-copy`), made by the server
+  // or the hub's WASM module, so both readers give the same text, offline too.
   function showExportControls() {
     document.documentElement.classList.add("js-copy");
-    for (const el of sidebar.querySelectorAll(".export-actions, .mark-copy")) {
+    for (const el of sidebar.querySelectorAll(".mark-copy")) {
       el.hidden = false;
+    }
+  }
+
+  // Export and Copy all stand in the sidebar head while the Quotes tab is open and has
+  // quotes or notes to give.
+  function syncExportActions(tab) {
+    const actions = sidebar.querySelector(".sidebar-tools .export-actions");
+    if (actions) {
+      actions.hidden = !(tab === "marks" && sidebar.querySelector("#tab-marks .export-text"));
     }
   }
 
@@ -453,12 +464,12 @@
   // Export: on a touch screen the system's share sheet with the file (to Obsidian,
   // Notes, a messenger), elsewhere (or without Web Share for files) a download. The
   // file's type is text/plain, which Web Share takes; its name ends in .md.
-  async function exportFile(button) {
+  async function exportFile() {
     const area = sidebar.querySelector(".export-text");
     if (!area) {
       return;
     }
-    const name = button.dataset.file || "quotes.md";
+    const name = area.dataset.file || "quotes.md";
     const file = new File([area.value], name, { type: "text/plain" });
     const canShare = !!(navigator.canShare && navigator.canShare({ files: [file] }));
     window.sgLog?.("export", coarse.matches ? "touch" : "desktop", canShare ? "can share" : "cannot share");
@@ -500,9 +511,8 @@
         showTab(tab.dataset.tab);
         return;
       }
-      const exportButton = event.target.closest(".export-file");
-      if (exportButton) {
-        exportFile(exportButton);
+      if (event.target.closest(".export-file")) {
+        exportFile();
         return;
       }
       if (event.target.closest(".export-copy")) {

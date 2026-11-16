@@ -41,10 +41,9 @@
   <h2 class="panel-title">Quotes</h2>
   {%- if !lists.no_quotes_or_notes() %}
   {#- The quotes and notes (those of the Bookmarks tab too) as plain text (no links,
-      no bookmarks): Export shares or downloads it as a file, Copy all copies it
-      (reader.js); shown with JS only. #}
-  <div class="export-actions" hidden><button type="button" class="small export-file" data-file="{{ lists.export_file_name() }}">Export</button><button type="button" class="small export-copy">Copy all</button></div>
-  <textarea class="export-text" hidden readonly tabindex="-1" aria-hidden="true">{{ lists.export_text() }}</textarea>
+      no bookmarks), with the file's name: the sidebar head's Export shares or
+      downloads it as a file, Copy all copies it (reader.js, while this tab is open). #}
+  <textarea class="export-text" data-file="{{ lists.export_file_name() }}" hidden readonly tabindex="-1" aria-hidden="true">{{ lists.export_text() }}</textarea>
   {%- endif %}
   {%- if lists.marks.is_empty() %}
   <p class="hint">No quotes yet. Select text in the book and choose “Quote” to keep it, or “Note” to add a note. Notes without a quote are in the Bookmarks tab.</p>

@@ -95,7 +95,9 @@ Build numbers (`+NNN`) do not get their own sections.
 - The book link at the top of the reader's sidebar shows the title and the authors
   under it, a line each across the whole sidebar, cut short with an ellipsis (the
   whole title in its tooltip); the ‹ › buttons that page through the open tab stand
-  on a line of their own under it, at the right. In the hub reader it
+  on a line of their own under it, at the right, and the Quotes tab's Export and Copy
+  all at its left while that tab is open, so they stay in sight while the quotes
+  scroll. In the hub reader it
   leads to the book's card in Explore when the library's catalog on the device has the
   book, and to the Bookshelf otherwise; in the library it leads to the book's card.
 - The hub reader on a phone has the app's logo again in the top bar, next to the

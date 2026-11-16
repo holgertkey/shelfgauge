@@ -1449,7 +1449,7 @@ async fn the_sidebar_leads_to_the_card_with_title_and_authors_over_the_pager() {
     // The pager stands on a line of its own, after the book link.
     let head = page.split("<div class=\"sidebar-head\">").nth(1).unwrap();
     let pager = head
-        .find("<div class=\"tab-pager\" hidden lang=\"en\">")
+        .find("<div class=\"sidebar-tools\" hidden lang=\"en\">")
         .unwrap();
     assert!(head[..pager].ends_with("</a>\n</div>\n"), "{head}");
 }

@@ -67,17 +67,23 @@
   border-radius: var(--radius);
 }
 
-/* Page up / page down for the open tab: a line of its own under the book link, at
-   the right. */
-.tab-pager {
+/* A line of its own under the book link (reader.js): Export and Copy all of the
+   Quotes tab at the left, page up / page down for the open tab at the right. */
+.sidebar-tools {
   display: flex;
-  justify-content: flex-end;
+  gap: 0.4rem;
+  align-items: center;
   margin: -0.5rem 0 0.25rem;
   font-weight: 400;
 }
 
-.tab-pager[hidden] {
+.sidebar-tools[hidden] {
   display: none;
+}
+
+.tab-pager {
+  display: flex;
+  margin-left: auto;
 }
 
 .tab-pager .icon-button {
@@ -248,12 +254,10 @@
   margin-right: -4.9rem;
 }
 
-/* Export and Copy all of the Quotes tab, above the list. */
+/* Export and Copy all of the Quotes tab, in the sidebar head. */
 .export-actions {
   display: flex;
-  flex-wrap: wrap;
   gap: 0.4rem;
-  margin: 0.2rem 0 0.5rem 0.3rem;
 }
 
 .export-actions[hidden] {

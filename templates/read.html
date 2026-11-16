@@ -47,11 +47,15 @@
 <div class="toc-book"><a class="toc-book-link" href="{{ card_href }}" title="{{ book_title }}{% if !book_authors.is_empty() %} — {{ book_authors }}{% endif %}"><span class="toc-back" aria-hidden="true">‹</span><span class="toc-book-names"><span class="book-title">{{ book_title }}</span>
 {%- if !book_authors.is_empty() %}<span class="book-authors">{{ book_authors }}</span>{% endif %}</span></a>
 </div>
-{#- reader.js: page through the open tab like Page Up / Page Down, on a line of its own
-    under the book link. #}
-<div class="tab-pager" hidden lang="en">
-  <button type="button" class="icon-button" data-page="-1" title="Page up" aria-label="Page up">‹</button>
-  <button type="button" class="icon-button" data-page="1" title="Page down" aria-label="Page down">›</button>
+{#- A line of its own under the book link (reader.js, shown with JS only): the Quotes
+    tab's Export and Copy all while that tab is open and has quotes or notes, and the
+    buttons that page through the open tab like Page Up / Page Down. #}
+<div class="sidebar-tools" hidden lang="en">
+  <div class="export-actions" hidden><button type="button" class="small export-file">Export</button><button type="button" class="small export-copy">Copy all</button></div>
+  <div class="tab-pager">
+    <button type="button" class="icon-button" data-page="-1" title="Page up" aria-label="Page up">‹</button>
+    <button type="button" class="icon-button" data-page="1" title="Page down" aria-label="Page down">›</button>
+  </div>
 </div>
 <nav class="reader-tabs" aria-label="Sidebar" lang="en">
   {%- if !toc.is_empty() %}
