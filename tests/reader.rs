@@ -872,10 +872,17 @@ async fn reader_settings_assets_agree_on_the_values() {
     ] {
         assert!(reader_js.contains(part), "{part} missing in reader.js");
     }
-    // Sizes: 8 steps, 3 (18px, the old size) is the default.
-    assert!(theme_js.contains("size: [\"3\", \"0\", \"1\", \"2\", \"4\", \"5\", \"6\", \"7\"],"));
-    for step in ["0", "1", "2", "4", "5", "6", "7"] {
-        assert!(reader_css.contains(&format!(":root[data-rsize=\"{step}\"] {{")));
+    // Sizes: 15 steps, 14 to 28px a pixel apart; 4 (18px, the old size) is the default.
+    assert!(theme_js.contains(
+        "size: [\"4\", \"0\", \"1\", \"2\", \"3\", \"5\", \"6\", \"7\", \"8\", \"9\", \"10\", \"11\", \"12\", \"13\", \"14\"],"
+    ));
+    for step in (0..15).filter(|s| *s != 4) {
+        let rule = format!(":root[data-rsize=\"{step}\"] {{\n  --reader-size: ");
+        let rem = f64::from(14 + step) / 16.0;
+        assert!(
+            reader_css.contains(&format!("{rule}{rem}rem;")),
+            "size step {step}"
+        );
     }
     // The base rules consume the properties, with the old values as defaults.
     for rule in [

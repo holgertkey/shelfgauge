@@ -866,32 +866,60 @@ mark.sg-pending {
   --reader-font: "sg-jetbrains-mono", var(--mono);
 }
 
-/* 14, 16, 17, 18 (default), 20, 22, 24, 28px. */
+/* 14 to 28px, a pixel apart; 18px (step 4) is the default. */
 :root[data-rsize="0"] {
   --reader-size: 0.875rem;
 }
 
 :root[data-rsize="1"] {
-  --reader-size: 1rem;
+  --reader-size: 0.9375rem;
 }
 
 :root[data-rsize="2"] {
+  --reader-size: 1rem;
+}
+
+:root[data-rsize="3"] {
   --reader-size: 1.0625rem;
 }
 
-:root[data-rsize="4"] {
-  --reader-size: 1.25rem;
-}
-
 :root[data-rsize="5"] {
-  --reader-size: 1.375rem;
+  --reader-size: 1.1875rem;
 }
 
 :root[data-rsize="6"] {
-  --reader-size: 1.5rem;
+  --reader-size: 1.25rem;
 }
 
 :root[data-rsize="7"] {
+  --reader-size: 1.3125rem;
+}
+
+:root[data-rsize="8"] {
+  --reader-size: 1.375rem;
+}
+
+:root[data-rsize="9"] {
+  --reader-size: 1.4375rem;
+}
+
+:root[data-rsize="10"] {
+  --reader-size: 1.5rem;
+}
+
+:root[data-rsize="11"] {
+  --reader-size: 1.5625rem;
+}
+
+:root[data-rsize="12"] {
+  --reader-size: 1.625rem;
+}
+
+:root[data-rsize="13"] {
+  --reader-size: 1.6875rem;
+}
+
+:root[data-rsize="14"] {
   --reader-size: 1.75rem;
 }
 

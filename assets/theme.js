@@ -24,7 +24,7 @@ const shelfgaugeReader = (() => {
   const LOCAL_KEY = "shelfgauge-hub-reader";
   const OPTIONS = {
     font: ["sans", "serif", "literata", "pt-serif", "merriweather", "lora", "inter", "jetbrains-mono"],
-    size: ["3", "0", "1", "2", "4", "5", "6", "7"],
+    size: ["4", "0", "1", "2", "3", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14"],
     leading: ["4", "0", "1", "2", "3", "5", "6", "7"],
     width: ["3", "0", "1", "2", "4", "5", "6", "7"],
     align: ["left", "justify"],

@@ -207,7 +207,12 @@ pub const SETTINGS: &[(&str, &[&str])] = &[
             "jetbrains-mono",
         ],
     ),
-    ("size", &["3", "0", "1", "2", "4", "5", "6", "7"]),
+    (
+        "size",
+        &[
+            "4", "0", "1", "2", "3", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
+        ],
+    ),
     ("leading", &["4", "0", "1", "2", "3", "5", "6", "7"]),
     ("width", &["3", "0", "1", "2", "4", "5", "6", "7"]),
     ("align", &["left", "justify"]),
@@ -426,9 +431,19 @@ mod tests {
 
     #[test]
     fn settings_whitelist() {
-        let s = ProfileSettings::parse(r#"{"theme":"navy","size":"3","align":"justify"}"#);
+        let s = ProfileSettings::parse(r#"{"theme":"navy","size":"4","align":"justify"}"#);
         // The default size is dropped; a default stays implicit.
         assert_eq!(s.to_json(), r#"{"align":"justify","theme":"navy"}"#);
+        // The size steps go from 0 (14px) to 14 (28px).
+        assert_eq!(
+            ProfileSettings::parse(r#"{"size":"0"}"#).get("size"),
+            Some("0")
+        );
+        assert_eq!(
+            ProfileSettings::parse(r#"{"size":"14"}"#).get("size"),
+            Some("14")
+        );
+        assert!(ProfileSettings::parse(r#"{"size":"15"}"#).is_empty());
         assert!(ProfileSettings::parse("not json").is_empty());
         assert!(ProfileSettings::parse(r#"["theme"]"#).is_empty());
         assert!(ProfileSettings::parse(r#"{"theme":5}"#).is_empty());

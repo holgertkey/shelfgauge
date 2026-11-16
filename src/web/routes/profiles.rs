@@ -562,13 +562,17 @@ fn step_label(value: &str, labels: &[&'static str; 8]) -> Option<&'static str> {
         .and_then(|i| labels.get(i).copied())
 }
 
-/// The reader settings that differ from the defaults, e.g. "serif font, text size 5".
+/// The reader settings that differ from the defaults, e.g. "serif font, text size 19px".
 fn reader_summary(settings: &ProfileSettings) -> String {
     let parts: Vec<String> = settings
         .iter()
         .filter_map(|(name, value)| match name {
             "font" => Some(format!("{} font", font_label(value))),
-            "size" => Some(format!("text size {value}")),
+            // Step 0 is 14px, a pixel a step (`assets/reader.css`).
+            "size" => value
+                .parse::<u32>()
+                .ok()
+                .map(|step| format!("text size {}px", 14 + step)),
             "leading" => step_label(value, &LEADINGS).map(|l| format!("line spacing {l}")),
             "width" => step_label(value, &WIDTHS).map(|w| {
                 if w == "full" {
@@ -1704,7 +1708,11 @@ mod tests {
     #[test]
     fn the_summary_names_fonts_as_the_panel_does() {
         let settings = ProfileSettings::parse(r#"{"font":"pt-serif","size":"5"}"#);
-        assert_eq!(reader_summary(&settings), "PT Serif font, text size 5");
+        assert_eq!(reader_summary(&settings), "PT Serif font, text size 19px");
+        let settings = ProfileSettings::parse(r#"{"size":"0"}"#);
+        assert_eq!(reader_summary(&settings), "text size 14px");
+        let settings = ProfileSettings::parse(r#"{"size":"14"}"#);
+        assert_eq!(reader_summary(&settings), "text size 28px");
         let settings = ProfileSettings::parse(r#"{"font":"serif"}"#);
         assert_eq!(reader_summary(&settings), "serif font");
     }
