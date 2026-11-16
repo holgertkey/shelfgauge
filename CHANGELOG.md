@@ -100,6 +100,8 @@ Build numbers (`+NNN`) do not get their own sections.
   scroll. In the hub reader it
   leads to the book's card in Explore when the library's catalog on the device has the
   book, and to the Bookshelf otherwise; in the library it leads to the book's card.
+- A book's card in the hub reader's Explore has no ‹ Bookshelf or ‹ Explore line
+  above it any more: the Bookshelf and Explore tabs over it lead to the same places.
 - The hub reader on a phone has the app's logo again in the top bar, next to the
   sidebar button, leading to the Bookshelf, like the house in the library's reader.
 - The search in a book on a phone: a magnifier in the top bar like the buttons next to
@@ -157,6 +159,10 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ### Fixed
 
+- The search in a book ignores the accents on Latin letters, as the search in the
+  library and in the Explore catalog does: `Natasha` finds “Natásha”, `creme` finds
+  “crème”, also where the accent is a separate character; `й` is still not `и`. In
+  the library and in the hub reader.
 - A note changed or a quote, bookmark or note deleted within a second of being made
   or synced through the hub could be lost: the other side kept the previous version.
   A change now always counts as newer than the version before it, in the library and

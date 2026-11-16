@@ -1,5 +1,5 @@
 {
-  "comment": "In-book search normalization, shared by the Rust core (crates/shelfgauge-core/src/annotations/find.rs) and its JavaScript port (assets/reader.js, checked by .debug/TESTS/find_smoke.mjs). Offsets count code points. Dropped: U+00AD, U+200B-U+200D, U+2060, U+FEFF. Whitespace: U+0009-U+000D, U+0020, U+00A0, U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, U+3000.",
+  "comment": "In-book search normalization, shared by the Rust core (crates/shelfgauge-core/src/annotations/find.rs) and its JavaScript port (assets/reader.js, checked by .debug/TESTS/find_smoke.mjs). Latin letters lose their diacritics (the blocks of is_latin in crates/shelfgauge-core/src/fold.rs; a combining mark after a Latin letter is dropped and its offset joined to the letter's, as is the one lowercasing puts there: İ is i); marks on letters of other scripts stay. Offsets count code points. Dropped: U+00AD, U+200B-U+200D, U+2060, U+FEFF. Whitespace: U+0009-U+000D, U+0020, U+00A0, U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, U+3000.",
   "normalize": [
     ["Hello World", "hello world"],
     ["ЁЛКА и ёж", "елка и еж"],
@@ -10,16 +10,24 @@
     ["  lead and trail  ", " lead and trail "],
     ["don’t ʼn’", "don't 'n'"],
     ["ΟΔΟΣ οδος", "οδοσ οδοσ"],
-    ["İstanbul", "i̇stanbul"],
+    ["İstanbul", "istanbul"],
     ["a ­ b", "a b"],
-    ["😀 Smile", "😀 smile"]
+    ["😀 Smile", "😀 smile"],
+    ["Natásha Ærø", "natasha ærø"],
+    ["Émile Zola, Ǖ, Ỗ", "emile zola, u, o"],
+    ["Nata\u0301sha", "natasha"],
+    ["Йод и\u0306од", "йод и\u0306од"],
+    ["Straße œuvre", "straße œuvre"],
+    ["а\u0301 1\u0301", "а\u0301 1\u0301"]
   ],
   "query": [
     ["  Ab  ", "ab"],
     ["a", null],
     ["­ a ­", null],
     ["Ё!", "е!"],
-    ["one  two", "one two"]
+    ["one  two", "one two"],
+    ["Éa", "ea"],
+    ["é", null]
   ],
   "match": [
     {"text": "Ёлка, ёлочка", "query": "ел", "hits": [[0, 2], [6, 8]]},
@@ -31,6 +39,13 @@
     {"text": "😀 don’t", "query": "don't", "hits": [[2, 7]]},
     {"text": "a x  y", "query": " x y ", "hits": [[2, 6]]},
     {"text": "ΟΔΟΣ", "query": "οδοσ", "hits": [[0, 4]]},
-    {"text": "nothing here", "query": "zz", "hits": []}
+    {"text": "nothing here", "query": "zz", "hits": []},
+    {"text": "Natásha", "query": "natasha", "hits": [[0, 7]]},
+    {"text": "Natasha", "query": "NATÁSHA", "hits": [[0, 7]]},
+    {"text": "Nata\u0301sha", "query": "natásha", "hits": [[0, 8]]},
+    {"text": "Nata\u0301", "query": "ta", "hits": [[2, 5]]},
+    {"text": "café crème", "query": "creme", "hits": [[5, 10]]},
+    {"text": "йод иод", "query": "иод", "hits": [[4, 7]]},
+    {"text": "İstanbul", "query": "istanbul", "hits": [[0, 8]]}
   ]
 }

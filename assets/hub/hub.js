@@ -386,7 +386,7 @@ function renderShelf(items, status, { head = [], showLibrary = false, changed = 
     nodes.push(el("ul", { class: "hub-books" }, ...rest.map(item)));
   }
   show(...nodes);
-  linkCatalogBooks(fromLabels, showLibrary ? "all" : "shelf");
+  linkCatalogBooks(fromLabels);
 }
 
 /**
@@ -394,7 +394,7 @@ function renderShelf(items, status, { head = [], showLibrary = false, changed = 
  * their library into links to their cards in Explore, once the shelf is drawn (the
  * catalog opens in the background; a book outside Explore keeps a plain label).
  */
-async function linkCatalogBooks(labels, from) {
+async function linkCatalogBooks(labels) {
   const byAccount = new Map();
   for (const [item, label] of labels) {
     if (item.account && item.content_key) {
@@ -409,7 +409,7 @@ async function linkCatalogBooks(labels, from) {
       const found = await inCatalog(account, list.map(([item]) => item));
       for (const [item, label] of list) {
         if (found.has(item.content_key) && label.isConnected) {
-          const a = el("a", { class: "hub-book-from", href: await cardUrl(account, item, from), title: "This book in Explore" }, label.textContent);
+          const a = el("a", { class: "hub-book-from", href: await cardUrl(account, item), title: "This book in Explore" }, label.textContent);
           label.replaceWith(a);
         }
       }
@@ -1565,7 +1565,7 @@ async function linkBookCard(p, item) {
     if (!item.content_key || !(await inCatalog(p, [item])).has(item.content_key)) {
       return;
     }
-    document.querySelector(".toc-book-link").href = await cardUrl(p, item, "shelf");
+    document.querySelector(".toc-book-link").href = await cardUrl(p, item);
   } catch (e) {
     console.error(e);
   }

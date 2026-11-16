@@ -3,9 +3,12 @@
 //! There is no index. Both the query and every block's text are *normalized* before
 //! they are compared: one code point at a time, each is lowercased (`char::to_lowercase`,
 //! without the context rules of `str::to_lowercase`), `ё` becomes `е` and `ς` becomes
-//! `σ`, the typographic apostrophes `’` and `ʼ` become `'`, soft hyphens and zero-width
-//! characters are dropped, and every run of whitespace (NBSP included) becomes one
-//! space. A match is a plain substring of the normalized text, found left to right
+//! `σ`, Latin letters lose their diacritics (`é` → `e`, `Ǖ` → `u`, as the catalog's
+//! [`fold_full`](crate::fold::fold_full): marks on letters of other scripts stay, so
+//! `й` is not `и`; a combining mark after a Latin letter is dropped, so decomposed text
+//! matches too), the typographic apostrophes `’` and `ʼ` become `'`, soft hyphens and
+//! zero-width characters are dropped, and every run of whitespace (NBSP included)
+//! becomes one space. A match is a plain substring of the normalized text, found left to right
 //! without overlaps; it never spans two blocks.
 //!
 //! The normalized text keeps a map back to the original code points, so a hit is a
@@ -14,7 +17,11 @@
 //! the page; `tests/fixtures/find/normalize.json` (in the repository root) is the table
 //! both are tested with.
 
+use unicode_normalization::UnicodeNormalization;
+use unicode_normalization::char::is_combining_mark;
+
 use super::text::BookText;
+use crate::fold::is_latin;
 use crate::format::model::BlockId;
 
 /// The shortest query, in normalized code points.
@@ -73,10 +80,25 @@ fn normalize_into(text: &str, out: &mut String, mut map: Option<&mut Vec<Span>>)
     }
     // Whether the last pushed character is a space from whitespace.
     let mut in_space = false;
+    // Whether the last pushed character is a Latin letter: a combining mark after it
+    // (decomposed text) is dropped, its range joined to the letter's.
+    let mut after_latin = false;
     for (i, c) in text.chars().enumerate() {
         if dropped(c) {
             continue;
         }
+        if after_latin && is_combining_mark(c) {
+            // Every character the letter became covers the mark.
+            if let Some(map) = map.as_deref_mut()
+                && let Some(start) = map.last().map(|s| s.start)
+            {
+                for span in map.iter_mut().rev().take_while(|s| s.start == start) {
+                    span.end = i + 1;
+                }
+            }
+            continue;
+        }
+        after_latin = false;
         if is_space(c) {
             if in_space {
                 // The run's space covers this character too.
@@ -92,15 +114,31 @@ fn normalize_into(text: &str, out: &mut String, mut map: Option<&mut Vec<Span>>)
         in_space = false;
         match c {
             '’' | 'ʼ' => push(out, &mut map, '\'', i),
-            _ if c.is_ascii() => push(out, &mut map, c.to_ascii_lowercase(), i),
+            _ if c.is_ascii() => {
+                after_latin = c.is_ascii_alphabetic();
+                push(out, &mut map, c.to_ascii_lowercase(), i);
+            }
             _ => {
                 for lower in c.to_lowercase() {
-                    let lower = match lower {
-                        'ё' => 'е',
-                        'ς' => 'σ',
-                        other => other,
-                    };
-                    push(out, &mut map, lower, i);
+                    match lower {
+                        'ё' => push(out, &mut map, 'е', i),
+                        'ς' => push(out, &mut map, 'σ', i),
+                        _ if is_latin(lower) => {
+                            // The letter without its marks (`é` → `e`).
+                            for part in std::iter::once(lower).nfd() {
+                                if !is_combining_mark(part) {
+                                    push(out, &mut map, part, i);
+                                }
+                            }
+                            after_latin = true;
+                        }
+                        // The mark lowercasing puts after a Latin letter (`İ` → `i̇`).
+                        other if after_latin && is_combining_mark(other) => {}
+                        other => {
+                            after_latin = false;
+                            push(out, &mut map, other, i);
+                        }
+                    }
                 }
             }
         }
@@ -115,6 +153,7 @@ fn normalize_into(text: &str, out: &mut String, mut map: Option<&mut Vec<Span>>)
 /// use shelfgauge_core::annotations::find::normalize;
 ///
 /// assert_eq!(normalize("Ёлка\u{a0} и\u{ad}ли"), "елка или");
+/// assert_eq!(normalize("Natásha, Ærø, йод"), "natasha, ærø, йод");
 /// ```
 pub fn normalize(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -453,14 +492,22 @@ mod tests {
     }
 
     #[test]
-    fn a_lowercase_that_changes_the_length_maps_back() {
-        // "İ" lowercases to two code points; both map to the one original.
+    fn dropped_marks_map_back() {
+        // "İ" lowercases to "i" and a combining dot, which goes like a diacritic.
         let mapped = Mapped::new("xİy İ");
-        assert_eq!(mapped.text, "xi\u{307}y i\u{307}");
-        let hits: Vec<_> = mapped.matches("i\u{307}").collect();
+        assert_eq!(mapped.text, "xiy i");
+        let hits: Vec<_> = mapped.matches("i").collect();
         assert_eq!(hits, [(1, 2), (4, 5)]);
-        let hits: Vec<_> = mapped.matches("\u{307}y").collect();
-        assert_eq!(hits, [(1, 3)], "a match from the middle of an expansion");
+        // A decomposed "é" (e and a combining acute): the mark joins the letter's range,
+        // so a hit ending at the letter covers it.
+        let mapped = Mapped::new("xe\u{301}\u{300}y");
+        assert_eq!(mapped.text, "xey");
+        let hits: Vec<_> = mapped.matches("xe").collect();
+        assert_eq!(hits, [(0, 4)]);
+        let hits: Vec<_> = mapped.matches("ey").collect();
+        assert_eq!(hits, [(1, 5)]);
+        // A mark after a letter of another script stays, so "й" is not "и".
+        assert_eq!(Mapped::new("и\u{306}").text, "и\u{306}");
     }
 
     fn b(n: u32) -> BlockId {

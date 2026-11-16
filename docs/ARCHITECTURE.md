@@ -279,7 +279,9 @@ Key design points to keep in mind when implementing:
     searches the open book; the results fill a fourth sidebar tab (a magnifier and
     the number of matches), which exists only while there is a query. No index: the
     query and the rendered text of every leaf block are normalized (lowercase one code
-    point at a time, `ё` → `е`, `ς` → `σ`, `’ʼ` → `'`, soft hyphens and zero-width
+    point at a time, `ё` → `е`, `ς` → `σ`, Latin letters without their diacritics
+    (`é` → `e`, a combining mark after a Latin letter dropped, as `fold_full` folds the
+    catalog; `й` stays), `’ʼ` → `'`, soft hyphens and zero-width
     characters dropped, whitespace runs → one space; `annotations::find` in the core
     crate) and
     matched as plain substrings, never across two blocks; a map leads back to the

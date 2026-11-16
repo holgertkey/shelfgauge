@@ -2630,8 +2630,10 @@
   // Here the matches of the query in this part are highlighted, with the same
   // normalization as the server (crates/shelfgauge-core/src/annotations/find.rs; both are tested with
   // tests/fixtures/find/normalize.json): one code point at a time lowercased, ё → е,
-  // ς → σ, ’ and ʼ → ', soft hyphens and zero-width characters dropped, whitespace
-  // runs → one space. Offsets count code points, like anchors.
+  // ς → σ, Latin letters without their diacritics (é → e; a combining mark after a
+  // Latin letter dropped; й stays), ’ and ʼ → ', soft hyphens and zero-width
+  // characters dropped, whitespace runs → one space. Offsets count code points, like
+  // anchors.
   const FIND_DEBOUNCE_MS = 250;
   const FIND_MIN = 2;
   const FIND_MAX = 100;
@@ -2657,6 +2659,21 @@
     );
   }
 
+  // A Latin letter: the same blocks as `is_latin` in crates/shelfgauge-core/src/fold.rs.
+  function findLatin(c) {
+    return (
+      (c >= 0x41 && c <= 0x5a) ||
+      (c >= 0x61 && c <= 0x7a) ||
+      (c >= 0xc0 && c <= 0x24f) ||
+      (c >= 0x1e00 && c <= 0x1eff) ||
+      (c >= 0x2c60 && c <= 0x2c7f) ||
+      (c >= 0xa720 && c <= 0xa7ff) ||
+      (c >= 0xab30 && c <= 0xab6f)
+    );
+  }
+
+  const FIND_MARK = /\p{M}/u;
+
   // The normalized text, and for each of its UTF-16 units the original code point
   // range it comes from.
   function findNormalize(s) {
@@ -2664,6 +2681,9 @@
     const starts = [];
     const ends = [];
     let inSpace = false;
+    // The last pushed character is a Latin letter: a combining mark after it is
+    // dropped, its range joined to the letter's.
+    let afterLatin = false;
     let i = 0;
     for (const ch of s) {
       const c = ch.codePointAt(0);
@@ -2671,6 +2691,14 @@
         i += 1;
         continue;
       }
+      if (afterLatin && c >= 0x300 && FIND_MARK.test(ch)) {
+        for (let k = ends.length - 1; k >= 0 && starts[k] === starts[ends.length - 1]; k -= 1) {
+          ends[k] = i + 1;
+        }
+        i += 1;
+        continue;
+      }
+      afterLatin = false;
       if (findSpace(c)) {
         if (inSpace) {
           ends[ends.length - 1] = i + 1;
@@ -2689,10 +2717,30 @@
         lower = "'";
       } else if (c < 0x80) {
         lower = ch.toLowerCase();
+        afterLatin = findLatin(c);
       } else {
         // One code point at a time: no context rules (final sigma).
         for (const l of ch.toLowerCase()) {
-          lower += l === "ё" ? "е" : l === "ς" ? "σ" : l;
+          if (l === "ё") {
+            lower += "е";
+            afterLatin = false;
+          } else if (l === "ς") {
+            lower += "σ";
+            afterLatin = false;
+          } else if (findLatin(l.codePointAt(0))) {
+            // The letter without its marks (é → e).
+            for (const part of l.normalize("NFD")) {
+              if (!FIND_MARK.test(part)) {
+                lower += part;
+              }
+            }
+            afterLatin = true;
+          } else if (afterLatin && FIND_MARK.test(l)) {
+            // The mark lowercasing puts after a Latin letter (İ → i̇).
+          } else {
+            lower += l;
+            afterLatin = false;
+          }
         }
       }
       for (let k = 0; k < lower.length; k += 1) {

@@ -117,12 +117,9 @@ export async function inCatalog(account, items) {
   return found;
 }
 
-/**
- * The card of a shelf item of account `account` in Explore; `from` is the Bookshelf
- * its card goes back to: "shelf", or "all" (every library's shelf at once).
- */
-export async function cardUrl(account, item, from) {
-  const q = new URLSearchParams({ book: await bookId(c.unbase64url(item.content_key)), lib: account.account, from });
+/** The card of a shelf item of account `account` in Explore. */
+export async function cardUrl(account, item) {
+  const q = new URLSearchParams({ book: await bookId(c.unbase64url(item.content_key)), lib: account.account });
   return `${base}/showcase?${q}`;
 }
 
@@ -772,13 +769,9 @@ function render() {
     return;
   }
   if (q.has("book")) {
-    // The card has its own title (the book's).
-    // Opened from the Bookshelf: back to it (every library's, with `from=all`).
-    const from = q.get("from");
-    const back = ui.el("p", { class: "hub-back" }, from === "shelf" || from === "all"
-      ? ui.el("a", { href: `${base}/${from === "all" ? "?all" : ""}` }, "‹ Bookshelf")
-      : link("‹ Explore", {}));
-    ui.show(...showcaseTabs(null), back, ...bookCard(q.get("book")));
+    // The card has its own title (the book's); the tabs above it lead back to the
+    // Bookshelf and to Explore (the system's back to where it was opened).
+    ui.show(...showcaseTabs(null), ...bookCard(q.get("book")));
     return;
   }
   const nodes = heading();

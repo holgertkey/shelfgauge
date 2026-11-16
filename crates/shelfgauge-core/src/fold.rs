@@ -133,7 +133,7 @@ pub fn fold_full(text: &str) -> String {
 
 /// Whether `c` is a Latin letter (Basic Latin, Latin-1, Latin Extended A to E,
 /// Latin Extended Additional).
-fn is_latin(c: char) -> bool {
+pub(crate) fn is_latin(c: char) -> bool {
     c.is_ascii_alphabetic()
         || matches!(c,
             '\u{00c0}'..='\u{024f}'

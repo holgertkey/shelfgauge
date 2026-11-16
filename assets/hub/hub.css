@@ -332,10 +332,6 @@
   background: var(--active-bg);
 }
 
-.hub-back {
-  margin: 0 0 0.75rem;
-}
-
 .hub-waiting {
   margin-top: 0.75rem;
 }
