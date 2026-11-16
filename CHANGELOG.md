@@ -184,6 +184,11 @@ Build numbers (`+NNN`) do not get their own sections.
   of dialogue or a space at a line break no longer hides it), the page turn uses the
   same line, and the cover is placed again once the page is at rest after any scroll,
   after the finger lifts, and when fonts, images or the status line change the layout.
+- A page turn on a phone sometimes repeated the last line of a page at the top of the
+  next one: when the bottom edge fell into the space between two paragraphs, the page
+  moved by a page less one line. The next page now starts with the first line after
+  the edge (turning back, the page ends with the last line before it), and a line shown
+  whole right at the bottom edge is not shown again either.
 - No cover over the bottom line after a page turn back (it covered the line just read,
   which ends the page then); a scroll or a turn forward brings it back.
 - A page turn with less than a page left to the end of a part (or to its start,

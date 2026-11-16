@@ -994,9 +994,30 @@ async fn the_cut_line_is_found_across_the_column() {
     );
     // The cover and a forward turn take the same line: cut by the edge, or faded by the
     // fade above the status line deeper than FADE_SLACK of it.
+    let turn_page = reader_js
+        .split("function turnPage(forward) {")
+        .nth(1)
+        .and_then(|rest| rest.split("\n  }\n").next())
+        .expect("turnPage in reader.js");
+    assert!(turn_page.contains("let line = forward ? cutLine() : lineAt(top + 1);"));
+    // A line found within LINE_SLOP of the bottom edge but whole on the page is not
+    // repeated: the next page starts after it.
+    assert!(turn_page.contains("const at = lineAt(bottom - 1);"));
+    assert!(turn_page.contains("at.bottom <= bottom + 1"));
+    // The edge in the space between paragraphs: the first line past it, else right
+    // after the last whole line before it, not a page less one line (that repeated the
+    // last line of the page at the top of the next one).
+    assert!(turn_page.contains("line = lineBeyond(edge, dir, 2 * lineHeight);"));
+    assert!(turn_page.contains("lineBeyond(edge, -dir, lineHeight)"));
+    let line_beyond = reader_js
+        .split("function lineBeyond(y, dir, reach) {")
+        .nth(1)
+        .and_then(|rest| rest.split("\n  }\n").next())
+        .expect("lineBeyond in reader.js");
+    // It never skips an image or a table.
+    assert!(line_beyond.contains("text.querySelectorAll(OBJECTS)"));
     assert!(
-        reader_js
-            .contains("const line = forward ? cutLine() || lineAt(bottom - 1) : lineAt(top + 1);")
+        reader_js.contains("const OBJECTS = \"img, svg, video, picture, object, iframe, table\";")
     );
     let cut_line = reader_js
         .split("function cutLine() {")
@@ -1041,7 +1062,7 @@ async fn the_cut_line_is_found_across_the_column() {
     // the browser may settle the scroll later: the light sits in the document, on the
     // kept line, wherever the scroll ends.
     assert!(reader_js.contains(
-        "const at = window.scrollY + delta;\n      window.scrollBy({ top: delta, behavior: \"instant\" });\n      lightLine(band[0] + at, band[1] + at);"
+        "const at = window.scrollY + delta;\n      window.scrollBy({ top: delta, behavior: \"instant\" });\n      if (band) {\n        lightLine(band[0] + at, band[1] + at);"
     ));
     let reader_css = server
         .ok("/assets/reader.css")

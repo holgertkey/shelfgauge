@@ -1929,6 +1929,34 @@
     return box ? { top: box.top, bottom: box.bottom } : null;
   }
 
+  // The nearest text line past height `y` of the window in direction `dir` (1 down,
+  // -1 up) within `reach`, when only the space between lines or paragraphs lies
+  // between: null across an image or a table, which a turn must not skip.
+  const OBJECTS = "img, svg, video, picture, object, iframe, table";
+  function lineBeyond(y, dir, reach) {
+    const lo = Math.min(y, y + dir * reach);
+    const hi = Math.max(y, y + dir * reach);
+    const objects = [];
+    for (const el of text.querySelectorAll(OBJECTS)) {
+      const r = el.getBoundingClientRect();
+      if (r.height > 0 && r.bottom > lo && r.top < hi) {
+        objects.push(r);
+      }
+    }
+    // Steps of twice the slop: lineAt finds a line within the slop on either side.
+    for (let d = 2 * LINE_SLOP; d <= reach; d += 2 * LINE_SLOP) {
+      const at = y + dir * d;
+      if (objects.some((r) => r.top - LINE_SLOP <= at && r.bottom + LINE_SLOP >= at)) {
+        return null;
+      }
+      const line = lineAt(at);
+      if (line) {
+        return line;
+      }
+    }
+    return null;
+  }
+
   function flushTurn() {
     if (pendingTurn) {
       const turn = pendingTurn;
@@ -1987,10 +2015,31 @@
     }
     const lineHeight = parseFloat(getComputedStyle(text).lineHeight) || 24;
     const height = bottom - top;
-    // Forward: the line at the bottom edge goes to the top. Back: the line at the top
-    // edge goes to the bottom. Else (no text line there, or a turn that would hardly
-    // move) a page less one line.
-    const line = forward ? cutLine() || lineAt(bottom - 1) : lineAt(top + 1);
+    // Forward: the line cut at the bottom edge goes to the top (a line shown whole is
+    // not repeated). Back: the line at the top edge goes to the bottom. With the edge
+    // in the space between two lines (the margin between paragraphs), the first line
+    // past the edge does; without one near, the page ends (starts) right after
+    // (before) the last whole line before the edge. Else (an image or a table there,
+    // or a turn that would hardly move) a page less one line.
+    const dir = forward ? 1 : -1;
+    let edge = forward ? bottom : top;
+    let line = forward ? cutLine() : lineAt(top + 1);
+    let whole = null;
+    if (forward && !line) {
+      // Found within LINE_SLOP of the bottom edge, a line not cut by it is whole on
+      // the page (cutLine did not take it).
+      const at = lineAt(bottom - 1);
+      if (at && at.top > top && at.top < bottom - 1 && at.bottom <= bottom + 1) {
+        whole = at;
+        edge = at.bottom;
+      } else {
+        line = at;
+      }
+    }
+    if (!line) {
+      line = lineBeyond(edge, dir, 2 * lineHeight);
+      whole = line ? null : whole || lineBeyond(edge, -dir, lineHeight);
+    }
     let delta = forward ? height - lineHeight : -(height - lineHeight);
     let band = forward ? [top, top + lineHeight] : [bottom - lineHeight, bottom];
     if (line) {
@@ -1999,6 +2048,10 @@
         delta = aligned;
         band = [line.top - delta, line.bottom - delta];
       }
+    } else if (whole) {
+      // Nothing kept to light up.
+      delta = forward ? whole.bottom + 1 - top : whole.top - 1 - bottom;
+      band = null;
     }
     const scroll = () => {
       pageTurnUntil = Date.now() + 400;
@@ -2009,7 +2062,9 @@
       // have put it.
       const at = window.scrollY + delta;
       window.scrollBy({ top: delta, behavior: "instant" });
-      lightLine(band[0] + at, band[1] + at);
+      if (band) {
+        lightLine(band[0] + at, band[1] + at);
+      }
       // Turning back, the kept line ends the page: no cover until the reader moves on.
       cutPaused = !forward;
       coverCut();

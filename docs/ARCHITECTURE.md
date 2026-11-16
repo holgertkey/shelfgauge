@@ -525,8 +525,11 @@ Page turns (`reader.js`, touch screens only): a tap on the outer 30 % of the tex
 either side or a sideways swipe (at least 60 px, mostly horizontal, within 600 ms, not
 from the screen edges of 24 px) turns a page; a tap in the middle shows or hides the top
 bar in focus mode, and a turn hides it. A page ends at the start of the text line at the
-bottom edge (found with `caretPositionFromPoint`, else a page less one line), so that
-line opens the next page uncut; it is lit up briefly (`.turn-line`). In focus mode (all
+bottom edge (found from the text boxes across the column), so that line opens the next
+page uncut; it is lit up briefly (`.turn-line`). With the edge in the space between two
+lines or paragraphs, the first line past it opens the next page (without one near, the
+page starts right after the last whole line); a line shown whole at the edge is not
+repeated. Only an image or a table at the edge turns a page less one line. In focus mode (all
 pointers) a page at rest, after a turn or once scrolling has stopped (`scrollend`, else
 150 ms without scrolling), covers the text line cut by the bottom edge (`.page-cut`, in
 the document down to the screen bottom, re-placed on resize and `visualViewport`
