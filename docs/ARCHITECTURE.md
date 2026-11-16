@@ -1209,8 +1209,8 @@ Phase 26: `assets/hub/` (`hub.js` pages, `store.js` IndexedDB and API calls,
 - **This device** (`/device`, 0.19.1; the top bar's `device-link`: a person icon in
   the shared shell, replaced by `hub.js` with the current account's initials on a
   palette color picked by a hash of the account id, `.avatar` of the library; cached by the
-  worker like the other pages; the reading view has neither it nor the home link —
-  its sidebar's Bookshelf leads back): the library names from the shelf items' `instance`,
+  worker like the other pages; the reading view has not it; its home link, the outline
+  logo shown on a phone, and its sidebar's Bookshelf lead back): the library names from the shelf items' `instance`,
   the device name (`GET /api/devices`, the `current` entry, opened with the account
   key), last sync (`state["synced_at"]`, written when a pull reaches the hub's newest
   record) and the outbox count, local counts (`store.offline()`, book file copies)

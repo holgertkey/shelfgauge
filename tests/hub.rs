@@ -2654,8 +2654,8 @@ async fn the_service_worker_and_manifest_make_the_reader_installable() {
             )),
             "{page}"
         );
-        // The shelf's top bar leads to This device; the reading view has neither that
-        // nor the home link (its sidebar has Bookshelf).
+        // The shelf's top bar leads to This device; the reading view has not that, but
+        // its home link, the outline logo (a phone only), leads to the Bookshelf.
         assert!(page.contains(r#"class="icon-button home-link""#), "{page}");
         assert!(
             page.contains(r#"class="icon-button device-link""#),
@@ -2667,7 +2667,13 @@ async fn the_service_worker_and_manifest_make_the_reader_installable() {
         assert_eq!(read.status, StatusCode::OK);
         let read = String::from_utf8(read.body).unwrap();
         assert!(read.contains(r#"class="toc-book""#), "{read}");
-        assert!(!read.contains("home-link"), "{read}");
+        assert!(
+            read.contains(&format!(
+                r##"<a class="icon-button home-link" href="{prefix}/" title="Bookshelf" aria-label="Bookshelf">
+    <svg class="icon brand-logo" aria-hidden="true"><use href="#i-logo"></use></svg>"##
+            )),
+            "{read}"
+        );
         assert!(!read.contains("device-link"), "{read}");
     }
 }

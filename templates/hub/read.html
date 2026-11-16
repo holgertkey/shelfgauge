@@ -13,9 +13,13 @@
     <svg class="icon" aria-hidden="true"><use href="#i-menu"></use></svg>
   </button>
 {%- endblock %}
-{#- The way back is the sidebar's "Bookshelf" (and the system's back). #}
-{% block home %}{% endblock %}
-{#- The outline logo among the reader's outline icons (a wide screen only). #}
+{#- The outline logo among the reader's outline icons: before the name on a wide
+    screen, alone as the button to the Bookshelf on a phone (the name is hidden there). #}
+{% block home %}
+  <a class="icon-button home-link" href="{{ base }}/" title="Bookshelf" aria-label="Bookshelf">
+    <svg class="icon brand-logo" aria-hidden="true"><use href="#i-logo"></use></svg>
+  </a>
+{%- endblock %}
 {% block logo %}<svg class="icon brand-logo" aria-hidden="true"><use href="#i-logo"></use></svg>{% endblock %}
 {% block device %}{% endblock %}
 {% block search %}
