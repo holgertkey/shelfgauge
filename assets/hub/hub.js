@@ -1555,6 +1555,24 @@ function partNav(summary, index) {
   ];
 }
 
+/**
+ * Points the sidebar's book link at the card of shelf item `item` of account `p` in
+ * Explore when the catalog this device keeps of its library has the book (looked up in
+ * the background); otherwise it stays on the Bookshelf.
+ */
+async function linkBookCard(p, item) {
+  try {
+    if (!item.content_key || !(await inCatalog(p, [item])).has(item.content_key)) {
+      return;
+    }
+    const link = document.querySelector(".toc-book-link");
+    link.href = await cardUrl(p, item, "shelf");
+    link.title = "This book in Explore";
+  } catch (e) {
+    console.error(e);
+  }
+}
+
 /** Fills the reading view with part `index` of `book`. */
 function fillPage(book, index, html) {
   const s = book.summary;
@@ -1567,12 +1585,16 @@ function fillPage(book, index, html) {
     document.querySelector(".topbar").lang = "en";
   }
   const partTitle = part ? part.title : "";
+  const authors = s.authors.join(", ");
   document.title = `${s.parts.length > 1 ? `${s.title} — ${partTitle}` : s.title} · shelfgauge`;
   const article = document.querySelector("article.reader");
   const head = article.querySelector(".reader-head");
   head.querySelector(".book-link").textContent = s.title;
   head.querySelector(".part-title").textContent = partTitle ? ` · ${partTitle}` : "";
   document.querySelector(".toc-book .book-title").textContent = s.title;
+  const tocAuthors = document.querySelector(".toc-book .book-authors");
+  tocAuthors.textContent = authors;
+  tocAuthors.hidden = !authors;
   for (const nav of article.querySelectorAll(".reader-nav")) {
     nav.replaceChildren(...partNav(s, index));
   }
@@ -1592,7 +1614,6 @@ function fillPage(book, index, html) {
     tocPanel.remove();
   }
 
-  const authors = s.authors.join(", ");
   document.querySelector(".running-title").textContent =
     (part && part.head) || `${authors ? `${authors} · ` : ""}${s.title}`;
   const progress = part && part.progress;
@@ -2171,6 +2192,7 @@ async function readerPage(id) {
       html = book.reader.renderPart(index);
     }
     fillPage(book, index, html);
+    linkBookCard(p, item);
     document.querySelector(".find-form").dataset.part = index + 1;
     if (Number.isFinite(share) && count) {
       // The track's jump into another part: the block at that share, as a fragment.

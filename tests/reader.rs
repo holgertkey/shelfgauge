@@ -1411,6 +1411,39 @@ async fn read_pages_name_the_book_for_reader_views() {
 }
 
 #[tokio::test]
+async fn the_sidebar_leads_to_the_card_with_title_and_authors() {
+    let lib = TestLibrary::new();
+    lib.write(
+        "anonymous.fb2",
+        br#"<?xml version="1.0" encoding="UTF-8"?>
+<FictionBook><description><title-info><book-title>Anonymous</book-title><lang>en</lang>
+</title-info></description><body><section><p>Text</p></section></body></FictionBook>"#,
+    );
+    lib.scan();
+    let server = lib.server("/", whole());
+
+    let id = lib.id_of("full.fb2");
+    let page = server.ok(&format!("/book/{id}/read")).await.body;
+    assert!(
+        page.contains(&format!(
+            "<div class=\"toc-book\"><a class=\"toc-book-link\" href=\"/book/{id}\" title=\"The book's card\"><span class=\"toc-back\" aria-hidden=\"true\">‹</span><span class=\"toc-book-names\"><span class=\"book-title\">Старый маяк</span><span class=\"book-authors\">Сидоров Иван Петрович, The Lighthouse Keeper</span></span></a>"
+        )),
+        "{page}"
+    );
+
+    // No authors: no empty line for them.
+    let anonymous = server
+        .ok(&format!("/book/{}/read", lib.id_of("anonymous.fb2")))
+        .await
+        .body;
+    assert!(
+        anonymous.contains("<span class=\"book-title\">Anonymous</span></span></a>"),
+        "{anonymous}"
+    );
+    assert!(!anonymous.contains("book-authors"), "{anonymous}");
+}
+
+#[tokio::test]
 async fn epub_books_are_read_and_protected_ones_say_why_not() {
     let lib = TestLibrary::new();
     lib.write("war.epub", &common::epub3());

@@ -42,7 +42,10 @@
 {% block sidebar %}
 {#- The book link with the pager and the tabs; reader.js keeps it at the top. #}
 <div class="sidebar-head">
-<div class="toc-book"><a href="{{ card_href }}">‹ {{ book_title }}</a>
+{#- The book's card: its title (two lines at most) and authors (one), cut short with
+    an ellipsis (reader.css). #}
+<div class="toc-book"><a class="toc-book-link" href="{{ card_href }}" title="The book's card"><span class="toc-back" aria-hidden="true">‹</span><span class="toc-book-names"><span class="book-title">{{ book_title }}</span>
+{%- if !book_authors.is_empty() %}<span class="book-authors">{{ book_authors }}</span>{% endif %}</span></a>
   {#- reader.js: page through the open tab like Page Up / Page Down. #}
   <span class="tab-pager" hidden lang="en">
     <button type="button" class="icon-button" data-page="-1" title="Page up" aria-label="Page up">‹</button>

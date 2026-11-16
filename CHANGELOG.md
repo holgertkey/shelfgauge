@@ -92,6 +92,10 @@ Build numbers (`+NNN`) do not get their own sections.
 - The reader's top bar has a new order after the search: Aa, the note pencil, the
   bookmark (from the right edge: bookmark, note, Aa, search), in the library and the
   hub reader; Focus mode, shown on a wide screen only, comes after them.
+- The book link at the top of the reader's sidebar shows the title (up to two lines)
+  and the authors (one line) under it, cut short with an ellipsis. In the hub reader it
+  leads to the book's card in Explore when the library's catalog on the device has the
+  book, and to the Bookshelf otherwise; in the library it leads to the book's card.
 - The hub reader on a phone has the app's logo again in the top bar, next to the
   sidebar button, leading to the Bookshelf, like the house in the library's reader.
 - The search in a book on a phone: a magnifier in the top bar like the buttons next to

@@ -2667,6 +2667,13 @@ async fn the_service_worker_and_manifest_make_the_reader_installable() {
         assert_eq!(read.status, StatusCode::OK);
         let read = String::from_utf8(read.body).unwrap();
         assert!(read.contains(r#"class="toc-book""#), "{read}");
+        // The sidebar's book link: the Bookshelf until hub.js finds the book's card.
+        assert!(
+            read.contains(&format!(
+                r#"<a class="toc-book-link" href="{prefix}/" title="Bookshelf">"#
+            )),
+            "{read}"
+        );
         assert!(
             read.contains(&format!(
                 r##"<a class="icon-button home-link" href="{prefix}/" title="Bookshelf" aria-label="Bookshelf">

@@ -28,15 +28,47 @@
 .toc-book {
   display: flex;
   gap: 0.5rem;
-  align-items: center;
+  align-items: flex-start;
 }
 
+/* The book's title (two lines at most) and authors (one), each cut short with an
+   ellipsis; the chevron stands before the first line, the wrapped lines under the
+   text. */
 .toc-book > a {
+  display: flex;
   flex: 1;
+  gap: 0.3rem;
   min-width: 0;
+}
+
+.toc-back {
+  flex: none;
+}
+
+.toc-book-names {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.toc-book-names > span {
+  display: -webkit-box;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.toc-book-names > .book-authors {
+  font-weight: 400;
+  color: var(--muted);
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+}
+
+.toc-book-names > .book-authors[hidden] {
+  display: none;
 }
 
 .reader-tabs a {
