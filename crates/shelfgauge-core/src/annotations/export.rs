@@ -70,10 +70,12 @@ impl ExportItem<'_> {
 }
 
 /// The library's export of a book: [`MARKER`], title and authors, a warning for an
-/// `orphan` (no book in the library has this content any more), the bookmarks, the
-/// quotes grouped by section, each with its note and a link, then the notes on places,
-/// each with a link to its place. Quotes and notes are plain text paragraphs, not
-/// Markdown block quotes.
+/// `orphan` (no book in the library has this content any more), the bookmarks
+/// (numbered in the order of `items`, which has them in the order they were made, as
+/// in the reader: `- [Bookmark 1](link) — <the start of the line there>`), the quotes
+/// grouped by section, each with its note and a link, then the notes on places, each
+/// with a link to its place. Quotes and notes are plain text paragraphs, not Markdown
+/// block quotes.
 pub fn linked(head: &ExportHead, orphan: bool, items: &[ExportItem]) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "{MARKER}\n");
@@ -90,12 +92,13 @@ pub fn linked(head: &ExportHead, orphan: bool, items: &[ExportItem]) -> String {
     let notes = of_kind(items, ExportKind::PlaceNote);
     if !bookmarks.is_empty() {
         let _ = writeln!(out, "## Bookmarks\n");
-        for bookmark in bookmarks {
+        for (i, bookmark) in bookmarks.into_iter().enumerate() {
             let _ = writeln!(
                 out,
-                "- [{}]({})",
-                inline(&bookmark.label).replace(']', "\\]"),
-                bookmark.href
+                "- [Bookmark {}]({}) — {}",
+                i + 1,
+                bookmark.href,
+                inline(&bookmark.label)
             );
         }
         out.push('\n');
@@ -461,17 +464,22 @@ mod tests {
     fn linked_keeps_the_library_form() {
         let mut lost = item(ExportKind::Quote, "Elsewhere", None, Some("Chapter 2"));
         lost.lost = true;
+        let mut second = item(ExportKind::Bookmark, "", None, None);
+        second.label = "With [brackets]".into();
         let items = [
             item(ExportKind::Bookmark, "", None, Some("Chapter 1")),
             item(ExportKind::Quote, "Quoted", Some("Mine"), Some("Chapter 1")),
             lost,
+            second,
             item(ExportKind::PlaceNote, "", Some("A thought"), None),
         ];
         assert_eq!(
             linked(&head(), false, &items),
             format!(
                 "{MARKER}\n\n# The Book\n\nA. Author\n\n\
-                 ## Bookmarks\n\n- [The start of the line…](http://h/book/1/read?at=b3&from=mark)\n\n\
+                 ## Bookmarks\n\n\
+                 - [Bookmark 1](http://h/book/1/read?at=b3&from=mark) — The start of the line…\n\
+                 - [Bookmark 2](http://h/book/1/read?at=b3&from=mark) — With [brackets]\n\n\
                  ## Quotes\n\n### Chapter 1\n\nQuoted\n\nMine\n\n\
                  [open](http://h/book/1/read?at=b3&from=mark)\n\n\
                  ### Chapter 2\n\nElsewhere\n\n\

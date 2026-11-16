@@ -3,13 +3,36 @@
 <div class="annotation-lists">
 <section class="tab-panel" id="tab-bookmarks" data-tab="bookmarks" aria-label="Bookmarks">
   <h2 class="panel-title">Bookmarks</h2>
-  {%- if lists.bookmarks.is_empty() %}
-  <p class="hint">No bookmarks yet. A bookmark remembers the place at the top of the page (press <kbd>b</kbd>).</p>
-  {%- else %}
+  {%- if lists.no_bookmarks_or_notes() %}
+  <p class="hint">No bookmarks yet. A bookmark remembers the place at the top of the page (press <kbd>b</kbd>). To write a note on that place, press the pencil in the top bar (or <kbd>w</kbd>); a bookmark with a note written to it becomes a note.</p>
+  {%- endif %}
+  {%- if !lists.bookmarks.is_empty() %}
   <ul class="annotation-links">
     {%- for item in lists.bookmarks %}
-    <li{% if let Some(progress) = item.progress %} data-progress="{{ progress }}"{% endif %}><a href="{{ item.href }}" data-mark-link>{{ item.label }}</a>{% if item.lost %} <span class="badge" title="The book has changed; this place was not found in it.">place not found</span>{% endif %}
+    {#- Numbered in the order they were made; the start of the line at the place under
+        the number. A note written to a bookmark makes it a note (below). #}
+    <li class="bookmark-item"{% if let Some(progress) = item.progress %} data-progress="{{ progress }}"{% endif %}><a href="{{ item.href }}" data-mark-link><span class="bookmark-name">{{ item.label }}</span>{% if !item.place.is_empty() %}<span class="bookmark-place">{{ item.place }}</span>{% endif %}</a>{% if item.lost %} <span class="badge" title="The book has changed; this place was not found in it.">place not found</span>{% endif %}
+      <details class="note-edit"><summary class="link-button" title="Write a note" aria-label="Write a note"><svg class="icon" aria-hidden="true"><use href="#i-edit"></use></svg></summary>
+        <form method="post" action="{{ item.note_action }}" class="note-form"><input type="hidden" name="back" value="{{ lists.back }}"><textarea name="note" rows="3" aria-label="Note" placeholder="Note">{{ item.note }}</textarea>
+          <div class="note-actions"><button type="submit" class="small primary">Save</button><button type="reset" class="small note-cancel">Cancel</button></div></form></details>
       <form method="post" action="{{ item.delete_action }}" class="delete-form"><input type="hidden" name="back" value="{{ lists.back }}"><button type="submit" class="link-button" title="Delete this bookmark" aria-label="Delete">×</button></form></li>
+    {%- endfor %}
+  </ul>
+  {%- endif %}
+  {%- if !lists.notes.is_empty() %}
+  <h3 class="list-title">Notes</h3>
+  <ul class="annotation-links">
+    {%- for item in lists.notes %}
+    <li class="note-item" data-id="{{ item.id }}"{% if item.lost %} data-lost{% endif %}>
+      {#- The start of the note opens the whole note in a panel with a link to its
+          place (reader.js); without JS, the link below leads there. An emptied note
+          is a bookmark again. #}
+      <button type="button" class="mark-note-open" data-href="{{ item.href }}" title="Show the whole note"><span class="mark-note-text">{{ item.note }}</span></button>{% if item.lost %} <span class="badge" title="The book has changed; this place was not found in it.">place not found</span>{% endif %}
+      <noscript><a href="{{ item.href }}">Go to the place</a></noscript>
+      <details class="note-edit"><summary class="link-button" title="Edit the note" aria-label="Edit the note"><svg class="icon" aria-hidden="true"><use href="#i-edit"></use></svg></summary>
+        <form method="post" action="{{ item.note_action }}" class="note-form"><input type="hidden" name="back" value="{{ lists.back }}"><textarea name="note" rows="3" aria-label="Note" placeholder="Note">{{ item.note }}</textarea>
+          <div class="note-actions"><button type="submit" class="small primary">Save</button><button type="reset" class="small note-cancel">Cancel</button></div></form></details>
+      <form method="post" action="{{ item.delete_action }}" class="delete-form"><input type="hidden" name="back" value="{{ lists.back }}"><button type="submit" class="link-button" title="Delete this note" aria-label="Delete">×</button></form></li>
     {%- endfor %}
   </ul>
   {%- endif %}
@@ -17,13 +40,14 @@
 <section class="tab-panel" id="tab-marks" data-tab="marks" aria-label="Quotes">
   <h2 class="panel-title">Quotes</h2>
   {%- if !lists.no_quotes_or_notes() %}
-  {#- The quotes and notes as plain text (no links, no bookmarks): Export shares or
-      downloads it as a file, Copy all copies it (reader.js); shown with JS only. #}
+  {#- The quotes and notes (those of the Bookmarks tab too) as plain text (no links,
+      no bookmarks): Export shares or downloads it as a file, Copy all copies it
+      (reader.js); shown with JS only. #}
   <div class="export-actions" hidden><button type="button" class="small export-file" data-file="{{ lists.export_file_name() }}">Export</button><button type="button" class="small export-copy">Copy all</button></div>
   <textarea class="export-text" hidden readonly tabindex="-1" aria-hidden="true">{{ lists.export_text() }}</textarea>
   {%- endif %}
-  {%- if lists.no_quotes_or_notes() %}
-  <p class="hint">No quotes yet. Select text in the book and choose “Quote” to keep it, or “Note” to add a note. To write a note without a quote, press the pencil in the top bar (or <kbd>w</kbd>): it goes on the place at the top of the page.</p>
+  {%- if lists.marks.is_empty() %}
+  <p class="hint">No quotes yet. Select text in the book and choose “Quote” to keep it, or “Note” to add a note. Notes without a quote are in the Bookmarks tab.</p>
   {%- endif %}
   {%- if !lists.marks.is_empty() %}
   <ul class="annotation-links">
@@ -39,22 +63,6 @@
         <form method="post" action="{{ item.note_action }}" class="note-form"><input type="hidden" name="back" value="{{ lists.back }}"><textarea name="note" rows="3" aria-label="Note" placeholder="Note">{{ item.note }}</textarea>
           <div class="note-actions"><button type="submit" class="small primary">Save</button><button type="reset" class="small note-cancel">Cancel</button></div></form></details>
       <form method="post" action="{{ item.delete_action }}" class="delete-form"><input type="hidden" name="back" value="{{ lists.back }}"><button type="submit" class="link-button" title="Delete this quote" aria-label="Delete">×</button></form></li>
-    {%- endfor %}
-  </ul>
-  {%- endif %}
-  {%- if !lists.notes.is_empty() %}
-  <h3 class="list-title">Notes</h3>
-  <ul class="annotation-links">
-    {%- for item in lists.notes %}
-    <li class="note-item" data-id="{{ item.id }}"{% if item.lost %} data-lost{% endif %}>
-      {#- The start of the note opens the whole note in a panel with a link to its
-          place (reader.js); without JS, the link below leads there. #}
-      <button type="button" class="mark-note-open" data-href="{{ item.href }}" title="Show the whole note"><span class="mark-note-text">{{ item.note }}</span></button>{% if item.lost %} <span class="badge" title="The book has changed; this place was not found in it.">place not found</span>{% endif %}
-      <noscript><a href="{{ item.href }}">Go to the place</a></noscript>
-      <details class="note-edit"><summary class="link-button" title="Edit the note" aria-label="Edit the note"><svg class="icon" aria-hidden="true"><use href="#i-edit"></use></svg></summary>
-        <form method="post" action="{{ item.note_action }}" class="note-form"><input type="hidden" name="back" value="{{ lists.back }}"><textarea name="note" rows="3" aria-label="Note" placeholder="Note" required>{{ item.note }}</textarea>
-          <div class="note-actions"><button type="submit" class="small primary">Save</button><button type="reset" class="small note-cancel">Cancel</button></div></form></details>
-      <form method="post" action="{{ item.delete_action }}" class="delete-form"><input type="hidden" name="back" value="{{ lists.back }}"><button type="submit" class="link-button" title="Delete this note" aria-label="Delete">×</button></form></li>
     {%- endfor %}
   </ul>
   {%- endif %}

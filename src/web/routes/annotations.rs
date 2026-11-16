@@ -34,7 +34,8 @@ use crate::annotations::lists::ListItem;
 pub(crate) use crate::annotations::lists::Lists;
 use shelfgauge_core::annotations::export::ExportHead;
 
-/// A book's bookmarks and marks, in book order; with the book's `text`, items carry
+/// A book's bookmarks (in the order they were made), marks and notes (in book order;
+/// see [`Lists::new`]); with the book's `text`, items carry
 /// their [`ListItem::progress`].
 pub(crate) fn annotation_lists(
     urls: &Urls,
@@ -48,6 +49,8 @@ pub(crate) fn annotation_lists(
         id: a.id.clone(),
         href: urls.read_mark(book_id, a.anchor.start_block, a.anchor.start_offset),
         label: a.label(),
+        place: String::new(),
+        created_at: a.created_at,
         note: a.note().unwrap_or("").to_owned(),
         text: a.quote.text.clone(),
         section_title: a.section_title.clone(),
@@ -444,8 +447,9 @@ fn failed(json: bool, e: AppError) -> Response {
     }
 }
 
-/// `POST /annotation/{id}/note`: replaces the note (a blank note removes it; a note
-/// on a place cannot be blank, `422`).
+/// `POST /annotation/{id}/note`: replaces the note (a blank note removes it). On an
+/// annotation without quoted text a note makes it a note on its place, and a blank
+/// note makes that a bookmark again ([`store::set_note`]).
 pub(crate) async fn note(
     State(state): State<AppState>,
     current: CurrentProfile,
@@ -463,13 +467,6 @@ pub(crate) async fn note(
             .user_db(move |state, index| {
                 check_note(state, note.as_deref())?;
                 let user = state.userdata().lock();
-                let blank = note.as_deref().is_none_or(|n| n.trim().is_empty());
-                if blank
-                    && store::get(&user, current.id(), &id)?
-                        .is_some_and(|a| a.place_note && a.deleted_at.is_none())
-                {
-                    return Err(AppError::BadRequest(BLANK_PLACE_NOTE.to_owned()));
-                }
                 let annotation = store::set_note(&user, current.id(), &id, note.as_deref(), now())?
                     .ok_or(AppError::NotFound)?;
                 export(state, index, &user, &annotation.book_key);

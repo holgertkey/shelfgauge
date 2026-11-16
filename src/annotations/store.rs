@@ -663,7 +663,14 @@ pub fn get(
 }
 
 /// Replaces the note of a live annotation of `profile`; returns it, or `None` if
-/// `profile` has no such live annotation.
+/// `profile` has no such live annotation. An annotation without quoted text becomes a
+/// note on its place with a note that is not blank, and a bookmark without one.
+///
+/// The new `updated_at` is `now`, but always after the previous one: records merged
+/// through the hub keep the newest `updated_at` (a tie goes by the record's bytes),
+/// and it is in whole seconds, so a change made in the second the record was made or
+/// synced must still be newer than the version before it. The hub reader does the
+/// same (`changedAt` in `assets/hub/hub.js`).
 pub fn set_note(
     conn: &Connection,
     profile: ProfileId,
@@ -672,7 +679,8 @@ pub fn set_note(
     now: i64,
 ) -> Result<Option<Annotation>, StorageError> {
     let changed = conn.execute(
-        "UPDATE annotations SET note = ?2, updated_at = ?3
+        "UPDATE annotations SET note = ?2, updated_at = max(?3, updated_at + 1),
+                place_note = (text = '' AND ?2 IS NOT NULL)
          WHERE id = ?1 AND profile_id = ?4 AND deleted_at IS NULL",
         params![id, stored_note(note), now, profile],
     )?;
@@ -683,7 +691,8 @@ pub fn set_note(
 }
 
 /// Deletes a live annotation of `profile` (soft, reason [`DeletedReason::User`]);
-/// returns it, or `None` if `profile` has no such live annotation.
+/// returns it, or `None` if `profile` has no such live annotation. The new
+/// `updated_at` is `now`, but always after the previous one, as in [`set_note`].
 pub fn delete(
     conn: &Connection,
     profile: ProfileId,
@@ -691,7 +700,8 @@ pub fn delete(
     now: i64,
 ) -> Result<Option<Annotation>, StorageError> {
     let changed = conn.execute(
-        "UPDATE annotations SET deleted_at = ?2, deleted_reason = 'user', updated_at = ?2
+        "UPDATE annotations SET deleted_at = ?2, deleted_reason = 'user',
+                updated_at = max(?2, updated_at + 1)
          WHERE id = ?1 AND profile_id = ?3 AND deleted_at IS NULL",
         params![id, now, profile],
     )?;
@@ -729,32 +739,29 @@ pub fn for_key(conn: &Connection, key: &[u8]) -> Result<Vec<Annotation>, Storage
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
-/// The number of live bookmarks and marks (quotes and notes on places) of `profile`
-/// in a book.
+/// The number of live bookmarks (with the notes on places) and quotes of `profile` in
+/// a book.
 pub fn counts(
     conn: &Connection,
     profile: ProfileId,
     key: &[u8],
 ) -> Result<(u64, u64), StorageError> {
     Ok(conn.query_row(
-        "SELECT count(*) FILTER (WHERE text = '' AND NOT place_note),
-                count(*) FILTER (WHERE text != '' OR place_note)
+        "SELECT count(*) FILTER (WHERE text = ''), count(*) FILTER (WHERE text != '')
          FROM annotations WHERE profile_id = ?1 AND book_key = ?2 AND deleted_at IS NULL",
         params![profile, key],
         |row| Ok((row.get::<_, i64>(0)? as u64, row.get::<_, i64>(1)? as u64)),
     )?)
 }
 
-/// The number of live bookmarks and marks (quotes and notes on places) of `profile`
-/// in every book that has any:
-/// `(book key, bookmarks, marks)`.
+/// The number of live bookmarks (with the notes on places) and quotes of `profile` in
+/// every book that has any: `(book key, bookmarks, quotes)`.
 pub fn counts_by_book(
     conn: &Connection,
     profile: ProfileId,
 ) -> Result<Vec<(Vec<u8>, u64, u64)>, StorageError> {
     let mut stmt = conn.prepare(
-        "SELECT book_key, count(*) FILTER (WHERE text = '' AND NOT place_note),
-                count(*) FILTER (WHERE text != '' OR place_note)
+        "SELECT book_key, count(*) FILTER (WHERE text = ''), count(*) FILTER (WHERE text != '')
          FROM annotations WHERE profile_id = ?1 AND deleted_at IS NULL GROUP BY book_key",
     )?;
     let rows = stmt.query_map([profile], |row| {
@@ -1450,7 +1457,7 @@ mod tests {
     }
 
     #[test]
-    fn place_notes_count_with_the_marks() {
+    fn place_notes_count_with_the_bookmarks() {
         let data = UserData::open_in_memory().unwrap();
         let conn = data.lock();
         insert(&conn, P, &new(b"k", 1, ""), 1).unwrap();
@@ -1462,10 +1469,77 @@ mod tests {
         assert!(note.place_note && !note.is_bookmark());
         assert_eq!(note.note.as_deref(), Some("A thought"));
         assert_eq!(get(&conn, P, &note.id).unwrap().unwrap(), note);
-        assert_eq!(counts(&conn, P, b"k").unwrap(), (1, 2));
-        assert_eq!(counts_by_book(&conn, P).unwrap(), [(b"k".to_vec(), 1, 2)]);
+        assert_eq!(counts(&conn, P, b"k").unwrap(), (2, 1));
+        assert_eq!(counts_by_book(&conn, P).unwrap(), [(b"k".to_vec(), 2, 1)]);
         let latest = latest_marks(&conn, P, 10).unwrap();
         assert_eq!(latest.len(), 1, "the latest quotes have text");
+    }
+
+    #[test]
+    fn a_change_in_the_same_second_is_still_newer() {
+        // The newest `updated_at` wins a merge through the hub; a change made in the
+        // second the record was made (or synced) must not tie with its old version.
+        let data = UserData::open_in_memory().unwrap();
+        let conn = data.lock();
+        let quote = insert(&conn, P, &new(b"k", 1, "quote"), 100).unwrap();
+        assert_eq!(quote.updated_at, 100);
+        let first = set_note(&conn, P, &quote.id, Some("a"), 100)
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.updated_at, 101, "the same second: one later");
+        let second = set_note(&conn, P, &quote.id, Some("b"), 100)
+            .unwrap()
+            .unwrap();
+        assert_eq!(second.updated_at, 102, "and again");
+        let later = set_note(&conn, P, &quote.id, Some("c"), 200)
+            .unwrap()
+            .unwrap();
+        assert_eq!(later.updated_at, 200, "later: the time itself");
+        let deleted = delete(&conn, P, &quote.id, 200).unwrap().unwrap();
+        assert_eq!(
+            (deleted.updated_at, deleted.deleted_at),
+            (201, Some(200)),
+            "a deletion too"
+        );
+    }
+
+    #[test]
+    fn a_note_makes_a_bookmark_a_place_note_and_back() {
+        let data = UserData::open_in_memory().unwrap();
+        let conn = data.lock();
+        let bookmark = insert(&conn, P, &new(b"k", 1, ""), 1).unwrap();
+        assert!(bookmark.is_bookmark());
+
+        let noted = set_note(&conn, P, &bookmark.id, Some("A thought"), 5)
+            .unwrap()
+            .unwrap();
+        assert!(noted.place_note && !noted.is_bookmark(), "edited: a note");
+        assert_eq!(
+            (noted.note.as_deref(), noted.updated_at, noted.created_at),
+            (Some("A thought"), 5, 1),
+            "the same record, made at the same time"
+        );
+
+        let edited = set_note(&conn, P, &bookmark.id, Some("Another"), 6)
+            .unwrap()
+            .unwrap();
+        assert!(edited.place_note);
+
+        for blank in [Some("  \n"), None] {
+            set_note(&conn, P, &bookmark.id, Some("Again"), 7).unwrap();
+            let back = set_note(&conn, P, &bookmark.id, blank, 8).unwrap().unwrap();
+            assert!(
+                back.is_bookmark() && !back.place_note && back.note.is_none(),
+                "emptied: a bookmark again ({blank:?})"
+            );
+        }
+
+        // A quote's note never makes it a note on a place.
+        let quote = insert(&conn, P, &new(b"k", 2, "quote"), 2).unwrap();
+        let quote = set_note(&conn, P, &quote.id, Some("Mine"), 9)
+            .unwrap()
+            .unwrap();
+        assert!(!quote.place_note && !quote.is_bookmark());
     }
 
     #[test]

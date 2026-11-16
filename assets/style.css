@@ -2878,12 +2878,15 @@ button.danger,
   /* A quote in the Quotes tab is two targets, its text and the start of its note
      (reader.css), and a note on a place one: the finger-sized height goes to the
      item, not to each target, so a one-line quote has no gap below it. Each target
-     spans the list's width and is about 30 px tall. */
+     spans the list's width and is about 30 px tall. A bookmark (its number over the
+     start of its line) is one target of two lines. */
   .annotation-links .mark-item,
-  .annotation-links .note-item {
+  .annotation-links .note-item,
+  .annotation-links .bookmark-item {
     min-height: 2.75rem;
   }
 
+  .annotation-links .bookmark-item > a[data-mark-link],
   .annotation-links .mark-item > a[data-mark-link],
   .annotation-links .mark-item .mark-note-open,
   .annotation-links .note-item .mark-note-open {

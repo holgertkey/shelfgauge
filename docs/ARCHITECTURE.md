@@ -365,15 +365,23 @@ in the core crate), `src/web/routes/annotations.rs`, `assets/reader.js`/`reader.
   `B`); a note on a place is the pencil in the top bar or `w` (the note form of a
   quote, in the bar on a touch screen; the place is taken when it opens). The reader
   sidebar has tabs Contents | Bookmarks | Quotes, the notes on places under "Notes"
-  at the end of Quotes (the start of each note; the note panel has "Go to the place")
+  at the end of Bookmarks (the start of each note; the note panel has "Go to the place")
   (no Contents tab when the book has no titled sections or
-  notes); the book card lists bookmarks, quotes and notes in three `<details>` blocks
-  with plain-form edit/delete.
+  notes). Bookmarks are listed and numbered in the order they were made
+  (`Bookmark 2 · 37%`, without the percent when the place is unknown; `Lists::new`,
+  `bookmark_label`), the start of the line at the place as a muted second line. A
+  note written to a bookmark (its pencil in the list) makes the same record a note on
+  its place, and an emptied note makes it a bookmark again (`store::set_note`,
+  `setNote` in the hub reader); the top bar's bookmark button and the status line's
+  ticks show bookmarks only. The book card lists bookmarks, quotes and notes in three
+  `<details>` blocks with plain-form edit/delete; the counts of a book's annotations
+  put the notes on places with the bookmarks.
   Lists are server-rendered and work without JS. Writes are a separate route group
   behind the Origin check.
 - **Export**: one Markdown file per book in `.shelfgauge/annotations/`, regenerated
   atomically from the DB after every change, **one way only** (edits to the file are not
-  read back): bookmarks first, then quotes grouped by section with their notes, then
+  read back): bookmarks first (numbered as in the reader,
+  `- [Bookmark 1](link) — <the start of the line>`), then quotes grouped by section with their notes, then
   the notes on places (section `## Notes`), and `?at=b<n>`
   links.
   `shelfgauge annotations export` rewrites all files; generated files carry a marker

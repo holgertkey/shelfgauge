@@ -178,8 +178,24 @@
 /* A quote's note is added or changed in place: the pencil next to the ×; a quote
    also has Copy before the pencil (shown with JS only). */
 .annotation-links .mark-item,
-.annotation-links .note-item {
+.annotation-links .note-item,
+.annotation-links .bookmark-item {
   padding-right: 3.2rem;
+}
+
+/* A bookmark: its number and place in the book, with the start of the line there as
+   a muted second line. */
+.annotation-links .bookmark-name,
+.annotation-links .bookmark-place {
+  display: block;
+}
+
+.annotation-links .bookmark-place {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.85rem;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .js-copy .annotation-links .mark-item {

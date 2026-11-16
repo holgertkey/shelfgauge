@@ -1612,6 +1612,16 @@ function now() {
   return Math.floor(Date.now() / 1000);
 }
 
+/**
+ * The `updated_at` of a change to `record`: now, but always after its previous version,
+ * so a change made in the second the record was made or synced still wins the merge
+ * (the newest `updated_at` wins; a tie goes by the record's bytes). As the instance's
+ * `store::set_note` and `store::delete` do.
+ */
+function changedAt(record) {
+  return Math.max(now(), (Number(record.updated_at) || 0) + 1);
+}
+
 /** Code points (the limits count them, as the instance does). */
 function cpLength(text) {
   let n = 0;
@@ -1794,12 +1804,14 @@ function deviceSource(book, item, p, sync) {
       }
       const t = now();
       record.deleted_at = t;
-      record.updated_at = t;
+      record.updated_at = changedAt(record);
       await store.write(p, "annotation", id, record);
       sync.later(1000);
     },
-    // Replaces the note of a quote (a list's note form, `?note=<id>`); blank removes it
-    // (a note on a place cannot be blank).
+    // Replaces the note of a quote, bookmark or note on a place (a list's note form,
+    // `?note=<id>`); blank removes it. Without quoted text, a note makes the record a
+    // note on its place and a blank one a bookmark again (the instance's
+    // `store::set_note`; the key is written only when set, as the instance does).
     async setNote(form, text) {
       const id = new URL(form.action, location.href).searchParams.get("note");
       const record = id && await store.get(p, "annotation", id);
@@ -1810,11 +1822,13 @@ function deviceSource(book, item, p, sync) {
       if (note && cpLength(note) > maxNote) {
         throw new Error(`the note is too long; the limit is ${maxNote} characters`);
       }
-      if (!note && record.place_note === true) {
-        throw new Error(BLANK_PLACE_NOTE);
+      if (!record.text && note) {
+        record.place_note = true;
+      } else {
+        delete record.place_note;
       }
       record.note = note;
-      record.updated_at = now();
+      record.updated_at = changedAt(record);
       await store.write(p, "annotation", id, record);
       sync.later(1000);
     },

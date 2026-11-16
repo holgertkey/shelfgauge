@@ -1055,8 +1055,12 @@ fn the_reader_app_rendering_vector_is_stable() {
         "the quote's note form: {lists}"
     );
     assert!(
-        !lists.contains(r#"action="?note=7c9e6679-7425-40de-944b-e07fc1f90ae7""#),
-        "no note form on a bookmark: {lists}"
+        lists.contains(r#"action="?note=7c9e6679-7425-40de-944b-e07fc1f90ae7""#),
+        "a bookmark's note form (a note makes it a note on its place): {lists}"
+    );
+    assert!(
+        lists.contains(r#"<span class="bookmark-name">Bookmark 1 · "#),
+        "numbered, with its place in the book: {lists}"
     );
     assert!(
         lists.contains(r#"placeholder="Note">a &#60;note&#62;</textarea>"#),
@@ -1078,8 +1082,8 @@ fn the_reader_app_rendering_vector_is_stable() {
         lists.contains("\n\nNote: a &#60;note&#62;\n\n— A. Author, Book\""),
         "{lists}"
     );
-    // A note on a place (since 0.25): after the quotes, labelled by its place, with a
-    // note form that keeps it from going blank.
+    // A note on a place (since 0.25): in the Bookmarks tab, labelled by its place,
+    // with a note form (emptied, it is a bookmark again).
     let notes: Vec<shelfgauge_wasm::book::AnnotationRecord> =
         serde_json::from_value(serde_json::json!([
             { "id": "9b2c1f3a-0000-4000-8000-000000000001", "start_block": 3, "start_offset": 0,
@@ -1092,16 +1096,13 @@ fn the_reader_app_rendering_vector_is_stable() {
     let bookmarks_tab = with_note.find(r#"id="tab-bookmarks""#).unwrap();
     let quotes_tab = with_note.find(r#"id="tab-marks""#).unwrap();
     let item = with_note.find(r#"<li class="note-item""#).unwrap();
+    assert!(bookmarks_tab < item && item < quotes_tab, "{with_note}");
     assert!(
-        bookmarks_tab < quotes_tab && quotes_tab < item,
-        "{with_note}"
+        !with_note.contains("No bookmarks yet") && !with_note.contains("bookmark-item"),
+        "not a bookmark, but the tab is not empty: {with_note}"
     );
     assert!(
-        with_note.contains("No bookmarks yet"),
-        "not a bookmark: {with_note}"
-    );
-    assert!(
-        with_note.contains(r#"placeholder="Note" required>a thought</textarea>"#),
+        with_note.contains(r#"placeholder="Note">a thought</textarea>"#),
         "{with_note}"
     );
     assert!(

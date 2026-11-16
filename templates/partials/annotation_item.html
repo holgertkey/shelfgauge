@@ -1,7 +1,8 @@
 <div class="annotation-body">
         {%- if item.bookmark || item.place_note %}
         <a class="label" href="{{ item.href }}">{{ item.label }}</a>
-        {%- if !item.note.is_empty() && item.note != item.label %}<p class="note">{{ item.note }}</p>{% endif %}
+        {%- if !item.place.is_empty() %}<p class="muted bookmark-place">{{ item.place }}</p>{% endif %}
+        {%- if !item.note.is_empty() && item.note != item.place %}<p class="note">{{ item.note }}</p>{% endif %}
         {%- else %}
         <a class="quote" href="{{ item.href }}" title="Open in the book">{{ item.text }}</a>
         {%- if !item.note.is_empty() %}<p class="note">{{ item.note }}</p>{% endif %}
@@ -12,7 +13,7 @@
         <summary class="icon-button" title="{% if item.note.is_empty() %}Add a note{% else %}Edit the note{% endif %}" aria-label="{% if item.note.is_empty() %}Add a note{% else %}Edit the note{% endif %}"><svg class="icon" aria-hidden="true"><use href="#i-edit"></use></svg></summary>
         <form method="post" action="{{ item.note_action }}" class="note-form">
           <input type="hidden" name="back" value="{{ lists.back }}">
-          <textarea name="note" rows="3" aria-label="Note" placeholder="Note"{% if item.place_note %} required{% endif %}>{{ item.note }}</textarea>
+          <textarea name="note" rows="3" aria-label="Note" placeholder="Note">{{ item.note }}</textarea>
           <div class="note-actions">
             <button type="submit" class="small primary">Save</button>
             <button type="reset" class="small note-cancel">Cancel</button>

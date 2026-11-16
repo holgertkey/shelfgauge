@@ -65,12 +65,13 @@ Build numbers (`+NNN`) do not get their own sections.
   a quote with a note showed only the note.
 - Notes without a quote: the pencil in the reader's top bar (or `w`) opens a field for
   a note on the place at the top of the page, the place a bookmark would go. Notes
-  are listed in the Quotes tab after the quotes, each as the first two lines of the
-  note; a tap shows the whole note in the panel at the bottom, with a link to the place
-  it was written at. On the book card they have their own block, and the Markdown
-  export a Notes section. In the library and in the hub reader. A note on a place
-  cannot be emptied; it is deleted with ×. A library still on 0.24 shows such a note
-  as a bookmark with a note.
+  are listed in the Bookmarks tab under Notes, after the bookmarks, each as the first
+  two lines of the note; a tap shows the whole note in the panel at the bottom, with a
+  link to the place it was written at. A bookmark becomes a note when a note is
+  written to it with its pencil in the list, and a note whose text is emptied is a
+  bookmark again. On the book card they have their own block, and the Markdown export
+  a Notes section. In the library and in the hub reader. A library still on 0.24 shows
+  such a note as a bookmark with a note.
 - Export and copy of quotes and notes from the reader's Quotes tab, in the library and
   in the hub reader. **Export** gives the book's quotes and notes as a Markdown file
   (`<Authors> — <Title> — quotes.md`): on a phone through the share menu (to Obsidian,
@@ -83,6 +84,11 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ### Changed
 
+- Bookmarks are numbered and listed in the order they were made, `Bookmark 2 · 37%`
+  with their place in the book (without the percent when it is unknown), and the start
+  of the line they point to under it in a smaller, muted line. In the library and in
+  the hub reader; the library's export files number them the same way. The counts of
+  a book's bookmarks and quotes put the notes without a quote with the bookmarks.
 - The reader's top bar has a new order after the search: Aa, the note pencil, the
   bookmark (from the right edge: bookmark, note, Aa, search), in the library and the
   hub reader; Focus mode, shown on a wide screen only, comes after them.
@@ -141,6 +147,10 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ### Fixed
 
+- A note changed or a quote, bookmark or note deleted within a second of being made
+  or synced through the hub could be lost: the other side kept the previous version.
+  A change now always counts as newer than the version before it, in the library and
+  in the hub reader.
 - In Chrome on Android, the sidebar (the contents, bookmarks and quotes) can be
   scrolled to its end while the browser's address bar is shown: the sidebar and the
   reading settings now end at the visible bottom edge of the screen.

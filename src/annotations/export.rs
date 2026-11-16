@@ -266,8 +266,12 @@ pub fn render(book: &ExportBook, annotations: &[Annotation], base_url: &str) -> 
             book.id
         )
     };
+    // The bookmarks are numbered in the order they were made, as in the reader (a
+    // stable sort: the rest keeps book order, and each kind is listed on its own).
+    let mut annotations: Vec<&Annotation> = annotations.iter().collect();
+    annotations.sort_by_key(|a| if a.is_bookmark() { a.created_at } else { 0 });
     let items: Vec<ExportItem> = annotations
-        .iter()
+        .into_iter()
         .map(|a| ExportItem {
             kind: if a.place_note {
                 ExportKind::PlaceNote
@@ -328,8 +332,8 @@ mod tests {
         assert!(bookmarks < marks, "{md}");
         assert!(
             md.contains(
-                "- [It was a dark and stormy night; the rain fell in torrents, except…]\
-                 (http://127.0.0.1:8742/book/12/read?at=b3&from=mark)"
+                "- [Bookmark 1](http://127.0.0.1:8742/book/12/read?at=b3&from=mark) — It was \
+                 a dark and stormy night; the rain fell in torrents, except…\n"
             ),
             "{md}"
         );
@@ -357,6 +361,30 @@ mod tests {
     }
 
     #[test]
+    fn bookmarks_are_numbered_in_the_order_they_were_made() {
+        let mut early_in_book = sample("", None);
+        early_in_book.quote.suffix = "Early".into();
+        early_in_book.created_at = 20;
+        let mut late_in_book = sample("", None);
+        late_in_book.anchor.start_block = BlockId::new(90).unwrap();
+        late_in_book.quote.suffix = "Late".into();
+        late_in_book.created_at = 10;
+        let quote = sample("Quoted", None);
+        let md = render(
+            &book("B"),
+            &[early_in_book, quote, late_in_book],
+            "http://h",
+        );
+        assert!(
+            md.contains(
+                "- [Bookmark 1](http://h/book/12/read?at=b90&from=mark) — Late\n\
+                 - [Bookmark 2](http://h/book/12/read?at=b3&from=mark) — Early\n"
+            ),
+            "{md}"
+        );
+    }
+
+    #[test]
     fn notes_on_places_come_last_with_their_place() {
         let mut note = sample("", Some("A thought\non two lines"));
         note.place_note = true;
@@ -370,7 +398,7 @@ mod tests {
         );
         assert!(bookmarks < quotes && quotes < notes, "{md}");
         assert!(
-            md.contains("- [Named bookmark]("),
+            md.contains("- [Bookmark 1](http://h/book/12/read?at=b3&from=mark) — Named bookmark\n"),
             "a bookmark with a note: {md}"
         );
         assert!(

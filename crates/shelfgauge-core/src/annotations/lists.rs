@@ -18,8 +18,13 @@ pub struct ListItem {
     pub id: String,
     /// Where it is in the book.
     pub href: String,
-    /// The text of the link ([`label`]).
+    /// The text of the link ([`label`]); for a bookmark, [`Lists::new`] makes it
+    /// `Bookmark <number> · <percent>%` ([`bookmark_label`]).
     pub label: String,
+    /// A bookmark's place: the start of the line it points to, else the section's
+    /// title (its second line in the list; set by [`Lists::new`]); empty for other
+    /// items.
+    pub place: String,
     /// The note, empty without one.
     pub note: String,
     /// The quoted text; empty for a bookmark.
@@ -28,8 +33,11 @@ pub struct ListItem {
     pub section_title: Option<String>,
     /// Whether this is a bookmark (no quoted text, not a note).
     pub bookmark: bool,
-    /// Whether this is a note on a place (no quoted text): listed after the quotes.
+    /// Whether this is a note on a place (no quoted text): listed after the bookmarks.
     pub place_note: bool,
+    /// When it was made (Unix seconds): bookmarks are numbered and listed in this
+    /// order.
+    pub created_at: i64,
     /// Whether its place was not found in the book (the book has changed).
     pub lost: bool,
     /// The anchor: start block id, e.g. `b12`.
@@ -53,14 +61,15 @@ pub struct ListItem {
     pub progress: Option<u64>,
 }
 
-/// A book's bookmarks, quotes and notes on places, in book order.
+/// A book's bookmarks (in the order they were made), quotes and notes on places (in
+/// book order).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Lists {
-    /// The bookmarks.
+    /// The bookmarks, numbered in the order they were made.
     pub bookmarks: Vec<ListItem>,
     /// The quotes (marks).
     pub marks: Vec<ListItem>,
-    /// The notes on places (shown after the quotes).
+    /// The notes on places (shown in the Bookmarks tab, after the bookmarks).
     pub notes: Vec<ListItem>,
     /// Where the forms return to.
     pub back: String,
@@ -69,7 +78,10 @@ pub struct Lists {
 }
 
 impl Lists {
-    /// Sorts `items` into bookmarks, quotes and notes, keeping their order.
+    /// Sorts `items` (in book order) into bookmarks, quotes and notes. Quotes and notes
+    /// keep their order; bookmarks are put in the order they were made and labelled
+    /// [`bookmark_label`], with [`ListItem::place`] from their place (never from a
+    /// note).
     pub fn new(items: impl IntoIterator<Item = ListItem>, back: String, book: ExportHead) -> Self {
         let mut lists = Self {
             back,
@@ -85,12 +97,29 @@ impl Lists {
                 lists.marks.push(item);
             }
         }
+        // Stable: bookmarks made in the same second stay in book order.
+        lists.bookmarks.sort_by_key(|b| b.created_at);
+        for (i, bookmark) in lists.bookmarks.iter_mut().enumerate() {
+            // Its place, never its note (a bookmark of 0.24 can have one).
+            let quote = Quote {
+                text: String::new(),
+                prefix: String::new(),
+                suffix: bookmark.suffix.clone(),
+            };
+            bookmark.place = label(None, &quote, bookmark.section_title.as_deref());
+            bookmark.label = bookmark_label(i + 1, bookmark.progress);
+        }
         lists
     }
 
-    /// Whether there are neither quotes nor notes (the Quotes tab is empty).
+    /// Whether there are neither quotes nor notes (nothing to export or copy).
     pub fn no_quotes_or_notes(&self) -> bool {
         self.marks.is_empty() && self.notes.is_empty()
+    }
+
+    /// Whether there are neither bookmarks nor notes (the Bookmarks tab is empty).
+    pub fn no_bookmarks_or_notes(&self) -> bool {
+        self.bookmarks.is_empty() && self.notes.is_empty()
     }
 
     /// The Quotes tab's export: the quotes and notes in the
@@ -167,6 +196,25 @@ pub fn label(note: Option<&str>, quote: &Quote, section_title: Option<&str>) -> 
     }
 }
 
+/// The label of the `number`th bookmark (from 1, in the order they were made), with
+/// its place in whole percent of the main text when `progress` (ten-thousandths) is
+/// known.
+///
+/// # Examples
+///
+/// ```
+/// use shelfgauge_core::annotations::lists::bookmark_label;
+///
+/// assert_eq!(bookmark_label(1, Some(512)), "Bookmark 1 · 5%");
+/// assert_eq!(bookmark_label(2, None), "Bookmark 2");
+/// ```
+pub fn bookmark_label(number: usize, progress: Option<u64>) -> String {
+    match progress {
+        Some(progress) => format!("Bookmark {number} · {}%", progress.min(10_000) / 100),
+        None => format!("Bookmark {number}"),
+    }
+}
+
 /// Whitespace runs (including line breaks) collapsed to single spaces, trimmed.
 fn one_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
@@ -192,11 +240,13 @@ mod tests {
             id: id.into(),
             href: String::new(),
             label: String::new(),
+            place: String::new(),
             note: String::new(),
             text: String::new(),
             section_title: None,
             bookmark,
             place_note,
+            created_at: 0,
             lost: false,
             start_block: "b1".into(),
             start_offset: 0,
@@ -235,14 +285,70 @@ mod tests {
             ExportHead::default(),
         );
         assert!(only_notes.marks.is_empty() && !only_notes.no_quotes_or_notes());
-        assert!(
-            Lists::new(
-                [item("b", true, false)],
-                String::new(),
-                ExportHead::default()
-            )
-            .no_quotes_or_notes()
+        assert!(only_notes.bookmarks.is_empty() && !only_notes.no_bookmarks_or_notes());
+        let only_bookmarks = Lists::new(
+            [item("b", true, false)],
+            String::new(),
+            ExportHead::default(),
         );
+        assert!(only_bookmarks.no_quotes_or_notes() && !only_bookmarks.no_bookmarks_or_notes());
+        assert!(Lists::default().no_bookmarks_or_notes());
+    }
+
+    #[test]
+    fn bookmarks_are_numbered_in_the_order_they_were_made() {
+        let bookmark = |id: &str, created_at: i64, progress: Option<u64>, suffix: &str| ListItem {
+            created_at,
+            progress,
+            suffix: suffix.into(),
+            ..item(id, true, false)
+        };
+        // In book order, as the callers pass them; "late" and "same" were made in the
+        // same second (they keep book order).
+        let mut note = item("n", false, true);
+        note.label = "Note's place".into();
+        note.created_at = 1;
+        let lists = Lists::new(
+            [
+                bookmark("early-in-book", 30, Some(512), "It was"),
+                note,
+                bookmark("late", 20, None, "Later"),
+                bookmark("same", 20, Some(9_999), "Last line"),
+                bookmark("first", 10, Some(10_000), "The end"),
+            ],
+            String::new(),
+            ExportHead::default(),
+        );
+        let shown = lists
+            .bookmarks
+            .iter()
+            .map(|b| (b.id.as_str(), b.label.as_str(), b.place.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            shown,
+            [
+                ("first", "Bookmark 1 · 100%", "The end"),
+                ("late", "Bookmark 2", "Later"),
+                ("same", "Bookmark 3 · 99%", "Last line"),
+                ("early-in-book", "Bookmark 4 · 5%", "It was"),
+            ]
+        );
+        assert_eq!(
+            lists.notes[0].label, "Note's place",
+            "notes keep their label"
+        );
+        assert!(lists.notes[0].place.is_empty());
+
+        // A bookmark of 0.24 with a note: the place is its line, never the note; with
+        // no text there, the section's title.
+        let mut named = bookmark("named", 1, None, "The line");
+        named.note = "My name for it".into();
+        named.label = "My name for it".into();
+        let mut heading = bookmark("heading", 2, None, "");
+        heading.section_title = Some("Chapter 3".into());
+        let lists = Lists::new([named, heading], String::new(), ExportHead::default());
+        assert_eq!(lists.bookmarks[0].place, "The line");
+        assert_eq!(lists.bookmarks[1].place, "Chapter 3");
     }
 
     #[test]

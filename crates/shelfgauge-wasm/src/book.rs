@@ -309,6 +309,8 @@ impl Book {
                     &quote,
                     a.section_title.as_deref(),
                 ),
+                place: String::new(),
+                created_at: a.created_at,
                 note: a
                     .note
                     .as_deref()

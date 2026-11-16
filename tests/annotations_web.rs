@@ -379,15 +379,27 @@ async fn marks_bookmarks_notes_and_export() {
         fragment.starts_with("<div class=\"annotation-lists\">"),
         "{fragment}"
     );
-    // The reader's quote has a note form (also without JS), the bookmark none; it
-    // returns to the reader.
+    // The reader's quote and bookmark have a note form (also without JS; a note makes
+    // the bookmark a note on its place); it returns to the reader.
+    for id in [&mark, &bookmark] {
+        assert!(
+            read.contains(&format!(
+                "action=\"/annotation/{id}/note\" class=\"note-form\""
+            )),
+            "{read}"
+        );
+    }
+    // A bookmark: its number and place, over the start of its line.
     assert!(
         read.contains(&format!(
-            "action=\"/annotation/{mark}/note\" class=\"note-form\""
+            "href=\"/book/{id}/read?at={p21}&#38;from=mark\" data-mark-link><span class=\"bookmark-name\">Bookmark 1 · "
         )),
         "{read}"
     );
-    assert!(!read.contains(&format!("action=\"/annotation/{bookmark}/note\"")));
+    assert!(
+        read.contains("%</span><span class=\"bookmark-place\">Paragraph 2.1: the brown fox"),
+        "{read}"
+    );
     assert!(
         read.contains("placeholder=\"Note\">&#60;b&#62;bold&#60;/b&#62; &#38; note</textarea>"),
         "the note in its form, escaped: {read}"
@@ -659,8 +671,8 @@ async fn notes_on_places() {
     let quote = server.mark(id, &p12, 15, 11, "").await;
     let bookmark = server.bookmark(id, &p12).await;
 
-    // The reader: in the Quotes tab, after the quotes, under "Notes"; never in the
-    // Bookmarks tab and never highlighted in the text (no `mark-item`).
+    // The reader: in the Bookmarks tab, after the bookmarks, under "Notes"; never in
+    // the Quotes tab and never highlighted in the text (no `mark-item`).
     let read = server.ok(&format!("/book/{id}/read")).await;
     let (bookmarks_tab, quotes_tab) = (
         read.find("id=\"tab-bookmarks\"").unwrap(),
@@ -669,10 +681,16 @@ async fn notes_on_places() {
     let item = read
         .find(&format!("<li class=\"note-item\" data-id=\"{note}\""))
         .unwrap();
-    assert!(bookmarks_tab < quotes_tab && quotes_tab < item, "{read}");
+    let notes_title = read.find("<h3 class=\"list-title\">Notes</h3>").unwrap();
     assert!(
-        read.find(&format!("data-id=\"{quote}\"")).unwrap()
-            < read.find("<h3 class=\"list-title\">Notes</h3>").unwrap()
+        bookmarks_tab < notes_title && notes_title < item && item < quotes_tab,
+        "{read}"
+    );
+    assert!(
+        read.find(&format!("/annotation/{bookmark}/delete"))
+            .unwrap()
+            < notes_title,
+        "after the bookmarks"
     );
     assert_eq!(
         read.matches("class=\"mark-item\"").count(),
@@ -704,7 +722,7 @@ async fn notes_on_places() {
         "no line of the book in the item: {item_html}"
     );
     assert!(
-        read.contains("aria-label=\"Note\" placeholder=\"Note\" required>My &#60;i&#62;"),
+        read.contains("aria-label=\"Note\" placeholder=\"Note\">My &#60;i&#62;"),
         "{read}"
     );
     assert!(
@@ -739,30 +757,21 @@ async fn notes_on_places() {
         "{md}"
     );
 
-    // A note on a place keeps its note: a blank one is refused (JSON and form); a
-    // bookmark's or quote's note can still be removed.
+    // An emptied note on a place is a bookmark again (JSON and form); a note makes it
+    // a note on its place again, and a quote's note can still be removed.
     let reply = server
         .json(
             &format!("/annotation/{note}/note"),
             serde_json::json!({ "note": " " }),
         )
         .await;
-    assert_eq!(
-        reply.status,
-        StatusCode::UNPROCESSABLE_ENTITY,
-        "{}",
-        reply.body
-    );
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    assert_eq!(reply.json()["bookmark"], true, "{}", reply.body);
+    let read = server.ok(&format!("/book/{id}/read")).await;
     assert!(
-        reply.json()["error"]
-            .as_str()
-            .unwrap()
-            .contains("delete it instead")
+        !read.contains("class=\"note-item\"") && read.contains("Bookmark 2"),
+        "{read}"
     );
-    let reply = server
-        .form(&format!("/annotation/{note}/note"), &[("note", "")])
-        .await;
-    assert_eq!(reply.status, StatusCode::BAD_REQUEST, "the error page");
     let reply = server
         .json(
             &format!("/annotation/{note}/note"),
@@ -770,16 +779,31 @@ async fn notes_on_places() {
         )
         .await;
     assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    assert_eq!(reply.json()["bookmark"], false, "{}", reply.body);
     assert!(lib.export_text().contains("Second thought"));
-    for id in [&bookmark, &quote] {
-        let reply = server
-            .json(
-                &format!("/annotation/{id}/note"),
-                serde_json::json!({ "note": "" }),
-            )
-            .await;
-        assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
-    }
+    let reply = server
+        .form(&format!("/annotation/{note}/note"), &[("note", "")])
+        .await;
+    assert_eq!(
+        reply.status,
+        StatusCode::SEE_OTHER,
+        "a form: back to the page"
+    );
+    let reply = server
+        .json(
+            &format!("/annotation/{note}/note"),
+            serde_json::json!({ "note": "Third thought" }),
+        )
+        .await;
+    assert_eq!(reply.json()["bookmark"], false, "{}", reply.body);
+    let reply = server
+        .json(
+            &format!("/annotation/{quote}/note"),
+            serde_json::json!({ "note": "" }),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    assert_eq!(reply.json()["bookmark"], false, "a quote stays a quote");
 
     // Deleted like any other annotation.
     let reply = server
