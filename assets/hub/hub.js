@@ -1565,9 +1565,7 @@ async function linkBookCard(p, item) {
     if (!item.content_key || !(await inCatalog(p, [item])).has(item.content_key)) {
       return;
     }
-    const link = document.querySelector(".toc-book-link");
-    link.href = await cardUrl(p, item, "shelf");
-    link.title = "This book in Explore";
+    document.querySelector(".toc-book-link").href = await cardUrl(p, item, "shelf");
   } catch (e) {
     console.error(e);
   }
@@ -1595,6 +1593,7 @@ function fillPage(book, index, html) {
   const tocAuthors = document.querySelector(".toc-book .book-authors");
   tocAuthors.textContent = authors;
   tocAuthors.hidden = !authors;
+  document.querySelector(".toc-book-link").title = authors ? `${s.title} — ${authors}` : s.title;
   for (const nav of article.querySelectorAll(".reader-nav")) {
     nav.replaceChildren(...partNav(s, index));
   }

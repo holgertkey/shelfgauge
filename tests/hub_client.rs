@@ -1516,7 +1516,7 @@ async fn the_hub_reading_view_has_what_reader_js_needs() {
         r#"<div class="track""#,
         r#"<span class="status-progress">"#,
         r#"<div class="toc-book">"#,
-        r#"<span class="tab-pager" hidden lang="en">"#,
+        r#"<div class="tab-pager" hidden lang="en">"#,
         r#"<nav class="reader-tabs" aria-label="Sidebar" lang="en">"#,
         r#"data-tab="toc""#,
         r#"id="tab-toc""#,

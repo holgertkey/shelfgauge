@@ -360,7 +360,7 @@
     drawBookmarks();
   }
 
-  // The ‹ › buttons next to the book link page through the open tab (the sidebar scrolls) like
+  // The ‹ › buttons under the book link page through the open tab (the sidebar scrolls) like
   // Page Up / Page Down; each is disabled at its end.
   let syncPager = () => {};
 

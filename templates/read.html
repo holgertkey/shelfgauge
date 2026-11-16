@@ -42,15 +42,16 @@
 {% block sidebar %}
 {#- The book link with the pager and the tabs; reader.js keeps it at the top. #}
 <div class="sidebar-head">
-{#- The book's card: its title (two lines at most) and authors (one), cut short with
-    an ellipsis (reader.css). #}
-<div class="toc-book"><a class="toc-book-link" href="{{ card_href }}" title="The book's card"><span class="toc-back" aria-hidden="true">‹</span><span class="toc-book-names"><span class="book-title">{{ book_title }}</span>
+{#- The book's card: its title and authors, a line each across the sidebar, cut short
+    with an ellipsis (reader.css); the whole title in the tooltip. #}
+<div class="toc-book"><a class="toc-book-link" href="{{ card_href }}" title="{{ book_title }}{% if !book_authors.is_empty() %} — {{ book_authors }}{% endif %}"><span class="toc-back" aria-hidden="true">‹</span><span class="toc-book-names"><span class="book-title">{{ book_title }}</span>
 {%- if !book_authors.is_empty() %}<span class="book-authors">{{ book_authors }}</span>{% endif %}</span></a>
-  {#- reader.js: page through the open tab like Page Up / Page Down. #}
-  <span class="tab-pager" hidden lang="en">
-    <button type="button" class="icon-button" data-page="-1" title="Page up" aria-label="Page up">‹</button>
-    <button type="button" class="icon-button" data-page="1" title="Page down" aria-label="Page down">›</button>
-  </span>
+</div>
+{#- reader.js: page through the open tab like Page Up / Page Down, on a line of its own
+    under the book link. #}
+<div class="tab-pager" hidden lang="en">
+  <button type="button" class="icon-button" data-page="-1" title="Page up" aria-label="Page up">‹</button>
+  <button type="button" class="icon-button" data-page="1" title="Page down" aria-label="Page down">›</button>
 </div>
 <nav class="reader-tabs" aria-label="Sidebar" lang="en">
   {%- if !toc.is_empty() %}

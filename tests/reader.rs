@@ -1411,7 +1411,7 @@ async fn read_pages_name_the_book_for_reader_views() {
 }
 
 #[tokio::test]
-async fn the_sidebar_leads_to_the_card_with_title_and_authors() {
+async fn the_sidebar_leads_to_the_card_with_title_and_authors_over_the_pager() {
     let lib = TestLibrary::new();
     lib.write(
         "anonymous.fb2",
@@ -1426,7 +1426,7 @@ async fn the_sidebar_leads_to_the_card_with_title_and_authors() {
     let page = server.ok(&format!("/book/{id}/read")).await.body;
     assert!(
         page.contains(&format!(
-            "<div class=\"toc-book\"><a class=\"toc-book-link\" href=\"/book/{id}\" title=\"The book's card\"><span class=\"toc-back\" aria-hidden=\"true\">‹</span><span class=\"toc-book-names\"><span class=\"book-title\">Старый маяк</span><span class=\"book-authors\">Сидоров Иван Петрович, The Lighthouse Keeper</span></span></a>"
+            "<div class=\"toc-book\"><a class=\"toc-book-link\" href=\"/book/{id}\" title=\"Старый маяк — Сидоров Иван Петрович, The Lighthouse Keeper\"><span class=\"toc-back\" aria-hidden=\"true\">‹</span><span class=\"toc-book-names\"><span class=\"book-title\">Старый маяк</span><span class=\"book-authors\">Сидоров Иван Петрович, The Lighthouse Keeper</span></span></a>"
         )),
         "{page}"
     );
@@ -1441,6 +1441,17 @@ async fn the_sidebar_leads_to_the_card_with_title_and_authors() {
         "{anonymous}"
     );
     assert!(!anonymous.contains("book-authors"), "{anonymous}");
+    assert!(
+        anonymous.contains("class=\"toc-book-link\" href=\"/book/"),
+        "{anonymous}"
+    );
+    assert!(anonymous.contains("title=\"Anonymous\">"), "{anonymous}");
+    // The pager stands on a line of its own, after the book link.
+    let head = page.split("<div class=\"sidebar-head\">").nth(1).unwrap();
+    let pager = head
+        .find("<div class=\"tab-pager\" hidden lang=\"en\">")
+        .unwrap();
+    assert!(head[..pager].ends_with("</a>\n</div>\n"), "{head}");
 }
 
 #[tokio::test]

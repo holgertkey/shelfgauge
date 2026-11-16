@@ -51,14 +51,15 @@
 <div class="layout">
   <nav id="sidebar" class="sidebar" aria-label="Book">
 <div class="sidebar-head">
-{#- The book's title and authors (hub.js), as in the library's reader; the link leads
+{#- The book's title and authors (hub.js; the whole title in the tooltip), as in the
+    library's reader, and the pager on its own line; the link leads
     to the book's card in Explore when the catalog kept here has it (hub.js), to the
     Bookshelf otherwise. #}
 <div class="toc-book"><a class="toc-book-link" href="{{ base }}/" title="Bookshelf"><span class="toc-back" aria-hidden="true">‹</span><span class="toc-book-names"><span class="book-title">Bookshelf</span><span class="book-authors" hidden></span></span></a>
-  <span class="tab-pager" hidden lang="en">
-    <button type="button" class="icon-button" data-page="-1" title="Page up" aria-label="Page up">‹</button>
-    <button type="button" class="icon-button" data-page="1" title="Page down" aria-label="Page down">›</button>
-  </span>
+</div>
+<div class="tab-pager" hidden lang="en">
+  <button type="button" class="icon-button" data-page="-1" title="Page up" aria-label="Page up">‹</button>
+  <button type="button" class="icon-button" data-page="1" title="Page down" aria-label="Page down">›</button>
 </div>
 <nav class="reader-tabs" aria-label="Sidebar" lang="en">
   <a href="#tab-toc" data-tab="toc" hidden>Contents</a>

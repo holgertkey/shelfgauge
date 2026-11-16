@@ -25,18 +25,10 @@
   margin-bottom: 0;
 }
 
-.toc-book {
-  display: flex;
-  gap: 0.5rem;
-  align-items: flex-start;
-}
-
-/* The book's title (two lines at most) and authors (one), each cut short with an
-   ellipsis; the chevron stands before the first line, the wrapped lines under the
-   text. */
+/* The book's title and authors, a line each across the whole sidebar, cut short with
+   an ellipsis; the chevron stands before the title, the authors under it. */
 .toc-book > a {
   display: flex;
-  flex: 1;
   gap: 0.3rem;
   min-width: 0;
 }
@@ -52,19 +44,14 @@
 }
 
 .toc-book-names > span {
-  display: -webkit-box;
   overflow: hidden;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .toc-book-names > .book-authors {
   font-weight: 400;
   color: var(--muted);
-  -webkit-line-clamp: 1;
-  line-clamp: 1;
 }
 
 .toc-book-names > .book-authors[hidden] {
@@ -80,11 +67,12 @@
   border-radius: var(--radius);
 }
 
-/* Page up / page down for the open tab, next to the book link. */
+/* Page up / page down for the open tab: a line of its own under the book link, at
+   the right. */
 .tab-pager {
   display: flex;
-  flex: none;
-  align-items: center;
+  justify-content: flex-end;
+  margin: -0.5rem 0 0.25rem;
   font-weight: 400;
 }
 
