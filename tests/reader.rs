@@ -1068,8 +1068,20 @@ async fn the_cut_line_is_found_across_the_column() {
     // Less than a page before the end of a part the turn moves less than a page, and
     // the browser may settle the scroll later: the light sits in the document, on the
     // kept line, wherever the scroll ends.
+    assert!(reader_js.contains("const at = window.scrollY + delta;\n"));
     assert!(reader_js.contains(
-        "const at = window.scrollY + delta;\n      window.scrollBy({ top: delta, behavior: \"instant\" });\n      if (band) {\n        lightLine(band[0] + at, band[1] + at);"
+        "window.scrollBy({ top: delta, behavior: \"instant\" });\n      if (band) {\n        lightLine(band[0] + at, band[1] + at, last);"
+    ));
+    // There, turning forward with less than the turn left to scroll, the line stays
+    // lit three times as long, fading at the same pace; a band still lit goes out.
+    assert!(reader_js.contains("const last = forward && room < delta - 1;"));
+    assert!(reader_js.contains("const TURN_LINE_LONG_MS = 3 * TURN_LINE_MS;"));
+    assert!(reader_js.contains(
+        "const TURN_LINE_LONG_HOLD = 1 - (1 - TURN_LINE_HOLD) * (TURN_LINE_MS / TURN_LINE_LONG_MS);"
+    ));
+    assert!(reader_js.contains("duration: long ? TURN_LINE_LONG_MS : TURN_LINE_MS,"));
+    assert!(reader_js.contains(
+        "for (const old of document.querySelectorAll(\".turn-line\")) {\n      old.remove();"
     ));
     let reader_css = server
         .ok("/assets/reader.css")

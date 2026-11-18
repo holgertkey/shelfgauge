@@ -91,6 +91,10 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ### Changed
 
+- On the last page of a part, where a page turn moves less than a page and the line to
+  read on from is somewhere down the page, that line stays lit three times as long
+  (3.6 s instead of 1.2 s; it fades at the same pace). In the library and the hub
+  reader.
 - The bookmarks, notes and quotes in the reader's lists have no buttons of their own
   any more (Copy, the pencil, ×), only a checkbox: what is done with them is in the line
   of buttons above the list (see Added). Delete asks first.

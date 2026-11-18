@@ -2165,9 +2165,22 @@
     }
   }
 
+  // How long the kept line stays lit after a page turn, and how much of that it stays
+  // fully lit before it fades. On the last page of a part the turn moves less than a
+  // page and the line is somewhere down the page, not at the top: it stays lit three
+  // times as long there, fading at the same pace.
+  const TURN_LINE_MS = 1200;
+  const TURN_LINE_HOLD = 0.4;
+  const TURN_LINE_LONG_MS = 3 * TURN_LINE_MS;
+  const TURN_LINE_LONG_HOLD = 1 - (1 - TURN_LINE_HOLD) * (TURN_LINE_MS / TURN_LINE_LONG_MS);
+
   // Lights up the band from `top` to `bottom` of the document (not the window) over
-  // the text column: it stays on its line wherever the scroll ends.
-  function lightLine(top, bottom) {
+  // the text column: it stays on its line wherever the scroll ends. `long` for the
+  // last page of a part. A band still lit from the turn before goes out.
+  function lightLine(top, bottom, long) {
+    for (const old of document.querySelectorAll(".turn-line")) {
+      old.remove();
+    }
     const rect = text.getBoundingClientRect();
     const mark = document.createElement("div");
     mark.className = "turn-line";
@@ -2178,8 +2191,9 @@
     mark.style.width = `${rect.width}px`;
     mark.style.height = `${Math.max(bottom - top, 0)}px`;
     document.body.append(mark);
-    const fade = mark.animate([{ opacity: 1 }, { opacity: 1, offset: 0.4 }, { opacity: 0 }], {
-      duration: 1200,
+    const hold = long ? TURN_LINE_LONG_HOLD : TURN_LINE_HOLD;
+    const fade = mark.animate([{ opacity: 1 }, { opacity: 1, offset: hold }, { opacity: 0 }], {
+      duration: long ? TURN_LINE_LONG_MS : TURN_LINE_MS,
       easing: "ease-in",
     });
     fade.addEventListener("finish", () => mark.remove());
@@ -2258,9 +2272,12 @@
       // phone), so the light goes on the kept line itself, not where a whole turn would
       // have put it.
       const at = window.scrollY + delta;
+      // The last page of the part: less than the turn left to scroll forward.
+      const room = document.documentElement.scrollHeight - window.innerHeight - window.scrollY;
+      const last = forward && room < delta - 1;
       window.scrollBy({ top: delta, behavior: "instant" });
       if (band) {
-        lightLine(band[0] + at, band[1] + at);
+        lightLine(band[0] + at, band[1] + at, last);
       }
       // Turning back, the kept line ends the page: no cover until the reader moves on.
       cutPaused = !forward;
