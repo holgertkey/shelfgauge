@@ -1761,8 +1761,11 @@ async fn bookmarks_carry_their_place_for_the_status_line() {
     let server = lib.server(|_| {});
     let early = server.block_of(id, &para(1, 1)).await;
     let late = server.block_of(id, &para(3, 2)).await;
-    server.bookmark(id, &late).await;
+    // Made in book order: the list has bookmarks in the order they were made (by the
+    // second, book order within one), so the order is the same whether or not a
+    // second passes between the two (made the other way round, it was flaky).
     server.bookmark(id, &early).await;
+    server.bookmark(id, &late).await;
 
     let places = |body: &str| -> Vec<u64> {
         body.split(" data-progress=\"")
@@ -1770,7 +1773,8 @@ async fn bookmarks_carry_their_place_for_the_status_line() {
             .map(|rest| rest.split('"').next().unwrap().parse().unwrap())
             .collect()
     };
-    // In the reader's list (book order) and in the fragment it refreshes from.
+    // In the reader's list (the order they were made) and in the fragment it refreshes
+    // from.
     let read = server.ok(&format!("/book/{id}/read")).await;
     let in_reader = places(&read);
     assert_eq!(in_reader.len(), 2, "{read}");
