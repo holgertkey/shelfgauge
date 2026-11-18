@@ -67,8 +67,9 @@
   border-radius: var(--radius);
 }
 
-/* A line of its own under the book link (reader.js): Export and Copy all of the
-   Quotes tab at the left, page up / page down for the open tab at the right. */
+/* A line of its own under the book link (reader.js): the list actions of the
+   Bookmarks and Quotes tabs at the left, page up / page down for the open tab at the
+   right. */
 .sidebar-tools {
   display: flex;
   gap: 0.4rem;
@@ -94,6 +95,129 @@
   line-height: 1;
 }
 
+/* Select all, then Copy, Export, Note and Delete for the items checked in the list. */
+.list-actions {
+  display: flex;
+  gap: 0.15rem;
+  align-items: center;
+}
+
+.list-actions[hidden] {
+  display: none;
+}
+
+.list-actions .icon-button {
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.7rem;
+  padding: 0;
+}
+
+.list-actions .icon-button .icon {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+/* The label is the checkbox's target: wider than the box, a button's size. */
+.select-all-box {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.7rem;
+  margin-right: 0.25rem;
+  cursor: pointer;
+}
+
+/* The menu behind ⋯ (Export and Delete on the Quotes tab), like the profile menu;
+   it opens under the line from the sidebar's left edge, so it stays inside it. */
+.sidebar-tools {
+  position: relative;
+}
+
+.list-more > summary {
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.7rem;
+  padding: 0;
+  list-style: none;
+  cursor: pointer;
+}
+
+.list-more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.list-more[open] > summary {
+  color: var(--fg);
+  background: var(--hover);
+}
+
+.list-more .menu {
+  position: absolute;
+  top: calc(100% + 0.2rem);
+  left: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  min-width: 12rem;
+  max-width: 100%;
+  padding: 0.35rem 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.2);
+}
+
+.list-more .menu button {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  width: 100%;
+  padding: 0.4rem 0.9rem;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 0;
+}
+
+.list-more .menu button[hidden] {
+  display: none;
+}
+
+.list-more .menu button:hover:not(:disabled),
+.list-more .menu button:focus-visible {
+  background: var(--hover);
+}
+
+.list-more .menu button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.list-more .menu .icon {
+  flex: none;
+  width: 1.05rem;
+  height: 1.05rem;
+  color: var(--muted);
+}
+
+.select-all-box .check-mark {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.select-all-box:has(:disabled) {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.list-actions .icon-button:disabled,
 .tab-pager .icon-button:disabled {
   opacity: 0.35;
   cursor: default;
@@ -140,10 +264,87 @@
   list-style: none;
 }
 
+/* Each item has its checkbox at the left (the list actions in the sidebar head act on
+   the checked ones); the item's padding there is its target too (reader.js). */
 .annotation-links li {
   position: relative;
-  padding: 0.3rem 1.6rem 0.3rem 0.3rem;
+  padding: 0.3rem 0.3rem 0.3rem 1.6rem;
   border-radius: 4px;
+}
+
+/* The checkboxes of the lists and Select all are drawn like the icons around them: a
+   rounded square of the size of an icon's drawn part (11 px of the 16.8 px icon), in
+   the icons' line and color, the accent once checked, with the check
+   mark (`#i-check`, the element after the box) in it; Select all, partly checked, a
+   dash. The page's CSP allows no data: images, so the mark is an element. */
+.item-select,
+.select-all {
+  flex: none;
+  width: 0.6875rem;
+  height: 0.6875rem;
+  margin: 0;
+  color: var(--muted);
+  background: none;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+  appearance: none;
+  cursor: pointer;
+}
+
+.item-select:hover,
+.select-all-box:hover .select-all {
+  color: var(--fg);
+}
+
+.item-select:checked,
+.select-all:checked,
+.select-all:indeterminate {
+  color: var(--accent);
+}
+
+.select-all:indeterminate {
+  background: linear-gradient(currentColor, currentColor) center / 55% 1.5px no-repeat;
+}
+
+.select-all:disabled {
+  cursor: default;
+}
+
+.check-mark {
+  display: none;
+  width: 0.6875rem;
+  height: 0.6875rem;
+  color: var(--accent);
+  pointer-events: none;
+}
+
+.item-select:checked + .check-mark,
+.select-all:checked + .check-mark {
+  display: block;
+}
+
+.annotation-links .item-select,
+.annotation-links .check-mark {
+  position: absolute;
+  top: 0.7rem;
+  left: 0.45rem;
+}
+
+/* The boxes are pale until the pointer is on the item or something in the tab is
+   checked; on a touch screen (below) always full. */
+.annotation-links .item-select {
+  opacity: 0.4;
+}
+
+.annotation-links li:hover .item-select,
+.annotation-links .item-select:focus-visible,
+.annotation-links .item-select:checked,
+.tab-panel:has(.item-select:checked) .item-select {
+  opacity: 1;
+}
+
+.annotation-links li.selected {
+  background: var(--active-bg);
 }
 
 .annotation-links li:hover {
@@ -195,18 +396,11 @@
   overflow-wrap: anywhere;
 }
 
-.annotation-links .delete-form {
-  position: absolute;
-  top: 0.2rem;
-  right: 0.2rem;
-}
-
-/* A quote's note is added or changed in place: the pencil next to the ×; a quote
-   also has Copy before the pencil (shown with JS only). */
-.annotation-links .mark-item,
-.annotation-links .note-item,
-.annotation-links .bookmark-item {
-  padding-right: 3.2rem;
+/* The note form opens from Note in the sidebar head, the delete form is sent by
+   Delete there (reader.js): neither has a control of its own in the list. */
+.annotation-links .delete-form,
+.annotation-links .note-edit > summary {
+  display: none;
 }
 
 /* A bookmark: its number and place in the book, with the start of the line there as
@@ -222,46 +416,6 @@
   font-size: 0.85rem;
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-
-.js-copy .annotation-links .mark-item {
-  padding-right: 5.2rem;
-}
-
-.annotation-links .mark-copy {
-  position: absolute;
-  top: 0.2rem;
-  right: 3.4rem;
-  display: inline-flex;
-  align-items: center;
-  padding: 0.2rem 0.35rem;
-}
-
-.annotation-links .mark-copy[hidden] {
-  display: none;
-}
-
-.annotation-links .mark-copy:hover {
-  color: var(--fg);
-}
-
-.annotation-links .mark-copy .icon {
-  width: 0.95rem;
-  height: 0.95rem;
-}
-
-.js-copy .annotation-links .mark-item .note-form {
-  margin-right: -4.9rem;
-}
-
-/* Export and Copy all of the Quotes tab, in the sidebar head. */
-.export-actions {
-  display: flex;
-  gap: 0.4rem;
-}
-
-.export-actions[hidden] {
-  display: none;
 }
 
 /* The textarea a copy goes through where the clipboard API is missing (reader.js). */
@@ -297,25 +451,8 @@
   font-size: inherit;
 }
 
-.annotation-links .note-edit > summary {
-  top: 0.2rem;
-  right: 1.7rem;
-  display: inline-flex;
-  align-items: center;
-  padding: 0.2rem 0.35rem;
-}
-
-.annotation-links .note-edit > summary:hover {
-  color: var(--fg);
-}
-
-.annotation-links .note-edit .icon {
-  width: 0.95rem;
-  height: 0.95rem;
-}
-
 .annotation-links .note-form {
-  margin: 0.4rem -2.9rem 0.2rem 0;
+  margin: 0.4rem 0 0.2rem;
 }
 
 .annotation-links li:has(> details[open]) .mark-note-open {
@@ -1824,4 +1961,56 @@ mark.sg-pending {
 
 :root.reading-focus .status-line {
   padding-bottom: var(--safe-bottom);
+}
+
+/* A touch screen (after the rules above, which style.css's own touch rules cannot
+   override: this file comes later). */
+@media (pointer: coarse) {
+  /* An item's checkbox: the item's left padding is its target (reader.js), as wide
+     as the box and its margins and as tall as the item. */
+  .annotation-links li {
+    padding-left: 1.9rem;
+  }
+
+  /* The size of the icons' drawn part (style.css's 1.25rem for every checkbox does
+     not apply to these): the item's padding and Select all's label are the targets. */
+  input.item-select,
+  input.select-all,
+  .check-mark {
+    width: 0.75rem;
+    height: 0.75rem;
+  }
+
+  .annotation-links .item-select,
+  .annotation-links .check-mark {
+    top: 1rem;
+    left: 0.55rem;
+  }
+
+  /* No pointer to hover with: the boxes are never pale. */
+  .annotation-links .item-select {
+    opacity: 1;
+  }
+
+  /* The sidebar head's list actions and pager, 44 px targets touching each other
+     (each with its own padding around the icon), so that six fit a 360 px phone (the
+     sidebar is 85% of it); the menu's entries are as tall. */
+  .sidebar-tools,
+  .list-actions {
+    gap: 0;
+  }
+
+  .list-actions .icon-button,
+  .select-all-box {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+
+  .select-all-box {
+    margin-right: 0;
+  }
+
+  .list-more .menu button {
+    min-height: 2.75rem;
+  }
 }

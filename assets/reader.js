@@ -332,7 +332,7 @@
       tab.classList.toggle("active", active);
       tab.setAttribute("aria-current", active ? "true" : "false");
     }
-    syncExportActions(name);
+    syncListActions();
     syncPager();
     // The Search tab comes and goes with the query: never remembered.
     if (known && remember && name !== "find") {
@@ -350,10 +350,17 @@
     template.innerHTML = html.trim();
     const replacement = template.content.firstElementChild;
     const active = sidebar.querySelector(".reader-tabs a.active");
+    // The items checked before stay checked (those still there).
+    const checked = new Set(Array.from(lists.querySelectorAll(".item-select:checked"), (box) => box.closest("li").dataset.id));
     if (replacement) {
       lists.replaceWith(replacement);
+      for (const li of replacement.querySelectorAll("li[data-id]")) {
+        const box = li.querySelector(":scope > .item-select");
+        if (box && checked.has(li.dataset.id)) {
+          box.checked = true;
+        }
+      }
     }
-    showExportControls();
     // The replaced panels lost their state: show the same tab again.
     showTab(active ? active.dataset.tab : storageGet(TAB_KEY) || "toc", false);
     syncPager();
@@ -361,7 +368,7 @@
     drawBookmarks();
   }
 
-  // The ‹ › buttons under the book link (at the right of the line with Export) page through the open tab (the sidebar scrolls) like
+  // The ‹ › buttons under the book link (at the right of the list actions) page through the open tab (the sidebar scrolls) like
   // Page Up / Page Down; each is disabled at its end.
   let syncPager = () => {};
 
@@ -403,24 +410,193 @@
     }
   }
 
-  // ---------- Export and copy of quotes and notes ----------
+  // ---------- The list actions: selection, copy, export, note, delete ----------
 
-  // The Quotes tab's Export and Copy all (in the sidebar head), and each quote's Copy:
-  // the text is in the lists' HTML (`.export-text`, `data-copy`), made by the server
-  // or the hub's WASM module, so both readers give the same text, offline too.
-  function showExportControls() {
-    document.documentElement.classList.add("js-copy");
-    for (const el of sidebar.querySelectorAll(".mark-copy")) {
-      el.hidden = false;
-    }
+  // The Bookmarks and Quotes tabs have a checkbox on each item; the line in the
+  // sidebar head (`.list-actions`, shown while one of them is open and has something
+  // in it) acts on the items checked in the open tab: Select all (checked, partly or
+  // not), Note (exactly one item: its note form opens in place), Delete (after a
+  // confirmation), and on the Quotes tab Copy, with Export and Delete in the menu
+  // behind ⋯. With nothing checked, Copy
+  // and Export take every quote and note (`.export-text`); one checked quote is copied
+  // as one quote for a message (`data-copy`, with the book after it); several are put
+  // together like the export (`selectionText`). The texts are in the lists' HTML,
+  // made by the server or the hub's WASM module, so both readers give the same text,
+  // offline too.
+  function activeListPanel() {
+    const panel = sidebar.querySelector(".tab-panel.active");
+    return panel && (panel.dataset.tab === "bookmarks" || panel.dataset.tab === "marks") ? panel : null;
   }
 
-  // Export and Copy all stand in the sidebar head while the Quotes tab is open and has
-  // quotes or notes to give.
-  function syncExportActions(tab) {
-    const actions = sidebar.querySelector(".sidebar-tools .export-actions");
-    if (actions) {
-      actions.hidden = !(tab === "marks" && sidebar.querySelector("#tab-marks .export-text"));
+  function checkedItems(panel = activeListPanel()) {
+    return panel ? Array.from(panel.querySelectorAll(".item-select:checked"), (box) => box.closest("li")) : [];
+  }
+
+  function named(el, text) {
+    el.title = text;
+    el.setAttribute("aria-label", text);
+  }
+
+  function syncListActions() {
+    const actions = sidebar.querySelector(".sidebar-tools .list-actions");
+    if (!actions) {
+      return;
+    }
+    const panel = activeListPanel();
+    const boxes = panel ? panel.querySelectorAll(".item-select") : [];
+    const quotes = !!panel && panel.dataset.tab === "marks";
+    const exportable = quotes && !!panel.querySelector(".export-text");
+    actions.hidden = !panel || !(boxes.length || exportable);
+    if (actions.hidden) {
+      return;
+    }
+    for (const li of panel.querySelectorAll("li")) {
+      const box = li.querySelector(":scope > .item-select");
+      li.classList.toggle("selected", !!box && box.checked);
+    }
+    const n = checkedItems(panel).length;
+    const all = actions.querySelector(".select-all");
+    all.disabled = !boxes.length;
+    all.checked = !!boxes.length && n === boxes.length;
+    all.indeterminate = n > 0 && n < boxes.length;
+    named(all, all.checked ? "Clear the selection" : "Select all");
+    const copy = actions.querySelector(".list-copy");
+    copy.hidden = !exportable;
+    const what = n === 0 ? "all quotes and notes" : n === 1 ? "the selected quote" : `${n} selected quotes`;
+    named(copy, `Copy ${what}`);
+    const note = actions.querySelector(".list-note");
+    note.disabled = n !== 1;
+    const one = n === 1 ? checkedItems(panel)[0] : null;
+    const summary = one && one.querySelector(".note-edit > summary");
+    named(note, summary ? summary.textContent : "Write a note (select one item)");
+    // The Quotes tab: Export and Delete in the menu behind ⋯; the Bookmarks tab: Delete
+    // on the line (it has no Export).
+    const more = actions.querySelector(".list-more");
+    more.hidden = !quotes;
+    if (!quotes) {
+      more.open = false;
+    }
+    actions.querySelector(":scope > .list-delete").hidden = quotes;
+    const exp = more.querySelector(".list-export");
+    exp.querySelector(".menu-label").textContent = n === 0 ? "Export all" : n === 1 ? "Export the selected quote" : `Export ${n} selected quotes`;
+    exp.hidden = !exportable;
+    exp.title = `Export ${what}`;
+    const delWhat = n === 0 ? "Delete (select items first)" : `Delete ${n === 1 ? "the selected item" : `${n} selected items`}`;
+    for (const del of actions.querySelectorAll(".list-delete")) {
+      del.disabled = n === 0;
+      named(del, delWhat);
+    }
+    more.querySelector(".list-delete .menu-label").textContent = n > 1 ? `Delete ${n}` : "Delete";
+  }
+
+  // The ⋯ menu (a <details>): a choice in it, Escape or a click elsewhere closes it.
+  function setupListMenu() {
+    const more = sidebar.querySelector(".sidebar-tools .list-more");
+    if (!more) {
+      return;
+    }
+    const summary = more.querySelector("summary");
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && more.open) {
+        more.open = false;
+        summary.focus();
+        event.stopPropagation();
+      }
+    }, true);
+    document.addEventListener("click", (event) => {
+      if (more.open && (!more.contains(event.target) || event.target.closest(".menu button"))) {
+        more.open = false;
+      }
+    });
+    more.addEventListener("toggle", () => {
+      if (more.open) {
+        const first = more.querySelector(".menu button:not([hidden]):not(:disabled)");
+        if (first) {
+          first.focus();
+        }
+      }
+    });
+  }
+
+  // Several checked quotes put together as `unlinked` in
+  // crates/shelfgauge-core/src/annotations/export.rs does: the head, `## Quotes`, a
+  // section's heading where it changes, `***` between the records, one line break at
+  // the end (the parts are made by `unlinked_head`, `section_heading` and
+  // `quote_record` there; a test there checks this assembly).
+  function selectionText(items) {
+    const area = sidebar.querySelector(".export-text");
+    let out = `${(area && area.dataset.head) || ""}## Quotes\n\n`;
+    let section;
+    items.forEach((li, i) => {
+      if (i > 0) {
+        out += "***\n\n";
+      }
+      const heading = li.dataset.section ?? null;
+      if (heading !== section) {
+        out += heading || "";
+        section = heading;
+      }
+      out += li.dataset.export || "";
+    });
+    return `${out.trimEnd()}\n`;
+  }
+
+  // What Copy and Export take, with the toast's words for Copy.
+  function listText() {
+    const items = checkedItems();
+    if (items.length === 1) {
+      return { text: items[0].dataset.copy || "", done: "Quote copied." };
+    }
+    if (items.length > 1) {
+      return { text: selectionText(items), done: `${items.length} quotes copied.` };
+    }
+    const area = sidebar.querySelector(".export-text");
+    return { text: area ? area.value : "", done: "Quotes and notes copied." };
+  }
+
+  function counted(n, one) {
+    return `${n} ${one}${n === 1 ? "" : "s"}`;
+  }
+
+  async function deleteChecked() {
+    const items = checkedItems();
+    if (!items.length) {
+      return;
+    }
+    const kinds = [
+      ["quote", items.filter((li) => li.matches(".mark-item")).length],
+      ["bookmark", items.filter((li) => li.matches(".bookmark-item")).length],
+      ["note", items.filter((li) => li.matches(".note-item")).length],
+    ].filter(([, n]) => n > 0);
+    const what = items.length === 1 ? `this ${kinds[0][0]}` : kinds.map(([one, n]) => counted(n, one)).join(" and ");
+    if (!confirm(`Delete ${what}?`)) {
+      return;
+    }
+    let failed = 0;
+    let error = "";
+    for (const li of items) {
+      const form = li.querySelector(".delete-form");
+      try {
+        await source.remove(form);
+      } catch (e) {
+        failed += 1;
+        error = e.message;
+      }
+    }
+    try {
+      await refreshLists();
+    } catch (e) {
+      console.error(e);
+    }
+    toast(failed ? `Could not delete ${failed} of ${items.length}: ${error}` : "Deleted.");
+  }
+
+  function openCheckedNote() {
+    const [li] = checkedItems();
+    const details = li && li.querySelector(".note-edit");
+    if (details) {
+      details.open = true;
+      li.scrollIntoView({ block: "nearest" });
     }
   }
 
@@ -461,16 +637,16 @@
     toast((await copyText(text)) ? done : "Cannot copy here.");
   }
 
-  // Export: on a touch screen the system's share sheet with the file (to Obsidian,
+  // Export (`text`): on a touch screen the system's share sheet with the file (to Obsidian,
   // Notes, a messenger), elsewhere (or without Web Share for files) a download. The
   // file's type is text/plain, which Web Share takes; its name ends in .md.
-  async function exportFile() {
+  async function exportFile(text) {
     const area = sidebar.querySelector(".export-text");
     if (!area) {
       return;
     }
     const name = area.dataset.file || "quotes.md";
-    const file = new File([area.value], name, { type: "text/plain" });
+    const file = new File([text], name, { type: "text/plain" });
     const canShare = !!(navigator.canShare && navigator.canShare({ files: [file] }));
     window.sgLog?.("export", coarse.matches ? "touch" : "desktop", canShare ? "can share" : "cannot share");
     if (coarse.matches && canShare) {
@@ -501,7 +677,7 @@
       return;
     }
     sidebar.classList.add("tabbed");
-    showExportControls();
+    setupListMenu();
     setupPager();
     showTab(storageGet(TAB_KEY) || "toc");
     sidebar.addEventListener("click", (event) => {
@@ -511,23 +687,44 @@
         showTab(tab.dataset.tab);
         return;
       }
-      if (event.target.closest(".export-file")) {
-        exportFile();
+      // A click in an item's padding (not on its link, note or form) checks it.
+      const padded = event.target.matches(".annotation-links li") ? event.target.querySelector(":scope > .item-select") : null;
+      if (padded) {
+        padded.checked = !padded.checked;
+        syncListActions();
         return;
       }
-      if (event.target.closest(".export-copy")) {
-        const area = sidebar.querySelector(".export-text");
-        copyWithToast(area ? area.value : "", "Quotes copied.");
+      if (event.target.closest(".list-export")) {
+        exportFile(listText().text);
         return;
       }
-      const copy = event.target.closest(".mark-copy");
-      if (copy) {
-        copyWithToast(copy.dataset.copy || "", "Quote copied.");
+      if (event.target.closest(".list-copy")) {
+        const { text, done } = listText();
+        copyWithToast(text, done);
+        return;
+      }
+      if (event.target.closest(".list-note")) {
+        openCheckedNote();
+        return;
+      }
+      if (event.target.closest(".list-delete")) {
+        deleteChecked();
         return;
       }
       const mark = event.target.closest("[data-mark-link]");
       if (mark) {
         markJump(mark.href);
+      }
+    });
+    sidebar.addEventListener("change", (event) => {
+      if (event.target.matches(".select-all")) {
+        const panel = activeListPanel();
+        for (const box of panel ? panel.querySelectorAll(".item-select") : []) {
+          box.checked = event.target.checked;
+        }
+        syncListActions();
+      } else if (event.target.matches(".item-select")) {
+        syncListActions();
       }
     });
     sidebar.addEventListener("submit", async (event) => {

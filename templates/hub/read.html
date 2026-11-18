@@ -52,13 +52,25 @@
   <nav id="sidebar" class="sidebar" aria-label="Book">
 <div class="sidebar-head">
 {#- The book's title and authors (hub.js; the whole title in the tooltip), as in the
-    library's reader, and the line of Export, Copy all and the pager; the link leads
+    library's reader, and the line of the list actions and the pager; the link leads
     to the book's card in Explore when the catalog kept here has it (hub.js), to the
     Bookshelf otherwise. #}
 <div class="toc-book"><a class="toc-book-link" href="{{ base }}/" title="Bookshelf"><span class="toc-back" aria-hidden="true">‹</span><span class="toc-book-names"><span class="book-title">Bookshelf</span><span class="book-authors" hidden></span></span></a>
 </div>
 <div class="sidebar-tools" hidden lang="en">
-  <div class="export-actions" hidden><button type="button" class="small export-file">Export</button><button type="button" class="small export-copy">Copy all</button></div>
+  <div class="list-actions" hidden>
+    <label class="select-all-box"><input type="checkbox" class="select-all" title="Select all" aria-label="Select all"><svg class="check-mark" aria-hidden="true"><use href="#i-check"></use></svg></label>
+    <button type="button" class="icon-button list-copy" title="Copy" aria-label="Copy"><svg class="icon" aria-hidden="true"><use href="#i-copy"></use></svg></button>
+    <button type="button" class="icon-button list-note" title="Write a note" aria-label="Write a note"><svg class="icon" aria-hidden="true"><use href="#i-edit"></use></svg></button>
+    <button type="button" class="icon-button list-delete" title="Delete" aria-label="Delete"><svg class="icon" aria-hidden="true"><use href="#i-delete"></use></svg></button>
+    <details class="list-more">
+      <summary class="icon-button" title="More" aria-label="More"><svg class="icon" aria-hidden="true"><use href="#i-more"></use></svg></summary>
+      <div class="menu">
+        <button type="button" class="list-export"><svg class="icon" aria-hidden="true"><use href="#i-export"></use></svg><span class="menu-label">Export</span></button>
+        <button type="button" class="list-delete"><svg class="icon" aria-hidden="true"><use href="#i-delete"></use></svg><span class="menu-label">Delete</span></button>
+      </div>
+    </details>
+  </div>
   <div class="tab-pager">
     <button type="button" class="icon-button" data-page="-1" title="Page up" aria-label="Page up">‹</button>
     <button type="button" class="icon-button" data-page="1" title="Page down" aria-label="Page down">›</button>

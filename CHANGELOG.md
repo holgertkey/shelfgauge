@@ -58,7 +58,7 @@ Build numbers (`+NNN`) do not get their own sections.
   the GitHub releases: it runs on any x86_64 Linux, including distributions older than
   the glibc 2.39 that the `linux-gnu` binary needs. It uses mimalloc as its allocator.
 - A note can be added to a saved quote, or changed, from the Quotes tab of the
-  reader (the pencil next to ×), in the library and in the hub reader.
+  reader (check it, then Note above the list), in the library and in the hub reader.
 - The Quotes tab shows the first two lines of each quote and, under them, the first two
   lines of its note. A tap on the quote goes to it in the text; a tap on the note
   opens the whole note in a panel at the bottom, like a footnote of the book. Before,
@@ -68,22 +68,32 @@ Build numbers (`+NNN`) do not get their own sections.
   are listed in the Bookmarks tab under Notes, after the bookmarks, each as the first
   two lines of the note; a tap shows the whole note in the panel at the bottom, with a
   link to the place it was written at. A bookmark becomes a note when a note is
-  written to it with its pencil in the list, and a note whose text is emptied is a
+  written to it from the list (check it, then Note), and a note whose text is emptied is a
   bookmark again. On the book card they have their own block, and the Markdown export
   a Notes section. In the library and in the hub reader. A library still on 0.24 shows
   such a note as a bookmark with a note.
+- Checkboxes in the reader's Bookmarks and Quotes tabs, and one line of buttons for the
+  checked items above the list, next to the page up and down buttons, in place of the
+  buttons on each item: Select all, Note (for one item) and Delete (it asks first, and
+  deletes several at once); on the Quotes tab Copy, with Export and Delete in a menu
+  behind ⋯. The checkboxes are small and drawn like the icons around them; with a
+  mouse they stay pale until the pointer is on an item or something is checked. In
+  the library and in the hub reader.
 - Export and copy of quotes and notes from the reader's Quotes tab, in the library and
   in the hub reader. **Export** gives the book's quotes and notes as a Markdown file
   (`<Authors> — <Title> — quotes.md`): on a phone through the share menu (to Obsidian,
-  Notes, a messenger, mail), elsewhere as a download. **Copy all** copies the same
-  text; **Copy** next to a quote copies that quote with its note and the book's
-  authors and title. The text is plain: each quote as it is, its note after it
+  Notes, a messenger, mail), elsewhere as a download. **Copy** copies the same text.
+  With quotes checked, both take only those; one checked quote is copied with its note
+  and the book's authors and title, for a message. The text is plain: each quote as it is, its note after it
   starting with `Note:`, a line `***` between records, the notes on places last; no
   links and no bookmarks. It is made on the device, so it works offline too. The
   library's own export files in `.shelfgauge/annotations/` are unchanged.
 
 ### Changed
 
+- The bookmarks, notes and quotes in the reader's lists have no buttons of their own
+  any more (Copy, the pencil, ×), only a checkbox: what is done with them is in the line
+  of buttons above the list (see Added). Delete asks first.
 - Bookmarks are numbered and listed in the order they were made, `Bookmark 2 · 37%`
   with their place in the book (without the percent when it is unknown), and the start
   of the line they point to under it in a smaller, muted line. In the library and in

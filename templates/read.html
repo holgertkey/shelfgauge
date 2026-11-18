@@ -47,11 +47,26 @@
 <div class="toc-book"><a class="toc-book-link" href="{{ card_href }}" title="{{ book_title }}{% if !book_authors.is_empty() %} — {{ book_authors }}{% endif %}"><span class="toc-back" aria-hidden="true">‹</span><span class="toc-book-names"><span class="book-title">{{ book_title }}</span>
 {%- if !book_authors.is_empty() %}<span class="book-authors">{{ book_authors }}</span>{% endif %}</span></a>
 </div>
-{#- A line of its own under the book link (reader.js, shown with JS only): the Quotes
-    tab's Export and Copy all while that tab is open and has quotes or notes, and the
-    buttons that page through the open tab like Page Up / Page Down. #}
+{#- A line of its own under the book link (reader.js, shown with JS only): while the
+    Bookmarks or Quotes tab is open and has something in it, Select all and what can be
+    done with the items checked in the list (on the Quotes tab Copy, which takes
+    everything while nothing is checked, Note for one item, and Export and Delete in
+    the menu behind ⋯; on the Bookmarks tab Note and Delete), and the buttons that page
+    through the open tab like Page Up / Page Down. #}
 <div class="sidebar-tools" hidden lang="en">
-  <div class="export-actions" hidden><button type="button" class="small export-file">Export</button><button type="button" class="small export-copy">Copy all</button></div>
+  <div class="list-actions" hidden>
+    <label class="select-all-box"><input type="checkbox" class="select-all" title="Select all" aria-label="Select all"><svg class="check-mark" aria-hidden="true"><use href="#i-check"></use></svg></label>
+    <button type="button" class="icon-button list-copy" title="Copy" aria-label="Copy"><svg class="icon" aria-hidden="true"><use href="#i-copy"></use></svg></button>
+    <button type="button" class="icon-button list-note" title="Write a note" aria-label="Write a note"><svg class="icon" aria-hidden="true"><use href="#i-edit"></use></svg></button>
+    <button type="button" class="icon-button list-delete" title="Delete" aria-label="Delete"><svg class="icon" aria-hidden="true"><use href="#i-delete"></use></svg></button>
+    <details class="list-more">
+      <summary class="icon-button" title="More" aria-label="More"><svg class="icon" aria-hidden="true"><use href="#i-more"></use></svg></summary>
+      <div class="menu">
+        <button type="button" class="list-export"><svg class="icon" aria-hidden="true"><use href="#i-export"></use></svg><span class="menu-label">Export</span></button>
+        <button type="button" class="list-delete"><svg class="icon" aria-hidden="true"><use href="#i-delete"></use></svg><span class="menu-label">Delete</span></button>
+      </div>
+    </details>
+  </div>
   <div class="tab-pager">
     <button type="button" class="icon-button" data-page="-1" title="Page up" aria-label="Page up">‹</button>
     <button type="button" class="icon-button" data-page="1" title="Page down" aria-label="Page down">›</button>

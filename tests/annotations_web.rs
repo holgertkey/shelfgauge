@@ -554,16 +554,27 @@ async fn quotes_tab_export_and_copy() {
         .await;
     assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
 
-    // Export and Copy all stand in the sidebar head, shown by reader.js only.
+    // Select all, Copy, Note, Delete and the menu with Export and Delete stand in the
+    // sidebar head, shown by reader.js only.
     let read = server.ok(&format!("/book/{id}/read")).await;
     assert!(
-        read.contains("<div class=\"sidebar-tools\" hidden lang=\"en\">\n  <div class=\"export-actions\" hidden><button type=\"button\" class=\"small export-file\">Export</button><button type=\"button\" class=\"small export-copy\">Copy all</button></div>"),
+        read.contains("<div class=\"sidebar-tools\" hidden lang=\"en\">\n  <div class=\"list-actions\" hidden>\n    <label class=\"select-all-box\"><input type=\"checkbox\" class=\"select-all\""),
         "{read}"
     );
+    for action in [
+        "class=\"icon-button list-copy\"",
+        "class=\"icon-button list-note\"",
+        "class=\"icon-button list-delete\"",
+        "<details class=\"list-more\">",
+        "<button type=\"button\" class=\"list-export\">",
+        "<button type=\"button\" class=\"list-delete\">",
+    ] {
+        assert!(read.contains(action), "{action}: {read}");
+    }
     for page in [read, server.ok(&format!("/book/{id}/annotations")).await] {
         let text = between(
             &page,
-            "<textarea class=\"export-text\" data-file=\"Writer Anna — The Book — quotes.md\" hidden readonly tabindex=\"-1\" aria-hidden=\"true\">",
+            "<textarea class=\"export-text\" data-file=\"Writer Anna — The Book — quotes.md\" data-head=\"# The Book\n\nWriter Anna\n\n\" hidden readonly tabindex=\"-1\" aria-hidden=\"true\">",
             "</textarea>",
         );
         assert!(
@@ -589,10 +600,29 @@ async fn quotes_tab_export_and_copy() {
             ),
             "{page}"
         );
+        // A selection of quotes is put together from the head and each quote's
+        // section heading and record (reader.js).
+        assert!(
+            page.contains("data-head=\"# The Book\n\nWriter Anna\n\n\""),
+            "{page}"
+        );
+        assert!(
+            page.contains(
+                "data-export=\"the sly fox\n\nNote: &#60;b&#62;bold&#60;/b&#62; &#38; note\n\n\""
+            ),
+            "{page}"
+        );
         assert_eq!(
-            page.matches("class=\"link-button mark-copy\"").count(),
+            page.matches(" data-section=\"### ").count(),
             2,
             "quotes only"
+        );
+        assert_eq!(page.matches(" data-export=\"").count(), 2, "quotes only");
+        // Every quote, bookmark and note has its checkbox, and no buttons of its own.
+        assert_eq!(page.matches("class=\"item-select\"").count(), 4, "{page}");
+        assert!(
+            !page.contains("mark-copy") && !page.contains("Delete this"),
+            "{page}"
         );
     }
     // The library's own export file keeps its links and bookmarks.
@@ -692,7 +722,7 @@ async fn notes_on_places() {
         "only the quote"
     );
     // Only the start of the note: it opens the whole note in a panel with a link to
-    // its place (reader.js; a plain link without JS).
+    // its place (reader.js).
     let place = format!("/book/{id}/read?at={p21}&#38;from=mark&#38;o=12");
     assert!(
         read.contains(&format!(
@@ -704,12 +734,7 @@ async fn notes_on_places() {
         read.contains("<span class=\"mark-note-text\">My &#60;i&#62;thought&#60;/i&#62;\nline two</span></button>"),
         "the note opens in a panel, escaped: {read}"
     );
-    assert!(
-        read.contains(&format!(
-            "<noscript><a href=\"{place}\">Go to the place</a></noscript>"
-        )),
-        "{read}"
-    );
+    assert!(!read.contains("<noscript>"), "the reader needs JS: {read}");
     let item_html = &read[item..item + read[item..].find("</li>").unwrap()];
     assert!(
         !item_html.contains("mark-text") && !item_html.contains(&first_word),

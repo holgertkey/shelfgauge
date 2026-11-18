@@ -151,6 +151,22 @@ impl Lists {
         export::quotes_file_name(&self.book)
     }
 
+    /// The start of a selection's export ([`unlinked_head`](export::unlinked_head)).
+    pub fn export_head(&self) -> String {
+        export::unlinked_head(&self.book)
+    }
+
+    /// A quote's record in a selection's export ([`quote_record`](export::quote_record)).
+    pub fn export_record(&self, item: &ListItem) -> String {
+        export::quote_record(&item.text, Some(&item.note))
+    }
+
+    /// The heading of a quote's section in a selection's export
+    /// ([`section_heading`](export::section_heading)); `None` outside a section.
+    pub fn export_section(&self, item: &ListItem) -> Option<String> {
+        item.section_title.as_deref().map(export::section_heading)
+    }
+
     /// One quote for a message ([`copy_text`](export::copy_text)).
     pub fn copy_text(&self, item: &ListItem) -> String {
         export::copy_text(&self.book, &item.text, Some(&item.note))

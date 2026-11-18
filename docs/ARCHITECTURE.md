@@ -390,19 +390,35 @@ in the core crate), `src/web/routes/annotations.rs`, `assets/reader.js`/`reader.
   comment and only marked files are ever removed.
 - **Export and copy in the reader** (the Quotes tab, both readers): the lists'
   template carries the book's quotes and notes as text (a hidden
-  `<textarea class="export-text">` with the file's name in `data-file`, and
-  `data-copy` on each quote's Copy button),
-  rendered by `shelfgauge_core::annotations::export` (`unlinked`, `copy_text`;
-  `linked` is the export files' form above) through `Lists::export_text` and
-  `Lists::copy_text`, on the server or in the hub's WASM module, so both readers give
-  the same text, offline too. The form: no links, no bookmarks, no marker; each quote's
+  `<textarea class="export-text">` with the file's name in `data-file` and the export's
+  head in `data-head`, and on each quote `data-copy`, `data-export` and
+  `data-section`),
+  rendered by `shelfgauge_core::annotations::export` (`unlinked`, `copy_text`, and the
+  parts `unlinked` is made of: `unlinked_head`, `section_heading`, `quote_record`;
+  `linked` is the export files' form above) through `Lists::export_text`,
+  `Lists::copy_text` and the like, on the server or in the hub's WASM module, so both
+  readers give the same text, offline too. The form: no links, no bookmarks, no marker; each quote's
   text as it is, its note a paragraph starting with `Note: `, records divided by
-  `***`, the notes on places last with the start of their place. Export and Copy all
-  stand in the sidebar head (`.sidebar-tools`, the line of the page up and down buttons,
-  under the book link), which the list refresh does not replace; `reader.js` shows them
-  (JS only) while the Quotes tab is open and has that text. Export shares a `text/plain` file named `<Authors> — <Title> —
+  `***`, the notes on places last with the start of their place. Each item of the
+  Bookmarks and Quotes tabs has a checkbox (`.item-select`, drawn by `reader.css` with
+  `appearance: none` and the `#i-check` icon after it, since the CSP allows no `data:`
+  images; pale under `hover: hover` until hovered or something is checked) and no
+  buttons of its own;
+  its note form and delete form stay in the item, without controls, and are driven
+  from the list actions (`.list-actions`) in the sidebar head (`.sidebar-tools`, the
+  line of the page up and down buttons, under the book link), which the list refresh
+  does not replace (it keeps the checked items by `data-id`). `reader.js` shows them
+  (JS only; the reader needs it) while one of the two tabs is open and has items:
+  Select all (checked, partly or not), Note (exactly one item: opens its note form),
+  Delete (after `confirm`, one `source.remove` per item); on the Quotes tab Copy, with
+  Export and Delete in the menu behind ⋯ (`.list-more`, a `<details>` that a choice,
+  Escape or a click elsewhere closes), so that the line keeps 44 px targets on a
+  360 px phone. With nothing checked they take the whole `.export-text`, with one quote
+  its `data-copy`, with several the selection put together like `unlinked` from
+  `data-head`, `data-section` and `data-export` (`selectionText`; a test in
+  `export.rs` checks the same assembly in Rust). Export shares a `text/plain` file named `<Authors> — <Title> —
   quotes.md` through Web Share on a touch screen (`canShare` with files), else
-  downloads it; Copy all and Copy use `navigator.clipboard` in a secure context, else
+  downloads it; Copy uses `navigator.clipboard` in a secure context, else
   the copy command over a selected textarea (`.copy-buffer`).
 - **Reading position** (separate from bookmarks, never in the lists): one server-side
   row per book in `userdata.sqlite` (the first whole line at the top of the screen:
