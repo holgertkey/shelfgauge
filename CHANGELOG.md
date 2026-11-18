@@ -8,6 +8,8 @@ Build numbers (`+NNN`) do not get their own sections.
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-11-18
+
 ### Added
 
 - Six reading fonts come with shelfgauge, for the book text: Literata, PT Serif,
@@ -233,7 +235,6 @@ Build numbers (`+NNN`) do not get their own sections.
 - A bookmark without a note is named by the text it points to alone, from its line;
   the section's title (for a text file, often the book's title) is no longer put in
   front of it.
-
 
 ## [0.24.0] - 2026-11-06
 
