@@ -827,8 +827,12 @@ async fn reader_settings_assets_agree_on_the_values() {
     let lib = TestLibrary::new();
     let server = lib.server("/", whole());
     let theme_js = server.ok("/assets/theme.js").await.body;
-    let reader_css = server.ok("/assets/reader.css").await.body;
     // Windows checkouts may embed CRLF line endings.
+    let reader_css = server
+        .ok("/assets/reader.css")
+        .await
+        .body
+        .replace("\r\n", "\n");
     let style_css = server
         .ok("/assets/style.css")
         .await
